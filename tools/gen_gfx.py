@@ -20,7 +20,10 @@ import sys
 
 W = 256                 # tilemap width in pixels
 HORIZON = 40            # first ground line; lines 0..39 are sky
-GROUND = 104            # ground lines (40..143), d = 1 (horizon) .. 104 (bottom)
+GROUND = 104            # ground lines the perspective is built for, d = 1 (horizon) .. 104
+VISIBLE = 96            # ...of which the last 8 are behind the status bar
+HUD_LINE = HORIZON + VISIBLE    # first line of the status bar (a window over the picture)
+SKY_STATIC = 32         # sky lines 0..31 share one palette and scroll: no HBlank work there
 CX = 128                # vanishing point, map pixel
 DEPTH = 16640.0         # z(d) = DEPTH / d, in world units (1 unit = 1 pixel on the bottom line)
 VIEW_X = 48             # SCX when the road is straight: shows map x 48..207
@@ -272,8 +275,8 @@ def sky_pixels(skyline):
     px = [[0] * W for _ in range(HORIZON)]
     # Stars: three one-pixel patterns reused all over the upper sky (cheap in tiles).
     spots = ((2, 1), (6, 3), (3, 4))
-    for i in range(26):
-        tx, ty, kind = hash8(i * 13 + 5) % 32, 1, i % 3       # row 0 is the status bar
+    for i in range(40):
+        tx, ty, kind = hash8(i * 13 + 5) % 32, hash8(i * 29 + 1) % 2, i % 3
         ox, oy = spots[kind]
         if not any(px[ty * 8 + r][tx * 8 + c] for r in range(8) for c in range(8)):
             px[ty * 8 + oy][tx * 8 + ox] = 3
@@ -294,26 +297,15 @@ def sky_pixels(skyline):
 
 
 def sky_bgp():
-    """BGP for lines 0..39: the sky colour fades toward a glow at the horizon."""
+    """BGP for lines 0..39.  Lines 0..SKY_STATIC are one palette (dark sky, black buildings,
+    white lights and stars); below that the sky brightens to a glow at the horizon."""
     out = []
     for y in range(HORIZON):
-        if y < 13:
-            sky = 3
-        elif y < 17:
-            sky = 3 if y % 2 else 2               # line dither between bands
-        elif y < 24:
-            sky = 2
-        elif y < 28:
-            sky = 2 if y % 2 else 1
-        elif y < 35:
-            sky = 1
+        if y <= SKY_STATIC:
+            out.append(bgp(2, 3, 0, 0))
         else:
-            sky = 1 if y % 2 and y < 38 else 0
-        if y < 8:                                 # status bar: black, dark grey, white, light grey
-            out.append(bgp(3, 2, 0, 1))
-            continue
-        # buildings black, windows white, rim/star: white on the dark sky, grey lower down
-        out.append(bgp(sky, 3, 0, 0 if y < 13 else 2))
+            sky = 2 if y < 35 and y % 2 else (1 if y < 38 else 0)
+            out.append(bgp(sky, 3, 0, 2))
     return out
 
 
@@ -518,7 +510,8 @@ def shear_tables():
 OBJ_RESERVE = 24        # tiles kept free for sprites at the end of the $8000 block
 
 
-# Status bar glyphs: colour 2 is white, 1 dark grey, 0 black on the top eight lines.
+# Status bar glyphs: colour 2 is white, 1 dark grey, 0 black under HUD_BGP.
+HUD_BGP = bgp(3, 2, 0, 1)
 FONT = {
     "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
     "2": (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
@@ -580,6 +573,8 @@ def build(skyline):
                 if y < HORIZON:
                     need = True
                     break
+                if y >= HUD_LINE:                 # behind the status bar
+                    break
                 d = y - HORIZON + 1
                 reach = abs(VIEW_X - bends[0][d - 1]) + int(SHEAR_MAX * d / GROUND + 1)
                 if tx * 8 + 7 >= VIEW_X - reach and tx * 8 <= VIEW_X + 159 + reach:
@@ -598,13 +593,14 @@ def build(skyline):
                 data += bytes((lo, hi))
             slots.append(bytes(data))
 
+    # The status bar is a window over the bottom lines, so its glyphs live with the lower tiles.
     glyphs = {name: hud_glyph(name) for name in HUD_ORDER}
-    slots[:32] = [glyphs["BLANK"]] * 32           # tile row 0 is the status bar
 
     best = None
-    for split in range(5, 17):                    # first tile row drawn from the $9000 block
-        top = {t for t in slots[:split * 32] if t} | set(glyphs.values())
-        bot = {t for t in slots[split * 32:] if t}
+    for split in (8,):                            # first tile row drawn from the $9000 block:
+        # line 64, which the HBlank handler can spot with a single mask (see fzero.asm)
+        top = {t for t in slots[:split * 32] if t}
+        bot = {t for t in slots[split * 32:] if t} | set(glyphs.values())
         cap_top = 128 - OBJ_RESERVE
         only_top, only_bot = sorted(top - bot), sorted(bot - top)
         shared = sorted(top & bot) + only_top[cap_top:] + only_bot[128:]
@@ -626,7 +622,7 @@ def build(skyline):
             tilemap.append(128 + blk8800.index(t))
         else:
             tilemap.append(own.index(t))
-    hud = {name: 128 + blk8800.index(t) if t in blk8800 else blk8000.index(t)
+    hud = {name: 128 + blk8800.index(t) if t in blk8800 else blk9000.index(t)
            for name, t in glyphs.items()}
     return pixels, (blk8000, blk9000, blk8800), tilemap, bends, split * 8, hud
 
@@ -662,6 +658,8 @@ def main():
     with open(os.path.join(out, "consts.inc"), "w") as f:
         f.write("; generated by gen_gfx.py\n")
         f.write(f"DEF HORIZON EQU {HORIZON}\nDEF GROUND_LINES EQU {GROUND}\n")
+        f.write(f"DEF VISIBLE_D EQU {VISIBLE}\nDEF HUD_LINE EQU {HUD_LINE}\n")
+        f.write(f"DEF SKY_STATIC EQU {SKY_STATIC}\nDEF HUD_BGP EQU {HUD_BGP}\n")
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {split_line}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
@@ -680,7 +678,7 @@ def main():
             for lo, hi, name, coarse in BANDS:
                 f.write("    LINK_PUMP\n")
                 f.write(f"    FILL_BAND Pal{table(name, coarse)}, {1 if coarse else 0}\n")
-                for d in range(lo, hi + 1):
+                for d in range(lo, min(hi, VISIBLE) + 1):
                     f.write(f"    FILL_LINE {phase[HORIZON + d - 1]}\n")
             f.write("ENDM\n")
 

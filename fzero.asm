@@ -50,10 +50,10 @@ INCLUDE "build/consts.inc"
 DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every frame
 DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
 DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades
-DEF LCDC_UPPER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8000 | LCDCF_BG9800
-DEF LCDC_LOWER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8800 | LCDCF_BG9800
+DEF LCDC_COMMON EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG9800 | LCDCF_WINON | LCDCF_WIN9C00
+DEF LCDC_UPPER  EQU LCDC_COMMON | LCDCF_BG8000
+DEF LCDC_LOWER  EQU LCDC_COMMON | LCDCF_BG8800
 DEF SPEED_MAX   EQU $08
-DEF STAR_LINES  EQU 16          ; top lines scroll at half the skyline's rate
 DEF CAR_X       EQU 72          ; screen position when centred
 DEF CAR_Y       EQU 118
 DEF SHADOW_TILE EQU CAR_TILE + 2
@@ -120,8 +120,16 @@ DEF RAIL_SCRUB  EQU $0100       ; speed lost hitting the rail
 SECTION "vblank vector", ROM0[$40]
     jp VBlankISR
 
-; HBlank of line LY: load the registers for line LY+1.  Runs 144 times a frame, so it is
-; placed right at the vector (it runs on through the unused timer/serial/joypad vectors).
+; HBlank of line LY: load the registers for line LY+1.  This is the most expensive thing in
+; the program (it runs once a scanline), so:
+;  - It does not run at all for the top of the sky.  VBlank arms only the LY=LYC interrupt,
+;    for line SKY_STATIC-1; lines above that all use what VBlank loaded for line 0.  That
+;    first call then switches the interrupt over to HBlank for the rest of the frame.
+;  - The two once-a-frame jobs (that switch, and changing tile block at SPLIT_LINE) are found
+;    with one mask test, because 32 and 64 are the only lines in range with five low zero bits
+;    that need anything.
+; It is placed right at the vector (and runs on through the unused vectors after it).
+    ASSERT SKY_STATIC == 32 && SPLIT_LINE == 64
 SECTION "stat vector", ROM0[$48]
 StatISR:
     push af
@@ -140,14 +148,27 @@ StatISR:
     ld a, [hl]
     ldh [rOBP1], a
     ld a, l
-    cp SPLIT_LINE
-    jr z, .split
+    and %00011111
+    jr z, .event
     pop hl
     pop af
     reti
+.event
+    ld a, l
+    cp SPLIT_LINE
+    jr z, .split
+    cp SKY_STATIC
+    jr nz, .done
+    ldh a, [rSTAT]              ; first call of the frame (from LY=LYC): from here on, HBlank.
+    and STATF_MODE00            ; (Only once: on a DMG, writing STAT can itself raise this
+    jr nz, .done                ; interrupt again.)
+    ld a, STATF_MODE00
+    ldh [rSTAT], a
+    jr .done
 .split                          ; lower part of the picture takes its tiles from $9000
     ld a, LCDC_LOWER
     ldh [rLCDC], a
+.done
     pop hl
     pop af
     reti
@@ -177,7 +198,7 @@ VBlankISR:
     push bc
     push de
     ld hl, wHud                 ; and the status bar, if it changed
-    ld de, _SCRN0
+    ld de, _SCRN1
     ld b, 20
 .hud
     ld a, [hl+]
@@ -201,7 +222,9 @@ VBlankISR:
     ldh [rOBP1], a
     ld a, LCDC_UPPER
     ldh [rLCDC], a
-    ld a, 1
+    ld a, STATF_LYC             ; no HBlank interrupts until the sky's last few lines.
+    ldh [rSTAT], a              ; (If this write raises a stray one on a DMG, it finds copies
+    ld a, 1                     ; of line 0's values in the buffer entries past the screen.)
     ldh [hVBlank], a
     pop hl
     pop af
@@ -298,7 +321,20 @@ EntryPoint:
     ldh [rAUDVOL], a
     call StartSong
 
-    ld a, STATF_MODE00
+    ld hl, _SCRN1               ; the status bar: a window over the bottom eight lines
+    ld b, 32
+    ld a, HUD_BLANK
+.clearHud
+    ld [hl+], a
+    dec b
+    jr nz, .clearHud
+    ld a, HUD_LINE
+    ldh [rWY], a
+    ld a, 7
+    ldh [rWX], a
+    ld a, SKY_STATIC - 1
+    ldh [rLYC], a
+    ld a, STATF_LYC
     ldh [rSTAT], a
     xor a
     ldh [rIF], a
@@ -312,13 +348,22 @@ MainLoop:
     xor a
     ldh [hVBlank], a
 .wait
-    halt                        ; (wakes every scanline for the HBlank interrupt)
-    ldh a, [hVBlank]
-    or a
+    di                          ; checking the flag and going to sleep must not be split by
+    ldh a, [hVBlank]            ; the VBlank interrupt, or the sleep would last until the
+    or a                        ; next interrupt, which is now well down the sky
     jr nz, .frame
+    ldh a, [hLinked]
+    or a
+    jr nz, .awake               ; linked: stay awake and keep the cable moving
+    ei
+    halt                        ; (ei takes effect after the next instruction: no gap)
+    jr .wait
+.awake
+    ei
     call LinkPump
     jr .wait
 .frame
+    ei
     call UpdateKeys
     call LinkIdle
     call Drive
@@ -391,7 +436,7 @@ BuildLines:
 .black
     ld [hl+], a
     ld a, l
-    cp 144
+    cp HUD_LINE
     ld a, $FF
     jr nz, .black
     jp .bgpReady
@@ -428,8 +473,8 @@ BuildLines:
     jp .bgpDone
 .tunnel
     FILL_TUNNEL_BANDS
-    ld h, b                     ; no sky down here: black above the road, below the status bar
-    ld l, 8
+    ld h, b                     ; no sky down here: everything above the road is black
+    ld l, 0
     ld a, $FF
 .roof
     ld [hl+], a
@@ -442,30 +487,32 @@ BuildLines:
 
 .bgpReady
 
-    ; SCX: stars, skyline, then the bend table for the ground
-    inc b
+    ; A stray interrupt during VBlank (see VBlankISR) would load from just past line 144:
+    ; keep copies of line 0's values there.
     ld h, b
     ld l, 0
+    ld a, [hl]
+    ld l, 144
+    REPT 8
+        ld [hl+], a
+    ENDR
+
+    ; SCX: the sky all turns together.  Only line 0 and the lines from SKY_STATIC are ever
+    ; loaded, so only those are written.
+    inc b
+    ld h, b
     ldh a, [hSkyX + 1]
-    ld c, a
-    xor a
-.hudLines                       ; the status bar does not scroll
-    ld [hl+], a
-    bit 3, l
-    jr z, .hudLines
-    ld a, c
-    srl a
-.stars
-    ld [hl+], a
-    bit 4, l                    ; STAR_LINES = 16
-    jr z, .stars
-    ld a, c
-.skyline
-    ld [hl+], a
-    ld a, l
-    cp HORIZON
-    ld a, c
-    jr nz, .skyline
+    ld [hl], a                  ; (l is 152 here; harmless)
+    ld l, 0
+    ld [hl], a
+    ld l, SKY_STATIC
+    REPT HORIZON - SKY_STATIC
+        ld [hl+], a
+    ENDR
+    ld l, 144
+    REPT 8
+        ld [hl+], a
+    ENDR
 
     ; ground: bend (how the road curves) + shear (where the camera is across it).
     ; Each buffer notes the bend and shear it was filled for (in two spare bytes of its SCX
@@ -520,7 +567,7 @@ BuildLines:
     ENDR
     LINK_PUMP
     ld a, e
-    cp 144
+    cp HUD_LINE
     jr nz, .ground
 .scxDone
     ld a, d
@@ -892,7 +939,7 @@ UpdateRivals:
     ld l, c
     ld h, HIGH(DistToLine)
     ld a, [hl]                  ; ground line d
-    cp GROUND_LINES + 1
+    cp VISIBLE_D + 1
     jp nc, .hide
     cp RIVAL_D4
     jp c, .hide
@@ -1103,7 +1150,7 @@ UpdateObject:
     rr l
     ld h, HIGH(DistToLine)
     ld a, [hl]                  ; ground line d, 1 at the horizon
-    cp GROUND_LINES + 1
+    cp VISIBLE_D + 1
     jp nc, .gone
     ld c, a
 
@@ -1472,7 +1519,7 @@ RoadBand:
     ld a, d
     sbc h
     ret c
-    ld c, GROUND_LINES          ; or we are in the middle of it
+    ld c, VISIBLE_D             ; or we are in the middle of it
     ld a, RIVAL_D4
     jr .paint
 .toHorizon
@@ -1487,10 +1534,10 @@ RoadBand:
     rr l
     ld h, HIGH(DistToLine)
     ld a, [hl]
-    cp GROUND_LINES + 1
+    cp VISIBLE_D + 1
     ret nc                      ; it has all gone by
 .haveFar
-    ld c, GROUND_LINES
+    ld c, VISIBLE_D
     ld l, a                     ; keep the far line
     ld a, d
     cp 8
@@ -1505,7 +1552,7 @@ RoadBand:
     rr e
     ld d, HIGH(DistToLine)
     ld a, [de]
-    cp GROUND_LINES + 1
+    cp VISIBLE_D + 1
     jr nc, .startBehind
     ld c, a
 .startBehind
@@ -3130,6 +3177,14 @@ InitLines:
     inc l
     dec l
     jr nz, .rest
+    dec h                       ; the status bar's lines keep one palette for good
+    ld l, HUD_LINE
+    ld a, HUD_BGP
+    REPT 8
+        ld [hl+], a
+    ENDR
+    inc h
+    ld l, 0
     ld a, VIEW_X
 .scx
     ld [hl+], a
