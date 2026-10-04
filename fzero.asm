@@ -30,7 +30,11 @@
 ; more steering, at a cost in speed); the rail bounces you back and hurts; boosts (one per
 ; lap, or free from a dash plate) break the speed limit for a moment.
 ;
+; Hazards: dirt strips (dark bands that drag the car down unless you jump them) and barriers
+; (blocks in one lane that hurt, slow and toss the car unless you steer round or jump).
+;
 ; Controls: Left/Right steer, A accelerate, Down brake, B jump, Up boost.
+;           Select turns the engine note on and off (it borrows the music's second channel).
 ;           Start after a race: go again.  Select+Start together steps through the modes:
 ;           race, practice (Select and Start bend the road by hand), two-player link.
 ;
@@ -71,13 +75,17 @@ DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 4           ; health lost hitting it
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
+DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
+DEF DIRT_SPEED  EQU 3
+DEF BARRIER_COST EQU 8          ; health lost hitting a barrier
+DEF BARRIER_HOP EQU $0200       ; and how hard it throws the car up
+DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
 DEF FRICTION    EQU $0004       ; lost per frame off it
 DEF BRAKE       EQU $0020
 DEF HEALTH_MAX  EQU 64
 DEF KNOCK_COST  EQU 3           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
-DEF MOUTH_CHUNK EQU 10          ; entering this chunk, the tunnel mouth appears ahead
 DEF TUNNEL_SKIP EQU 8           ; chunks the tunnel cuts off the lap
 DEF EXIT_CHUNK  EQU 30          ; where the tunnel comes back up
 DEF PIT_START   EQU 256         ; recharge strip, in units from the finish line
@@ -266,6 +274,7 @@ EntryPoint:
     ldh [hCurKeys], a
     ldh [hNewKeys], a
     ldh [hMode], a
+    ldh [hEngine], a
     ldh [hPractice], a
     ldh [hLinked], a
     ldh [hLinkTry], a
@@ -1095,7 +1104,7 @@ UpdateObject:
     ld h, HIGH(DistToLine)
     ld a, [hl]                  ; ground line d, 1 at the horizon
     cp GROUND_LINES + 1
-    jr nc, .gone
+    jp nc, .gone
     ld c, a
 
     cp CAR_D                    ; reached the car: are we in its lane, and on the ground?
@@ -1110,6 +1119,34 @@ UpdateObject:
     ldh a, [hFadeStep]
     or b
     jr nz, .draw
+    ldh a, [hObjKind]
+    or a
+    jr z, .mouth
+    dec a                       ; a barrier: are we in its lane?
+    ld e, a
+    ld d, 0
+    ld hl, RivalLaneU
+    add hl, de
+    ldh a, [hX + 1]
+    sub [hl]
+    add 13
+    cp 27
+    jr nc, .draw
+    ld a, BARRIER_COST          ; yes: it hurts, it slows and it throws the car
+    call Damage
+    ld a, SFX_HIT
+    call Sfx
+    ldh a, [hSpeed + 1]
+    srl a
+    ldh [hSpeed + 1], a
+    ld a, 1
+    ldh [hAir], a
+    ld a, LOW(BARRIER_HOP)
+    ldh [hVZ], a
+    ld a, HIGH(BARRIER_HOP)
+    ldh [hVZ + 1], a
+    jr .draw
+.mouth
     ldh a, [hX + 1]
     cp LANE_EDGE & $FF
     jr nc, .draw                ; -6..-1: too near the middle
@@ -1122,6 +1159,17 @@ UpdateObject:
     ; x of the lane centre on that line = 128 + lane offset - that line's SCX
     ld h, HIGH(LaneOffsets)
     ld l, c
+    ldh a, [hObjKind]
+    or a
+    jr z, .laneFound
+    dec a                       ; barriers sit in the rivals' lanes
+    srl a
+    jr nc, .evenLane
+    set 7, l
+.evenLane
+    add HIGH(RivalLanes)
+    ld h, a
+.laneFound
     ld a, [hl]
     add 128
     ld b, a
@@ -1137,6 +1185,16 @@ UpdateObject:
     add HORIZON                 ; OAM y: a 16-high object whose bottom row is on that line
     ldh [hObjY], a
 
+    ldh a, [hObjKind]
+    or a
+    jr z, .mouthSizes
+    ld hl, BarrierFar           ; a barrier: a dot far off, then a block
+    ld a, c
+    cp MOUTH_D2
+    jr c, .sized
+    ld hl, MouthSize1
+    jr .sized
+.mouthSizes
     ld hl, MouthSize1
     ld a, c
     cp MOUTH_D2
@@ -1273,6 +1331,20 @@ RoadFeatures:
     call Sfx
     jr .notOn
 .notDash
+    cp FEATURE_DIRT
+    jr nz, .notDirt
+    ldh a, [hSpeed + 1]         ; dirt: drags the car down to a crawl
+    cp DIRT_SPEED
+    jr c, .notOn
+    ldh a, [hSpeed]
+    sub LOW(DIRT_DRAG)
+    ldh [hSpeed], a
+    jr nc, .notOn
+    ldh a, [hSpeed + 1]
+    dec a
+    ldh [hSpeed + 1], a
+    jr .notOn
+.notDirt
     cp FEATURE_JUMP
     jr nz, .notOn
     ld a, 1                     ; jump plate: thrown into the air
@@ -1292,6 +1364,10 @@ RoadFeatures:
     jr nz, .notBlack
     ld l, %00001100
 .notBlack
+    cp FEATURE_DIRT
+    jr nz, .notGrey
+    ld l, %00001000
+.notGrey
     cp FEATURE_DASH
     jr nz, .steady
     ldh a, [hFrame]
@@ -1314,6 +1390,7 @@ RoadFeatures:
 DEF FEATURE_PLAIN EQU 0
 DEF FEATURE_DASH  EQU 1
 DEF FEATURE_JUMP  EQU 2
+DEF FEATURE_DIRT  EQU 3
 ; \1 start, \2 end (units from the finish line), \3 kind.  In view from 8 chunks before.
 MACRO FEATURE
     db ((\1) / 256 - 8) & CHUNK_MASK
@@ -1325,8 +1402,11 @@ Features:
     FEATURE 0, LINE_END, FEATURE_PLAIN
     FEATURE PIT_START, PIT_END, FEATURE_PLAIN
     FEATURE 12 * 256, 12 * 256 + 90, FEATURE_DASH
+    FEATURE 19 * 256, 19 * 256 + 200, FEATURE_DIRT
     FEATURE 35 * 256, 35 * 256 + 60, FEATURE_JUMP
+    FEATURE 42 * 256, 42 * 256 + 200, FEATURE_DIRT
     FEATURE 45 * 256, 45 * 256 + 90, FEATURE_DASH
+    FEATURE 54 * 256, 54 * 256 + 200, FEATURE_DIRT
     FEATURE 61 * 256, 61 * 256 + 90, FEATURE_DASH
     db $FF
 
@@ -2206,6 +2286,35 @@ Drive:
     ldh [rSC], a
     jp InitRace
 .noChord
+    ; --- Select (outside practice): engine note on / off
+    ldh a, [hPractice]
+    or a
+    jr nz, .engineSet
+    ldh a, [hNewKeys]
+    and PADF_SELECT
+    jr z, .engineSet
+    ldh a, [hEngine]
+    xor 1
+    ldh [hEngine], a
+    push bc
+    ld c, a
+    ld b, 1                     ; it takes over channel 2 from the music
+    call hUGE_mute_channel
+    pop bc
+    ldh a, [hEngine]
+    or a
+    jr z, .engineOff
+    ld a, %01000000             ; 25% duty
+    ldh [rAUD2LEN], a
+    ld a, $50
+    ldh [rAUD2ENV], a
+    ld a, $80 | HIGH(ENGINE_BASE)
+    ldh [rAUD2HIGH], a
+    jr .engineSet
+.engineOff
+    xor a
+    ldh [rAUD2ENV], a
+.engineSet
     ; --- Start once the race is over: go again, on the next level if we finished
     ldh a, [hState]
     or a
@@ -2311,6 +2420,23 @@ Drive:
     ldh [hSpeed], a
     ld a, h
     ldh [hSpeed + 1], a
+
+    ldh a, [hEngine]            ; the engine note climbs with speed
+    or a
+    jr z, .noNote
+    ld d, h
+    ld e, l
+    srl d
+    rr e
+    srl d
+    rr e
+    ld a, e
+    add LOW(ENGINE_BASE)
+    ldh [rAUD2LOW], a
+    ld a, d
+    adc HIGH(ENGINE_BASE)
+    ldh [rAUD2HIGH], a
+.noNote
 
     ; --- distance driven (24 bit: fraction, units, chunks)
     ldh a, [hPos]
@@ -2428,9 +2554,21 @@ Drive:
     ldh [hBoosts], a
     jr .sameChunk
 .notLine
-    cp MOUTH_CHUNK
-    jr nz, .notMouth
-    ldh a, [hPos + 1]           ; a tunnel mouth appears up ahead
+    ld e, a                     ; does something appear on the road ahead here?
+    ld d, 0
+    ld hl, ChunkSpawn
+    add hl, de
+    ld a, [hl]
+    or a
+    jr z, .notMouth
+    ld e, a
+    ldh a, [hObjOn]
+    or a
+    jr nz, .notMouth            ; (one thing at a time)
+    ld a, e
+    dec a
+    ldh [hObjKind], a           ; 0 the tunnel mouth, 1-4 a barrier in that lane
+    ldh a, [hPos + 1]
     add LOW(SPAWN_DIST)
     ldh [hObjZ], a
     ldh a, [hPos + 2]
@@ -2440,6 +2578,7 @@ Drive:
     ldh [hObjOn], a
     jr .sameChunk
 .notMouth
+    ldh a, [hChunk]
     cp EXIT_CHUNK
     jr nz, .sameChunk
     ldh a, [hTunnel]
@@ -2812,6 +2951,21 @@ TrackBend:
     STRETCH 4, 32
     ASSERT @ - TrackBend == CHUNK_MASK + 1
 
+; What appears ahead on entering each chunk: 0 nothing, 1 the tunnel mouth, 2-5 a barrier in
+; lane 0-3.  It turns up SPAWN_DIST (four chunks) further on.
+DEF MOUTH    EQU 1
+DEF BARRIER  EQU 2
+ChunkSpawn:
+    db 0, 0, 0, BARRIER + 1, 0, 0, 0, 0
+    db 0, 0, MOUTH, 0, 0, 0, 0, 0
+    db 0, 0, 0, 0, 0, 0, 0, 0
+    db 0, 0, BARRIER + 2, 0, 0, 0, 0, 0
+    db 0, BARRIER + 0, 0, 0, 0, 0, 0, 0
+    db BARRIER + 3, 0, 0, 0, 0, 0, 0, BARRIER + 1
+    db 0, 0, 0, 0, 0, BARRIER + 2, 0, 0
+    db 0, 0, BARRIER + 0, 0, 0, 0, 0, 0
+    ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
+
 TunnelBend:                     ; what the same chunks are like underground
     STRETCH 24, 32
     STRETCH 4, 38
@@ -2846,6 +3000,9 @@ SpriteFade:                     ; OBP0 at each darkness
     db %11100000, %11110100, %11111000, %11111100
 
 ; Sprites for each size of tunnel mouth: count, then (x offset from the centre, tile, flip).
+BarrierFar:
+    db 1
+    db 4, CAR4_TILE, 0
 MouthSize1:
     db 2
     db 0, MOUTH_TILE, 0
@@ -3181,6 +3338,8 @@ hSkid:        db    ; in a skid turn this frame
 hCount:       db    ; frames until the start
 hBandEnd:     dw
 hBandOr:      db
+hObjKind:     db    ; road object: 0 tunnel mouth, 1-4 barrier in lane 0-3
+hEngine:      db    ; engine note on
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db
