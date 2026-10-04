@@ -12,9 +12,9 @@ p{margin:.5em} a{color:#8af}
 </style></head><body>
 <div id="wrap"><canvas id="screen" width="160" height="144"></canvas></div>
 <p class="btns"><button data-k="select">Select</button><button data-k="start">Start</button>
-<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">↑</button><button data-k="down">↓</button><button data-k="A">Jump</button><button id="fs">Fullscreen</button></p>
+<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">↑</button><button data-k="down">↓</button><button data-k="A">Gas</button><button data-k="B">Jump</button><button id="fs">Fullscreen</button></p>
 <p id="msg">Loading…</p>
-<p>Keys: ←→ = steer · ↑↓ = speed · Z / Space = jump (or tap the screen) · drive into the tunnel mouth in the left lane to take the shortcut · F = fullscreen · gamepads supported (d-pad/stick, Start/Select)</p>
+<p>Keys: ←→ = steer · Z / Space / ↑ = accelerate (or hold a finger on the screen) · ↓ = brake · X = jump · Enter = race again after the flag · Enter + Shift together = practice mode, where Shift / Enter bend the road · F = fullscreen · gamepads supported</p><p>Win the 3-lap race to move on to 5 laps. The rail and rivals cost health; the white strip after the start line recharges it. The dark ramp in the left lane is a tunnel short cut.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
 <script src="binjgb.js"></script>
 <script>
@@ -67,7 +67,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Running: arrows steer and change speed', NOSOUND='Sound is off: click, tap or press a key to turn it on';
+    const READY='Hold Z or Space to accelerate, arrows to steer', NOSOUND='Sound is off: click, tap or press a key to turn it on';
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;

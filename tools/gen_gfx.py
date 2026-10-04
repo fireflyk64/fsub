@@ -272,8 +272,8 @@ def sky_pixels(skyline):
     px = [[0] * W for _ in range(HORIZON)]
     # Stars: three one-pixel patterns reused all over the upper sky (cheap in tiles).
     spots = ((2, 1), (6, 3), (3, 4))
-    for i in range(40):
-        tx, ty, kind = hash8(i * 13 + 5) % 32, hash8(i * 29 + 1) % 2, i % 3
+    for i in range(26):
+        tx, ty, kind = hash8(i * 13 + 5) % 32, 1, i % 3       # row 0 is the status bar
         ox, oy = spots[kind]
         if not any(px[ty * 8 + r][tx * 8 + c] for r in range(8) for c in range(8)):
             px[ty * 8 + oy][tx * 8 + ox] = 3
@@ -309,6 +309,9 @@ def sky_bgp():
             sky = 1
         else:
             sky = 1 if y % 2 and y < 38 else 0
+        if y < 8:                                 # status bar: black, dark grey, white, light grey
+            out.append(bgp(3, 2, 0, 1))
+            continue
         # buildings black, windows white, rim/star: white on the dark sky, grey lower down
         out.append(bgp(sky, 3, 0, 0 if y < 13 else 2))
     return out
@@ -434,8 +437,8 @@ def rival_lane_tables():
 
 
 # Road objects are sprites drawn at a few sizes and swapped as they come closer.
-MOUTH_SIZES = ((8, 4), (16, 8), (32, 12), (40, 16))      # tunnel mouth, width x height
-MOUTH_FROM = (0, 24, 48, 80)                             # ground line d each size starts at
+MOUTH_SIZES = ((16, 8), (32, 12), (40, 16))              # tunnel mouth, width x height
+MOUTH_FROM = (0, 48, 80)                                 # ground line d each size starts at
 LANE = -28              # centre of the left lane, world units from the centre line
 SPAWN_DIST = 1024       # how far ahead road objects appear
 CAR_D = 88              # ground line d where an object reaches the car
@@ -511,7 +514,47 @@ def shear_tables():
 
 
 # ----------------------------------------------------------------------------------------
-OBJ_RESERVE = 32        # tiles kept free for sprites at the end of the $8000 block
+OBJ_RESERVE = 24        # tiles kept free for sprites at the end of the $8000 block
+
+
+# Status bar glyphs: colour 2 is white, 1 dark grey, 0 black on the top eight lines.
+FONT = {
+    "1": ("..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "2": (".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"),
+    "3": ("####.", "....#", "....#", ".###.", "....#", "....#", "####."),
+    "4": ("...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."),
+    "5": ("#####", "#....", "####.", "....#", "....#", "#...#", ".###."),
+    "6": (".###.", "#....", "#....", "####.", "#...#", "#...#", ".###."),
+    "7": ("#####", "....#", "...#.", "..#..", "..#..", "..#..", "..#.."),
+    "8": (".###.", "#...#", "#...#", ".###.", "#...#", "#...#", ".###."),
+    "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
+    "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
+    "SLASH": ("....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."),
+}
+HUD_ORDER = ["BLANK", "1", "2", "3", "4", "5", "6", "7", "8", "P", "L", "SLASH",
+             "FULL", "HALF", "EMPTY"]
+
+
+def hud_glyph(name):
+    px = [[0] * 8 for _ in range(8)]
+    if name in FONT:
+        for y, row in enumerate(FONT[name]):
+            for x, c in enumerate(row):
+                if c == "#":
+                    px[y][1 + x] = 2
+    elif name != "BLANK":                         # a cell of the health bar
+        lit = {"FULL": 7, "HALF": 4, "EMPTY": 0}[name]
+        for y in range(1, 7):
+            for x in range(7):
+                px[y][x] = 2 if x < lit else 1
+    data = bytearray()
+    for row in px:
+        lo = hi = 0
+        for v in row:
+            lo = (lo << 1) | (v & 1)
+            hi = (hi << 1) | (v >> 1)
+        data += bytes((lo, hi))
+    return bytes(data)
 
 
 def build(skyline):
@@ -554,9 +597,12 @@ def build(skyline):
                 data += bytes((lo, hi))
             slots.append(bytes(data))
 
+    glyphs = {name: hud_glyph(name) for name in HUD_ORDER}
+    slots[:32] = [glyphs["BLANK"]] * 32           # tile row 0 is the status bar
+
     best = None
     for split in range(5, 17):                    # first tile row drawn from the $9000 block
-        top = {t for t in slots[:split * 32] if t}
+        top = {t for t in slots[:split * 32] if t} | set(glyphs.values())
         bot = {t for t in slots[split * 32:] if t}
         cap_top = 128 - OBJ_RESERVE
         only_top, only_bot = sorted(top - bot), sorted(bot - top)
@@ -579,14 +625,16 @@ def build(skyline):
             tilemap.append(128 + blk8800.index(t))
         else:
             tilemap.append(own.index(t))
-    return pixels, (blk8000, blk9000, blk8800), tilemap, bends, split * 8
+    hud = {name: 128 + blk8800.index(t) if t in blk8800 else blk8000.index(t)
+           for name, t in glyphs.items()}
+    return pixels, (blk8000, blk9000, blk8800), tilemap, bends, split * 8, hud
 
 
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
     skyline = sys.argv[sys.argv.index("--skyline") + 1] if "--skyline" in sys.argv else "future"
-    pixels, blocks, tilemap, bends, split_line = build(skyline)
+    pixels, blocks, tilemap, bends, split_line, hud = build(skyline)
     tabs = pal_tables()
     if "--preview" in sys.argv:
         preview(sys.argv[sys.argv.index("--preview") + 1], pixels, bends, dict(tabs))
@@ -617,9 +665,10 @@ def main():
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {split_line}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
+        for name in HUD_ORDER:
+            f.write(f"DEF HUD_{name} EQU {hud[name]}\n")
         f.write(f"DEF SPAWN_DIST EQU {SPAWN_DIST}\nDEF CAR_D EQU {CAR_D}\n")
-        f.write(f"DEF MOUTH_D1 EQU {MOUTH_FROM[1]}\nDEF MOUTH_D2 EQU {MOUTH_FROM[2]}\n")
-        f.write(f"DEF MOUTH_D3 EQU {MOUTH_FROM[3]}\n")
+        f.write(f"DEF MOUTH_D2 EQU {MOUTH_FROM[1]}\nDEF MOUTH_D3 EQU {MOUTH_FROM[2]}\n")
         f.write(f"DEF RIVAL_D16 EQU {RIVAL_FROM[0]}\nDEF RIVAL_D12 EQU {RIVAL_FROM[1]}\n")
         f.write(f"DEF RIVAL_D8 EQU {RIVAL_FROM[2]}\nDEF RIVAL_D4 EQU {RIVAL_FROM[3]}\n")
         f.write("MACRO RIVAL_LANE_U\n    db " + ", ".join(map(str, RIVAL_LANES)) + "\nENDM\n")
