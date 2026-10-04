@@ -26,8 +26,12 @@
 ; places things happen (finish line, recharge strip, tunnel) are all tables indexed by chunk.
 ;
 ; Controls: Left/Right steer, A (or Up) accelerate, Down brake, B jump.
-;           Start after a race: go again.  Select+Start together: practice mode, where
-;           Select and Start bend the road left and right by hand.
+;           Start after a race: go again.  Select+Start together steps through the modes:
+;           race, practice (Select and Start bend the road by hand), two-player link.
+;
+; Two players: both pick link mode, one presses Start.  Each console runs its own car and
+; two rivals and tells the other where they are; the other shows them a few frames late.
+; The serial port is polled (LinkPump), never interrupt driven, so it cannot delay HBlank.
 ;
 ; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
 
@@ -36,6 +40,7 @@ INCLUDE "build/consts.inc"
 
 DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every frame
 DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
+DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades
 DEF LCDC_UPPER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8000 | LCDCF_BG9800
 DEF LCDC_LOWER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8800 | LCDCF_BG9800
 DEF SPEED_MAX   EQU $08
@@ -64,6 +69,20 @@ DEF EXIT_CHUNK  EQU 30          ; where the tunnel comes back up
 DEF PIT_START   EQU 256         ; recharge strip, in units from the finish line
 DEF PIT_END     EQU 768
 DEF LINE_END    EQU 20          ; depth of the painted finish line
+DEF MODE_RACE     EQU 0
+DEF MODE_PRACTICE EQU 1
+DEF MODE_LINK     EQU 2
+DEF LINK_MASTER   EQU 1         ; hLinked: this console clocks the cable
+DEF LINK_SLAVE    EQU 2
+DEF LINK_CALL     EQU $AA       ; "anyone there?" from whoever pressed Start
+DEF LINK_ANSWER   EQU $55       ; what a waiting console has loaded
+DEF LINK_N        EQU 9         ; bytes in a packet: sync, 4 player, 3 rival, checksum
+DEF LINK_TIMA     EQU 256 - 8   ; the master leaves 8 timer ticks (2 ms) between bytes, so
+                                ; the other side has time to notice one and load the next
+DEF LINK_TIMEOUT  EQU 180       ; frames without a good packet before giving up
+DEF REMOTE        EQU %10000000 ; lane byte: placed by the other console, not moved here
+DEF FREE_X        EQU %01000000 ; lane byte: not in a lane; x is in the skill byte
+DEF HIDDEN        EQU -30000    ; a distance no car is ever seen at
 DEF OBJ_SPRITES EQU 5           ; OAM entries kept for the road object
 DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
 DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
@@ -127,9 +146,14 @@ VBlankISR:
     xor a
     ldh [hReady], a
     call hDma                   ; and its sprites with it
+    ldh a, [hHudDirty]
+    or a
+    jr z, .keep
+    xor a
+    ldh [hHudDirty], a
     push bc
     push de
-    ld hl, wHud                 ; and the status bar
+    ld hl, wHud                 ; and the status bar, if it changed
     ld de, _SCRN0
     ld b, 20
 .hud
@@ -227,6 +251,10 @@ EntryPoint:
     ldh [hCurKeys], a
     ldh [hNewKeys], a
     ldh [hMode], a
+    ldh [hPractice], a
+    ldh [hLinked], a
+    ldh [hLinkTry], a
+    ldh [hGen], a
     ldh [hLevel], a
     ldh [hSkyX], a
     ldh [hSkyX + 1], a
@@ -260,23 +288,31 @@ MainLoop:
     xor a
     ldh [hVBlank], a
 .wait
-    halt
+    halt                        ; (wakes every scanline for the HBlank interrupt)
     ldh a, [hVBlank]
     or a
-    jr z, .wait
-
+    jr nz, .frame
+    call LinkPump
+    jr .wait
+.frame
     call UpdateKeys
+    call LinkIdle
     call Drive
+    call LinkPump
+    call LinkApply
     call BuildLines
+    call LinkPump
     call UpdateObject
     call UpdateRivals
     call PlayerSprites
     call UpdateHud
+    call LinkPump
     ldh a, [hBuiltScx]          ; everything for this frame is staged: let VBlank show it
     dec a
     ldh [hReady], a
     call SongBank
     call hUGE_dosound
+    call LinkPump
     ldh a, [rLY]                ; load meter: the line on which this frame's work ended
     ldh [hLoad], a              ; (144 = started, wraps through 153 to 0; must stay < 144)
     jr MainLoop
@@ -285,6 +321,11 @@ MainLoop:
 ; Filling the BGP buffer.  FILL_BAND picks a distance band's palette table and how far we
 ; have driven in that table's units; FILL_LINE then does one line, whose depth is a constant
 ; in the code (tools/gen_gfx.py writes the list).  de = where the line's BGP goes.
+MACRO LINK_PUMP                 ; a safe place to look at the cable: a and flags are free
+    ldh a, [hLinked]
+    or a
+    call nz, LinkPump
+ENDM
 MACRO FILL_BAND
     IF \2
         ldh a, [hPosCoarse]
@@ -292,7 +333,9 @@ MACRO FILL_BAND
         ldh a, [hPos + 1]
     ENDC
     ld c, a
-    ld h, HIGH(\1)
+    ldh a, [hFadeLevel]         ; the darker copies of a table follow it
+    add HIGH(\1)
+    ld h, a
 ENDM
 MACRO FILL_LINE
     ld a, c                     ; distance driven
@@ -307,12 +350,14 @@ BuildLines:
     ldh a, [hFront]
     xor HIGH(wLinesA) ^ HIGH(wLinesB)
     ld b, a                     ; b = the buffer not on screen
+    ld a, PAL_BANK
+    ld [rROMB0], a
 
     ldh a, [hFadeLevel]
     or a
     jr z, .lit
     ld a, 3
-    ldh [hSkyStale], a          ; fades scribble on the sky lines: redo them afterwards
+    ldh [hSkyStale], a          ; the sky lines change with the fade: redo them until it is over
     ldh a, [hFadeLevel]
     cp 3
     jr nz, .lit
@@ -339,6 +384,14 @@ BuildLines:
     dec a
     ldh [hSkyStale], a
     ld de, SkyBgp               ; sky fades toward the horizon glow
+    ldh a, [hFadeLevel]         ; (its darker copies follow it too)
+    or a
+    jr z, .skyTable
+    ld de, SkyBgp + HORIZON
+    dec a
+    jr z, .skyTable
+    ld de, SkyBgp + HORIZON * 2
+.skyTable
     ld h, b
     ld l, 0
 .sky
@@ -372,25 +425,6 @@ BuildLines:
     call RoadBand
     pop bc
 
-    ; fading: push every line's palette through a "darker" table
-    ldh a, [hFadeLevel]
-    or a
-    jr z, .bgpReady
-    add HIGH(FadeTables) - 1
-    ld h, a
-    ld d, b
-    ld e, 0
-.fade
-    REPT 8
-        ld a, [de]
-        ld l, a
-        ld a, [hl]
-        ld [de], a
-        inc e
-    ENDR
-    ld a, e
-    cp 144
-    jr nz, .fade
 .bgpReady
 
     ; SCX: stars, skyline, then the bend table for the ground
@@ -452,6 +486,7 @@ BuildLines:
         ld [de], a
         inc e
     ENDR
+    LINK_PUMP
     ld a, e
     cp 144
     jr nz, .ground
@@ -611,10 +646,11 @@ UpdateRivals:
     dec l
     call nz, .paint
 .next
+    LINK_PUMP
     ldh a, [hRivalIdx]
     inc a
     cp NUM_RIVALS
-    jr nz, .each
+    jp nz, .each
     ldh a, [hState]             ; our place: one more than the cars ahead (frozen at the flag)
     cp STATE_FINISHED
     ret z
@@ -655,6 +691,26 @@ UpdateRivals:
     ENDR
     ret
 
+; e = this rival's x across the road, in road units
+.acrossRoad
+    ldh a, [hRLane]
+    bit 6, a
+    jr nz, .freeX
+    and 3
+    ld e, a
+    ld d, 0
+    ld hl, RivalLaneU
+    add hl, de
+    ld e, [hl]
+    ret
+.freeX
+    ld h, HIGH(wRivals)
+    ldh a, [hRivalRec]
+    add 3
+    ld l, a
+    ld e, [hl]
+    ret
+
 ; out of sight: park its sprites and forget its line
 .hide
     ld h, HIGH(wRivals)
@@ -688,6 +744,30 @@ UpdateRivals:
 
 ; hl = this rival's record: move it two frames' worth and redraw it
 .move
+    ld a, l
+    add 5
+    ld l, a
+    ld e, [hl]                  ; lane byte, with its REMOTE / FREE_X flags
+    dec l
+    bit 7, e
+    jr z, .local
+    ld a, [hl]                  ; a remote car: the other console says where it is.  The
+    or a                        ; stun byte is just our own "bumped it a moment ago" timer
+    jr z, .calm
+    dec [hl]
+.calm
+    dec l
+    dec l
+    ld a, [hl-]
+    ld b, a
+    ld c, [hl]
+    inc l                       ; hl -> high byte of the distance, as after a local move
+    jr .moved
+.local
+    dec l
+    dec l
+    dec l
+    dec l
     ; its pace: the profile for the chunk it is in, plus its skill, halved while stunned
     push hl
     inc l
@@ -752,6 +832,7 @@ UpdateRivals:
     adc b
     ld [hl], a
     ld b, a                     ; bc = whole units ahead of the camera
+.moved
     call .aheadOfUs
     ld a, b
     cp 8
@@ -785,12 +866,7 @@ UpdateRivals:
     ldh a, [hAir]
     or a
     jr nz, .noHit
-    ldh a, [hRLane]
-    ld e, a
-    ld d, 0
-    ld hl, RivalLaneU
-    add hl, de
-    ld e, [hl]
+    call .acrossRoad            ; e = its x across the road
     ldh a, [hX + 1]
     sub e                       ; our x - its x
     ld d, a
@@ -813,6 +889,8 @@ UpdateRivals:
     ld [hl], STUN_TIME
     inc l
     ld a, [hl]
+    bit 7, a                    ; a remote car only moves when its own console says so
+    jr nz, .knocked
     bit 7, d
     jr z, .knockLeft
     cp 3                        ; we are on its left: it goes right
@@ -828,8 +906,30 @@ UpdateRivals:
     call Damage
 .noHit
 
-    ; --- where is its lane on that line?
+    ; --- where is it across the road on that line?
     ldh a, [hRLane]
+    bit 6, a
+    jr z, .inLane
+    call .acrossRoad            ; not in a lane (the other player): scale its x by the
+    ld a, e                     ; line's depth, using the camera shear tables: x/2 picks
+    sra a                       ; a table, the answer is doubled
+    add SHEAR_MAX
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, ShearPointers
+    add hl, de
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld e, c
+    dec e
+    add hl, de
+    ld a, [hl]
+    add a
+    jr .haveOffset
+.inLane
+    and 3
     ld l, c
     srl a
     jr nc, .evenLane
@@ -838,6 +938,7 @@ UpdateRivals:
     add HIGH(RivalLanes)
     ld h, a
     ld a, [hl]
+.haveOffset
     add 128
     ld b, a
     ldh a, [hBuiltScx]
@@ -1051,7 +1152,7 @@ StartFade:
 Damage:
     push bc
     ld b, a
-    ldh a, [hMode]
+    ldh a, [hPractice]
     ld c, a
     ldh a, [hState]
     or c
@@ -1154,18 +1255,98 @@ RoadBand:
     add HORIZON - 1
     ld l, a
     ld h, b
-.line
+    ldh a, [hFadeLevel]         ; white, or as near as the fade allows
+    add a
+    add a
+    ld e, a
+    ld d, %11110011
+    ld a, c
+    and 3
+    jr z, .fours
+    ld b, a
+.odd
     ld a, [hl]
-    and %11110011               ; road colour -> white
+    and d
+    or e
     ld [hl+], a
+    dec b
+    jr nz, .odd
+.fours
+    srl c
+    srl c
+    ret z
+.four
+    REPT 4
+        ld a, [hl]
+        and d
+        or e
+        ld [hl+], a
+    ENDR
     dec c
-    jr nz, .line
+    jr nz, .four
     ret
 
 ; The status bar: place, lap, health.  Staged in wHud, copied to the tilemap in VBlank.
 UpdateHud:
+    ldh a, [hRank]              ; anything on it changed?  (cheap to check, dear to redo)
+    ld b, a
+    ldh a, [hLap]
+    swap a
+    or b
+    ld b, a
+    ldh a, [hFrame]
+    and %00010000
+    add a
+    add a
+    or b
+    ld b, a
+    ldh a, [hState]
+    rrca
+    rrca
+    xor b
+    ld b, a
+    ldh a, [hHealth]
+    ld c, a
+    ldh a, [hLinked]
+    add c
+    ld c, a
+    ldh a, [hMode]
+    swap a
+    add c
+    ld c, a
+    ldh a, [hHudSeen]
+    cp b
+    jr nz, .redo
+    ldh a, [hHudSeen + 1]
+    cp c
+    ret z
+.redo
+    ld a, b
+    ldh [hHudSeen], a
+    ld a, c
+    ldh [hHudSeen + 1], a
+    ld a, 1
+    ldh [hHudDirty], a
     ld hl, wHud
     ldh a, [hMode]
+    cp MODE_LINK
+    jr nz, .notWaiting
+    ldh a, [hLinked]
+    or a
+    jr nz, .notWaiting
+    ld a, HUD_2                 ; "2P": waiting for the other console
+    ld [hl+], a
+    ld a, HUD_P
+    ld [hl+], a
+    ld a, HUD_BLANK
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    jp .bar
+.notWaiting
+    ldh a, [hPractice]
     or a
     jr nz, .noRace
     ldh a, [hState]
@@ -1187,7 +1368,7 @@ UpdateHud:
 .lap
     ld a, HUD_BLANK
     ld [hl+], a
-    ldh a, [hMode]
+    ldh a, [hPractice]
     or a
     jr z, .laps
     ld a, HUD_BLANK
@@ -1248,6 +1429,423 @@ UpdateHud:
 HudDigits:
     db HUD_1, HUD_2, HUD_3, HUD_4, HUD_5, HUD_6, HUD_7, HUD_8
 
+; ---------------------------------------------------------------------------------------
+; Link cable.  A packet is LINK_N bytes, exchanged one at a time; both consoles send the
+; same layout to each other in step:
+;   0  %1000_00gw  sync (the only byte with bit 7 set): w = which rival this packet carries,
+;                  g flips when that player restarts the race
+;   1  position bits 0-6        2  bits 7-13      3  bits 14-15, then x bit 7, -, state (2 bits)
+;   4  x bits 0-6
+;   5  rival distance bits 0-6  6  bits 7-13      7  its lane
+;   8  sum of 1..7, 7 bits
+; "position" is the 16-bit count of units driven; distances are 14-bit signed.
+
+; Called once a frame.  In link mode with no partner yet: listen, or call when Start is pressed.
+LinkIdle:
+    ldh a, [hMode]
+    cp MODE_LINK
+    ret nz
+    ldh a, [hLinked]
+    or a
+    ret nz
+    ldh a, [rSC]
+    rla
+    jr c, .armed
+    ldh a, [rSB]                ; a byte went by (or nothing has been set up yet)
+    ld b, a
+    ldh a, [hLinkTry]
+    or a
+    jr z, .wasListening
+    xor a
+    ldh [hLinkTry], a
+    ld a, b                     ; we called: did a waiting console answer?
+    cp LINK_ANSWER
+    jr nz, .listen
+    ld a, LINK_MASTER
+    jr .linked
+.wasListening
+    ld a, b                     ; we were listening: was that a call?
+    cp LINK_CALL
+    jr nz, .listen
+    ld a, LINK_SLAVE
+.linked
+    ldh [hLinked], a
+    xor a
+    ldh [hGen], a
+    ldh [hLinkIdx], a
+    ldh [hLinkBusy], a
+    ldh [hLinkFresh], a
+    ldh [hLinkStale], a
+    ldh [hLinkWhich], a
+    call InitRace
+    call BuildPacket
+    ld a, [wLinkTx]
+    ldh [rSB], a
+    xor a                       ; timer: 4096 Hz, reloading from 0, interrupt not enabled
+    ldh [rTMA], a
+    ld a, LINK_TIMA
+    ldh [rTIMA], a
+    ld a, TACF_START | TACF_4KHZ
+    ldh [rTAC], a
+    ldh a, [hLinked]
+    cp LINK_SLAVE
+    ret nz
+    ld a, $80                   ; the slave waits for the master's clock
+    ldh [rSC], a
+    ret
+.listen
+    ld a, LINK_ANSWER
+    ldh [rSB], a
+    ld a, $80
+    ldh [rSC], a
+    ret
+.armed
+    ldh a, [hLinkTry]
+    or a
+    ret nz
+    ldh a, [hCurKeys]
+    and PADF_SELECT
+    ret nz
+    ldh a, [hNewKeys]
+    and PADF_START
+    ret z
+    ld a, LINK_CALL             ; Start: call the other console, on our clock
+    ldh [rSB], a
+    ld a, $81
+    ldh [rSC], a
+    ld a, 1
+    ldh [hLinkTry], a
+    ret
+
+; Look at the serial port and move the packet exchange along a byte if it is time.
+; Called from many places so that a byte never waits long.  Keeps bc, de, hl.
+LinkPump:
+    ldh a, [hLinked]
+    or a
+    ret z
+    dec a
+    jr nz, .slave
+    ldh a, [hLinkBusy]          ; master
+    or a
+    jr nz, .onWire
+    ldh a, [rTIMA]              ; the timer (no interrupt, just read) measures the gap:
+    cp LINK_TIMA                ; set to LINK_TIMA when a byte finishes, it has wrapped
+    ret nc                      ; round to a small number once the gap is over
+    ld a, $81
+    ldh [rSC], a                ; clock the next byte out
+    ld a, 1
+    ldh [hLinkBusy], a
+    ret
+.onWire
+    ldh a, [rSC]
+    rla
+    ret c                       ; still going
+    xor a
+    ldh [hLinkBusy], a
+    push hl
+    push de
+    push bc
+    call LinkReceive
+    pop bc
+    pop de
+    pop hl
+    ld a, LINK_TIMA
+    ldh [rTIMA], a
+    ret
+.slave
+    ldh a, [rSC]
+    rla
+    ret c                       ; nothing has come yet
+    push hl
+    push de
+    push bc
+    call LinkReceive
+    ld a, $80
+    ldh [rSC], a                ; ready for the next
+    pop bc
+    pop de
+    pop hl
+    ret
+
+; A byte has arrived: file it, and load the next one to send.
+LinkReceive:
+    ldh a, [rSB]
+    ld b, a
+    ldh a, [hLinkIdx]
+    ld e, a
+    bit 7, b
+    jr z, .file
+    ldh a, [hLinked]            ; a sync byte: the slave lines its packet up on the master's
+    cp LINK_SLAVE
+    jr nz, .file
+    ld e, 0
+.file
+    ld d, 0
+    ld hl, wLinkRx
+    add hl, de
+    ld [hl], b
+    inc e
+    ld a, e
+    cp LINK_N
+    jr c, .next
+    call PacketDone
+    ld e, 0
+.next
+    ld a, e
+    ldh [hLinkIdx], a
+    ld d, 0
+    ld hl, wLinkTx
+    add hl, de
+    ld a, [hl]
+    ldh [rSB], a
+    ret
+
+; A whole packet is in: if it adds up, keep it for LinkApply.  Then make our next one.
+PacketDone:
+    ld hl, wLinkRx
+    bit 7, [hl]
+    jr z, BuildPacket
+    inc hl
+    ld b, 7
+    xor a
+.sum
+    add [hl]
+    inc hl
+    dec b
+    jr nz, .sum
+    and $7F
+    cp [hl]
+    jr nz, BuildPacket
+    ld hl, wLinkRx
+    ld de, wRemote
+    ld b, LINK_N - 1
+.keep
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .keep
+    ld a, 1
+    ldh [hLinkFresh], a
+    ; fall through
+
+; Our side of the next packet, from where things are right now.
+BuildPacket:
+    ld hl, wLinkTx
+    ldh a, [hLinkWhich]
+    xor 1
+    ldh [hLinkWhich], a
+    ld c, a                     ; which of our two rivals goes in this one
+    ldh a, [hGen]
+    add a
+    or c
+    or $80
+    ld [hl+], a
+    ldh a, [hPos + 1]
+    ld e, a
+    ldh a, [hPos + 2]
+    ld d, a
+    rlca
+    rlca
+    and 3
+    ld b, a                     ; bits 14-15
+    call .put14
+    ldh a, [hX + 1]
+    ld e, a
+    rlca
+    rlca
+    rlca
+    and %00000100
+    or b
+    ld b, a
+    ldh a, [hState]
+    swap a
+    and %00110000
+    or b
+    ld [hl+], a
+    ld a, e
+    and $7F
+    ld [hl+], a
+    push hl
+    ld a, c                     ; rival record c: distance at +1, lane at +5
+    add a
+    add a
+    add a
+    inc a
+    ld l, a
+    ld h, HIGH(wRivals)
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a
+    inc l
+    inc l
+    ld a, [hl]
+    and 3
+    ld b, a
+    pop hl
+    ld a, d                     ; keep it inside 14 bits signed
+    add $20
+    cp $40
+    jr c, .fits
+    bit 7, d
+    ld de, $1FFF
+    jr z, .fits
+    ld de, $2000
+.fits
+    call .put14
+    ld a, b
+    ld [hl+], a
+    ld de, wLinkTx + 1
+    ld b, 7
+    xor a
+.sum
+    ld c, a
+    ld a, [de]
+    add c
+    inc de
+    dec b
+    jr nz, .sum
+    and $7F
+    ld [hl], a
+    ret
+.put14                          ; de -> two 7-bit bytes at hl.  Leaves d shifted left by one
+    ld a, e
+    and $7F
+    ld [hl+], a
+    sla e
+    rl d
+    ld a, d
+    and $7F
+    ld [hl+], a
+    ret
+
+; Once a frame: use the newest packet to place the other console's cars.
+LinkApply:
+    ldh a, [hLinked]
+    or a
+    ret z
+    ldh a, [hLinkFresh]
+    or a
+    jr nz, .fresh
+    ldh a, [hLinkStale]         ; nothing new: has the cable gone?
+    inc a
+    ldh [hLinkStale], a
+    cp LINK_TIMEOUT
+    ret c
+    xor a
+    ldh [hLinked], a
+    ldh [rSC], a
+    jp InitRace
+.fresh
+    xor a
+    ldh [hLinkFresh], a
+    ldh [hLinkStale], a
+    ld a, [wRemote]             ; they restarted the race?  so do we
+    rra
+    and 1
+    ld b, a
+    ldh a, [hGen]
+    cp b
+    jr z, .sameRace
+    ld a, b
+    ldh [hGen], a
+    jp InitRace
+.sameRace
+    ld hl, wRemote + 1
+    call .get14
+    ld a, [hl]                  ; bits 14-15 of their position
+    rrca
+    rrca
+    and %11000000
+    or d
+    ld d, a
+    ldh a, [hPos + 1]           ; how far they are ahead of us
+    ld c, a
+    ld a, e
+    sub c
+    ld e, a
+    ldh a, [hPos + 2]
+    ld c, a
+    ld a, d
+    sbc c
+    ld d, a
+    push de
+    ; the other player: record 4
+    ld a, [hl+]
+    ld b, a                     ; flags
+    ld a, [hl+]
+    bit 2, b
+    jr z, .xPositive
+    or $80
+.xPositive
+    add X_LIMIT                 ; (keep it on the road: it may be mid-jump over the edge)
+    cp X_LIMIT * 2 + 1
+    jr c, .xOnRoad
+    bit 7, a
+    ld a, X_LIMIT * 2
+    jr z, .xOnRoad
+    xor a
+.xOnRoad
+    sub X_LIMIT
+    ld [wRivals + 4 * 8 + 3], a
+    ld a, b
+    and %00110000
+    cp STATE_DEAD << 4
+    jr nz, .theyLive
+    ld de, HIDDEN - PLAYER_Z    ; a wreck is not shown
+.theyLive
+    ld a, e
+    add PLAYER_Z
+    ld [wRivals + 4 * 8 + 1], a
+    ld a, d
+    adc 0
+    ld [wRivals + 4 * 8 + 2], a
+    ; one of their rivals: record 2 or 3
+    call .get14
+    bit 5, d                    ; 14-bit signed
+    jr z, .ahead
+    ld a, d
+    or %11000000
+    ld d, a
+.ahead
+    ld a, [hl]                  ; its lane
+    and 3
+    or REMOTE
+    ld b, a
+    pop hl                      ; + how far their player is ahead of us
+    add hl, de
+    ld d, h
+    ld e, l
+    ld a, [wRemote]
+    and 1
+    add 2
+    add a
+    add a
+    add a
+    inc a
+    ld l, a
+    ld h, HIGH(wRivals)
+    ld a, e
+    ld [hl+], a
+    ld a, d
+    ld [hl+], a
+    inc l
+    inc l
+    ld [hl], b
+    ret
+.get14                          ; two 7-bit bytes at hl -> de
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a
+    rra
+    jr nc, .evenTop
+    set 7, e
+.evenTop
+    srl d
+    ret
+
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
     xor a
@@ -1287,6 +1885,9 @@ InitRace:
     ldh [hShear], a
     ld a, SHADOW_TILE
     ldh [hShadowTile], a
+    ld a, $FF                   ; force the status bar to redraw
+    ldh [hHudSeen], a
+    ldh [hHudSeen + 1], a
     ld a, HEALTH_MAX
     ldh [hHealth], a
     ld a, 1
@@ -1305,6 +1906,23 @@ InitRace:
     ld a, b
     ldh [hPace], a
     ld de, RivalStart
+    ldh a, [hMode]
+    cp MODE_LINK
+    jr nz, .grid
+    ld de, RivalsAlone          ; link mode: nobody until the cable is up, then the
+    ldh a, [hLinked]            ; two-player grid, players side by side
+    or a
+    jr z, .grid
+    ld de, RivalsMaster
+    ld b, -16
+    dec a
+    jr z, .side
+    ld de, RivalsSlave
+    ld b, 16
+.side
+    ld a, b
+    ldh [hX + 1], a
+.grid
     ld hl, wRivals
     ld bc, NUM_RIVALS * 8
     call Copy
@@ -1332,9 +1950,23 @@ Drive:
     ldh a, [hNewKeys]
     and PADF_START | PADF_SELECT
     jr z, .noChord
-    ldh a, [hMode]
-    xor 1
+    ldh a, [hMode]              ; race -> practice -> link -> race
+    inc a
+    cp MODE_LINK + 1
+    jr c, .modeSet
+    xor a
+.modeSet
     ldh [hMode], a
+    cp MODE_PRACTICE
+    ld a, 0
+    jr nz, .practiceSet
+    inc a
+.practiceSet
+    ldh [hPractice], a
+    xor a                       ; any change of mode drops the cable
+    ldh [hLinked], a
+    ldh [hLinkTry], a
+    ldh [rSC], a
     jp InitRace
 .noChord
     ; --- Start once the race is over: go again, on the next level if we finished
@@ -1351,6 +1983,9 @@ Drive:
     xor 1
     ldh [hLevel], a
 .again
+    ldh a, [hGen]               ; (linked: the other console sees this flip and restarts too)
+    xor 1
+    ldh [hGen], a
     jp InitRace
 
 .throttle
@@ -1478,7 +2113,7 @@ Drive:
     jr z, .sameChunk
     ld a, c
     ldh [hChunk], a
-    ldh a, [hMode]
+    ldh a, [hPractice]
     ld e, a
     ldh a, [hState]
     or e
@@ -1540,7 +2175,7 @@ Drive:
 .noCharge
 
     ; --- where should the bend be heading?
-    ldh a, [hMode]
+    ldh a, [hPractice]
     or a
     jr nz, .byHand
     ld hl, TrackBend
@@ -1924,6 +2559,39 @@ MACRO RIVAL
     dw \1
     db \2, 0, \3, \4, 0
 ENDM
+; Link mode.  Each console drives two rivals (first two records) and is told about the other
+; console's two and the other player (next three).  The last two never appear.
+MACRO GHOST                     ; a car the other console places: paint, flags
+    db 0
+    dw HIDDEN
+    db 0, 0, \2, \1, 0
+ENDM
+DEF PAINT_A EQU %11100100
+DEF PAINT_B EQU %01100000
+DEF PAINT_C EQU %00100100
+DEF PAINT_D EQU %11101000
+DEF PAINT_P EQU %00101100       ; the other player: black, white trim
+RivalsMaster:
+    RIVAL PLAYER_Z + 70, 30, 0, PAINT_A
+    RIVAL PLAYER_Z + 110, 20, 3, PAINT_B
+    GHOST PAINT_C, REMOTE
+    GHOST PAINT_D, REMOTE
+    GHOST PAINT_P, REMOTE | FREE_X
+    GHOST PAINT_P, REMOTE
+    GHOST PAINT_P, REMOTE
+RivalsSlave:
+    RIVAL PLAYER_Z + 150, 30, 1, PAINT_C
+    RIVAL PLAYER_Z + 190, 20, 2, PAINT_D
+    GHOST PAINT_A, REMOTE
+    GHOST PAINT_B, REMOTE
+    GHOST PAINT_P, REMOTE | FREE_X
+    GHOST PAINT_P, REMOTE
+    GHOST PAINT_P, REMOTE
+RivalsAlone:
+    REPT NUM_RIVALS
+        GHOST PAINT_P, REMOTE
+    ENDR
+
 RivalStart:                     ; the grid: everyone starts ahead of the player
     RIVAL PLAYER_Z + 40, 10, 1, %11100100   ; grey, black trim
     RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
@@ -2050,12 +2718,8 @@ SECTION "rival lanes", ROM0, ALIGN[8]
 RivalLanes:                     ; lane * 128 + ground line -> pixels from the road centre
     INCBIN "build/rlane.bin"
 
-SECTION "fade tables", ROM0, ALIGN[8]
-FadeTables:                     ; BGP -> BGP one, two, three shades darker
-    INCBIN "build/fade.bin"
-
 MACRO PAL_TABLE
-SECTION "pal \1", ROM0, ALIGN[8]
+SECTION "pal \1", ROMX, BANK[PAL_BANK], ALIGN[8]
 Pal\1:
     INCBIN "build/pal_\2.bin"
 ENDM
@@ -2113,6 +2777,9 @@ SECTION "rivals", WRAM0[$C800]
 wRivals: ds NUM_RIVALS * 8
 wOrder:  ds NUM_RIVALS          ; rival numbers, far to near
 wHud:    ds 20                  ; the status bar's tiles
+wLinkTx: ds LINK_N              ; the packet being sent
+wLinkRx: ds LINK_N              ; the one arriving
+wRemote: ds LINK_N              ; the last good one
 
 SECTION "note table", WRAM0
 wNoteTable:: ds 144
@@ -2151,7 +2818,16 @@ hBuiltScx:    db    ; high byte of the SCX buffer BuildLines just filled
 hFadeStep:    db    ; 0 = not fading, else 1..FADE_LENGTH-1
 hFadeLevel:   db    ; current darkness, 0..3
 hFadeTunnel:  db    ; which way the fade is taking us: 1 down into the tunnel, 0 back up
-hMode:        db    ; 0 racing, 1 practice (bend the road by hand)
+hMode:        db    ; MODE_RACE, MODE_PRACTICE, MODE_LINK
+hPractice:    db    ; 1 in practice mode: no laps, no damage, bend the road by hand
+hLinked:      db    ; 0 no partner, LINK_MASTER, LINK_SLAVE
+hLinkTry:     db    ; we have called and are waiting for the answer
+hLinkIdx:     db    ; byte of the packet being exchanged
+hLinkBusy:    db    ; master: a byte is on the wire
+hLinkFresh:   db    ; a good packet is waiting in wRemote
+hLinkStale:   db    ; frames since the last one
+hLinkWhich:   db    ; which of our rivals the next packet carries
+hGen:         db    ; flips when a linked race is restarted
 hState:       db    ; 0 racing, STATE_FINISHED, STATE_DEAD
 hLevel:       db
 hLaps:        db    ; laps in this race
@@ -2162,6 +2838,8 @@ hRank:        db    ; our place, 1 = leading
 hRankCount:   db
 hPace:        db    ; added to every rival's speed on this level
 hRivalRec:    db    ; low byte of the rival record being worked on
+hHudSeen:     dw    ; what the status bar was last drawn from
+hHudDirty:    db    ; wHud is waiting to be copied to the screen
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db
