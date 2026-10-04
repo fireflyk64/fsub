@@ -15,6 +15,10 @@
 ; Steering moves the camera sideways, which is a shear: near lines slide a lot, far lines
 ; hardly at all.  That is one more per-line table added into SCX.
 ;
+; Forks: a tunnel mouth (a sprite that grows as it nears) comes down the left lane.  Drive
+; into it and the screen fades out, the track switches to the tunnel branch, and it fades
+; back in.  The tunnel itself is the same tilemap under darker palette tables.
+;
 ; Controls: Left/Right steer, Up/Down change speed, A jumps.
 ;
 ; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
@@ -31,6 +35,10 @@ DEF STAR_LINES  EQU 16          ; top lines scroll at half the skyline's rate
 DEF CAR_X       EQU 72          ; screen position when centred
 DEF CAR_Y       EQU 118
 DEF SHADOW_TILE EQU CAR_TILE + 12
+DEF MOUTH_TILE  EQU CAR_TILE + 16
+DEF OBJ_SPRITES EQU 5           ; OAM entries kept for the road object
+DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
+DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
 DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may go
 DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
@@ -114,6 +122,19 @@ VBlankISR:
     ldh a, [hShadowTile]
     ld [_OAMRAM + 10], a
     ld [_OAMRAM + 14], a
+    push bc
+    push de
+    ld hl, wObjOam
+    ld de, _OAMRAM + 16
+    ld b, OBJ_SPRITES * 4
+.objOam
+    ld a, [hl+]
+    ld [de], a
+    inc e
+    dec b
+    jr nz, .objOam
+    pop de
+    pop bc
     ld a, 1
     ldh [hVBlank], a
     pop hl
@@ -187,7 +208,10 @@ EntryPoint:
     ldh [hFrame], a
     ldh [hCurKeys], a
     ldh [hNewKeys], a
-    ldh [hScript], a
+    ldh [hObjOn], a
+    ldh [hTunnel], a
+    ldh [hFadeStep], a
+    ldh [hFadeLevel], a
     ldh [hX], a
     ldh [hX + 1], a
     ldh [hVX], a
@@ -207,6 +231,10 @@ EntryPoint:
     ldh [hTarget], a
     ld a, 1
     ldh [hScriptTimer], a
+    ld a, LOW(Track)
+    ldh [hTrack], a
+    ld a, HIGH(Track)
+    ldh [hTrack + 1], a
     ld a, CAR_Y + 16
     ldh [hCarY], a
     ld a, CAR_X + 8
@@ -252,6 +280,7 @@ MainLoop:
     call UpdateKeys
     call Drive
     call BuildLines
+    call UpdateObject
     call SongBank
     call hUGE_dosound
     ldh a, [rLY]                ; load meter: the line on which this frame's work ended
@@ -291,7 +320,52 @@ BuildLines:
 
     ld d, HIGH(RowPhase)
     ld e, HORIZON
+    ldh a, [hTunnel]
+    or a
+    jp nz, .tunnel
     FILL_ALL_BANDS
+    ld de, SkyBgp               ; sky fades toward the horizon glow
+    ld h, b
+    ld l, 0
+.sky
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    ld a, l
+    cp HORIZON
+    jr nz, .sky
+    jp .bgpDone
+.tunnel
+    FILL_TUNNEL_BANDS
+    ld h, b                     ; no sky down here: everything above the road is black
+    ld l, 0
+    ld a, $FF
+.roof
+    ld [hl+], a
+    ld a, l
+    cp HORIZON
+    ld a, $FF
+    jr nz, .roof
+.bgpDone
+
+    ; fading: push every line's palette through a "darker" table
+    ldh a, [hFadeLevel]
+    or a
+    jr z, .noFade
+    add HIGH(FadeTables) - 1
+    ld h, a
+    ld d, b
+    ld e, 0
+.fade
+    ld a, [de]
+    ld l, a
+    ld a, [hl]
+    ld [de], a
+    inc e
+    ld a, e
+    cp 144
+    jr nz, .fade
+.noFade
 
     ; SCX: stars, skyline, then the bend table for the ground
     inc b
@@ -349,8 +423,136 @@ BuildLines:
     jr nz, .ground
 
     ld a, d
+    ldh [hBuiltScx], a          ; UpdateObject looks up where the road is on each line
     dec a
     ldh [hReady], a             ; VBlank will show it
+    ret
+
+; ---------------------------------------------------------------------------------------
+; The road object (tunnel mouth): work out which line it is on, how big, and where the
+; road has been slid to on that line, and stage its sprites for VBlank.
+UpdateObject:
+    ld hl, wObjOam
+    ld b, OBJ_SPRITES * 4
+    xor a
+.clear
+    ld [hl+], a
+    dec b
+    jr nz, .clear
+    ldh a, [hObjOn]
+    or a
+    ret z
+
+    ldh a, [hPos + 1]           ; distance ahead = where it is - where we are
+    ld c, a
+    ldh a, [hPos + 2]
+    ld b, a
+    ldh a, [hObjZ]
+    sub c
+    ld l, a
+    ldh a, [hObjZ + 1]
+    sbc b
+    ld h, a
+    cp 8                        ; 2048+ (or negative): gone past
+    jp nc, .gone
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    ld h, HIGH(DistToLine)
+    ld a, [hl]                  ; ground line d, 1 at the horizon
+    cp GROUND_LINES + 1
+    jr nc, .gone
+    ld c, a
+
+    cp CAR_D                    ; reached the car: are we in its lane, and on the ground?
+    jr c, .draw
+    ldh a, [hObjOn]
+    cp 1
+    jr nz, .draw
+    inc a
+    ldh [hObjOn], a             ; only test once
+    ldh a, [hAir]
+    ld b, a
+    ldh a, [hFadeStep]
+    or b
+    jr nz, .draw
+    ldh a, [hX + 1]
+    cp LANE_EDGE & $FF
+    jr nc, .draw                ; -6..-1: too near the middle
+    cp $80
+    jr c, .draw                 ; 0..127: right of the lane
+    ld hl, TunnelTrack
+    ld a, 1
+    call StartFade
+
+.draw
+    ; x of the lane centre on that line = 128 + lane offset - that line's SCX
+    ld h, HIGH(LaneOffsets)
+    ld l, c
+    ld a, [hl]
+    add 128
+    ld b, a
+    ldh a, [hBuiltScx]
+    ld h, a
+    ld a, c
+    add HORIZON - 1
+    ld l, a
+    ld a, b
+    sub [hl]
+    ld b, a                     ; b = screen x of the centre
+    ld a, c
+    add HORIZON                 ; OAM y: a 16-high object whose bottom row is on that line
+    ldh [hObjY], a
+
+    ld hl, MouthSize0
+    ld a, c
+    cp MOUTH_D1
+    jr c, .sized
+    ld hl, MouthSize1
+    cp MOUTH_D2
+    jr c, .sized
+    ld hl, MouthSize2
+    cp MOUTH_D3
+    jr c, .sized
+    ld hl, MouthSize3
+.sized
+    ld a, [hl+]
+    ld c, a                     ; sprites in this size
+    ld de, wObjOam
+.sprite
+    ldh a, [hObjY]
+    ld [de], a
+    inc de
+    ld a, [hl+]
+    add b
+    ld [de], a                  ; x
+    inc de
+    ld a, [hl+]
+    ld [de], a                  ; tile
+    inc de
+    ld a, [hl+]
+    ld [de], a                  ; flip
+    inc de
+    dec c
+    jr nz, .sprite
+    ret
+.gone
+    xor a
+    ldh [hObjOn], a
+    ret
+
+; hl = track to continue on, a = 1 if that is the tunnel.  Takes effect half way through.
+StartFade:
+    ldh [hFadeTunnel], a
+    ld a, l
+    ldh [hFadeDest], a
+    ld a, h
+    ldh [hFadeDest + 1], a
+    ld a, 1
+    ldh [hFadeStep], a
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -408,27 +610,106 @@ Drive:
     or e
     ldh [hPosCoarse], a
 
-    ; --- the track: (frames, bend) pairs
-    ld hl, hScriptTimer
-    dec [hl]
-    jr nz, .haveTarget
-    ldh a, [hScript]
+    ; --- a fade in progress?  Half way through, in the dark, change track
+    ldh a, [hFadeStep]
+    or a
+    jr z, .fadeDone
+    inc a
+    cp FADE_LENGTH
+    jr c, .fadeStep
+    xor a
+.fadeStep
+    ldh [hFadeStep], a
+    cp FADE_LENGTH / 2
+    jr nz, .fadeLevel
+    ldh a, [hFadeDest]
+    ldh [hTrack], a
+    ldh a, [hFadeDest + 1]
+    ldh [hTrack + 1], a
+    ldh a, [hFadeTunnel]
+    ldh [hTunnel], a
+    ld a, 1
+    ldh [hScriptTimer], a
+    ld a, BEND_LEVELS           ; come out straight and centred
+    ldh [hBend], a
+    ldh [hTarget], a
+    xor a
+    ldh [hX], a
+    ldh [hX + 1], a
+    ldh [hVX], a
+    ldh [hObjOn], a
+.fadeLevel
+    ld c, 0
+    ldh a, [hFadeStep]
+    or a
+    jr z, .levelSet
+    rra
+    rra
+    rra
+    and 7
+    ld e, a
+    ld d, 0
+    ld hl, FadeLevels
+    add hl, de
+    ld c, [hl]
+.levelSet
+    ld a, c
+    ldh [hFadeLevel], a
     add a
     ld e, a
     ld d, 0
-    ld hl, Track
+    ld hl, SpriteFade           ; the sprites darken with the background
     add hl, de
     ld a, [hl+]
-    ldh [hScriptTimer], a
+    ldh [rOBP0], a
     ld a, [hl]
+    ldh [rOBP1], a
+.fadeDone
+
+    ; --- the track: (frames, bend, command) entries; 0 frames = "continue at this address"
+    ld hl, hScriptTimer
+    dec [hl]
+    jr nz, .haveTarget
+    ldh a, [hTrack]
+    ld l, a
+    ldh a, [hTrack + 1]
+    ld h, a
+.nextEntry
+    ld a, [hl+]
+    or a
+    jr nz, .entry
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    jr .nextEntry
+.entry
+    ldh [hScriptTimer], a
+    ld a, [hl+]
     ldh [hTarget], a
-    ldh a, [hScript]
-    inc a
-    cp (Track.end - Track) / 2
-    jr c, .scriptOk
+    ld a, [hl+]
+    ld c, a
+    ld a, l
+    ldh [hTrack], a
+    ld a, h
+    ldh [hTrack + 1], a
+    ld a, c
+    or a
+    jr z, .haveTarget
+    dec a
+    jr nz, .leaveTunnel
+    ldh a, [hPos + 1]           ; TRACK_MOUTH: a tunnel mouth appears up ahead
+    add LOW(SPAWN_DIST)
+    ldh [hObjZ], a
+    ldh a, [hPos + 2]
+    adc HIGH(SPAWN_DIST)
+    ldh [hObjZ + 1], a
+    ld a, 1
+    ldh [hObjOn], a
+    jr .haveTarget
+.leaveTunnel                    ; TRACK_EXIT: back up to the surface
+    ld hl, TrackRejoin
     xor a
-.scriptOk
-    ldh [hScript], a
+    call StartFade
 .haveTarget
 
     ; --- ease the bend toward it, one step a frame
@@ -644,19 +925,67 @@ Drive:
     ldh [hCarY], a
     ret
 
-; (frames to hold, bend 0..64 where 32 is straight)
+; Track entries: frames to hold, bend (0..64, 32 is straight), command.
+DEF TRACK_MOUTH EQU 1           ; a tunnel mouth appears ahead in the left lane
+DEF TRACK_EXIT  EQU 2           ; (in the tunnel) fade back to the surface at TrackRejoin
+MACRO TRACK_GOTO
+    db 0
+    dw \1
+ENDM
+
 Track:
-    db 120, 32
-    db 140, 44                  ; easy right
-    db 90, 32
-    db 170, 0                   ; hairpin left
-    db 60, 32
-    db 150, 64                  ; hairpin right
-    db 70, 18                   ; chicane
-    db 70, 46
-    db 120, 6
-    db 100, 32
-.end
+    db 120, 32, 0
+    db 140, 44, 0               ; easy right
+    db 90, 32, TRACK_MOUTH      ; fork: the tunnel on the left cuts out the hairpins
+    db 250, 32, 0
+    db 170, 0, 0                ; hairpin left
+    db 60, 32, 0
+    db 150, 64, 0               ; hairpin right
+    db 70, 18, 0                ; chicane
+    db 70, 46, 0
+TrackRejoin:
+    db 120, 6, 0
+    db 100, 32, 0
+    TRACK_GOTO Track
+
+TunnelTrack:
+    db 150, 32, 0
+    db 120, 40, 0
+    db 100, 26, 0
+    db 60, 32, TRACK_EXIT
+    db 255, 32, 0
+    TRACK_GOTO TunnelTrack
+
+FadeLevels:                     ; darkness for each eighth of a fade
+    db 1, 2, 3, 3, 3, 3, 2, 1
+
+SpriteFade:                     ; OBP0, OBP1 at each darkness
+    db %11100000, %10100000
+    db %11110100, %11110000
+    db %11111000, %11110000
+    db %11111100, %11110000
+
+; Sprites for each size of tunnel mouth: count, then (x offset from the centre, tile, flip).
+MouthSize0:
+    db 1
+    db 4, MOUTH_TILE, 0
+MouthSize1:
+    db 2
+    db 0, MOUTH_TILE + 2, 0
+    db 8, MOUTH_TILE + 2, OAMF_XFLIP
+MouthSize2:
+    db 4
+    db -8, MOUTH_TILE + 4, 0
+    db 0, MOUTH_TILE + 6, 0
+    db 8, MOUTH_TILE + 6, OAMF_XFLIP
+    db 16, MOUTH_TILE + 4, OAMF_XFLIP
+MouthSize3:
+    db 5
+    db -12, MOUTH_TILE + 8, 0
+    db -4, MOUTH_TILE + 10, 0
+    db 4, MOUTH_TILE + 12, 0
+    db 12, MOUTH_TILE + 10, OAMF_XFLIP
+    db 20, MOUTH_TILE + 8, OAMF_XFLIP
 
 ; ---------------------------------------------------------------------------------------
 StartSong:
@@ -761,6 +1090,18 @@ SECTION "row phase", ROM0, ALIGN[8]
 RowPhase:                       ; indexed by screen line
     INCBIN "build/rowphase.bin"
 
+SECTION "dist to line", ROM0, ALIGN[8]
+DistToLine:                     ; distance ahead / 8 -> ground line
+    INCBIN "build/dist.bin"
+
+SECTION "lane offsets", ROM0, ALIGN[8]
+LaneOffsets:                    ; ground line -> pixels from road centre to the left lane
+    INCBIN "build/lane.bin"
+
+SECTION "fade tables", ROM0, ALIGN[8]
+FadeTables:                     ; BGP -> BGP one, two, three shades darker
+    INCBIN "build/fade.bin"
+
 MACRO PAL_TABLE
 SECTION "pal \1", ROM0, ALIGN[8]
 Pal\1:
@@ -773,6 +1114,11 @@ ENDM
     PAL_TABLE Far0, far0
     PAL_TABLE Far1, far1
     PAL_TABLE Far2, far2
+    PAL_TABLE TNear0, tnear0
+    PAL_TABLE TNear1, tnear1
+    PAL_TABLE TNear2, tnear2
+    PAL_TABLE TNear3, tnear3
+    PAL_TABLE TFar, tfar
 
 SECTION "fzero gfx", ROMX, BANK[GFX_BANK]
 Tiles8000:
@@ -800,6 +1146,9 @@ SECTION "line buffers", WRAM0[$C100]
 wLinesA: ds 512
 wLinesB: ds 512
 
+SECTION "object oam", WRAM0
+wObjOam: ds OBJ_SPRITES * 4     ; staged here, copied to OAM in VBlank
+
 SECTION "note table", WRAM0
 wNoteTable:: ds 144
 
@@ -823,7 +1172,16 @@ hShadowTile:  db
 hAir:         db    ; nonzero while jumping
 hZ:           dw    ; height above the road, 8.8 pixels
 hVZ:          dw    ; upward speed, signed 8.8
-hScript:      db
+hTrack:       dw    ; next track entry
+hTunnel:      db    ; nonzero while underground
+hObjOn:       db    ; road object: 0 none, 1 approaching, 2 lane already tested
+hObjZ:        dw    ; its place along the track, same units as hPos + 1
+hObjY:        db
+hBuiltScx:    db    ; high byte of the SCX buffer BuildLines just filled
+hFadeStep:    db    ; 0 = not fading, else 1..FADE_LENGTH-1
+hFadeLevel:   db    ; current darkness, 0..3
+hFadeDest:    dw    ; track to switch to half way through the fade
+hFadeTunnel:  db    ; and whether that track is the tunnel
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db

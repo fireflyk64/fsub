@@ -402,6 +402,77 @@ def car_tiles():
     return bytes(out)
 
 
+# Road objects are sprites drawn at a few sizes and swapped as they come closer.
+MOUTH_SIZES = ((8, 4), (16, 8), (32, 12), (40, 16))      # tunnel mouth, width x height
+MOUTH_FROM = (0, 24, 48, 80)                             # ground line d each size starts at
+LANE = -28              # centre of the left lane, world units from the centre line
+SPAWN_DIST = 1024       # how far ahead road objects appear
+CAR_D = 88              # ground line d where an object reaches the car
+
+
+def mouth_image(w, h):
+    """A dark ramp going down into the road: lit rim at the far end and sides, open near end."""
+    img = [[0] * w for _ in range(16)]
+
+    def inside(x, y):
+        half = (0.74 + 0.26 * y / max(1, h - 1)) * w / 2.0
+        return 0 <= y < h and abs(x + 0.5 - w / 2.0) <= half
+
+    for y in range(h):
+        for x in range(w):
+            if not inside(x, y):
+                continue
+            rim = y == 0 or not inside(x - 1, y) or not inside(x + 1, y)
+            c = 1 if rim else (2 if h >= 8 and y % 3 == 2 else 3)
+            img[16 - h + y][x] = c                # bottom-aligned in the 8x16 objects
+    return img
+
+
+def mouth_tiles():
+    """Left halves only (plus the centre column of the 40-wide one); the rest is mirrored."""
+    out = bytearray()
+    for w, h in MOUTH_SIZES:
+        img = mouth_image(w, h)
+        for col in range((w // 8 + 1) // 2):
+            out += pack_object([r[col * 8:col * 8 + 8] for r in img])
+    return bytes(out)
+
+
+def dist_to_line():
+    """Distance ahead (in steps of 8 units) -> ground line d it appears on (255 = behind us)."""
+    out = []
+    for i in range(256):
+        d = int(round(DEPTH / (i * 8 + 4)))
+        out.append(d if d <= GROUND else 255)
+    return out
+
+
+def lane_offsets():
+    """Ground line d -> how far the lane centre is from the road centre there, in pixels."""
+    return [int(round(LANE * d / GROUND)) & 255 for d in range(128)]
+
+
+def tunnel_pal_tables():
+    """Inside the tunnel: black walls with ribs of light sweeping past, same road."""
+    a = [0 if i % 64 < 6 else (2 if i % 64 < 10 else 3) for i in range(256)]
+    b = [1 if i % 64 < 6 else 3 for i in range(256)]
+    tabs = []
+    for name, win in (("TNear0", 1), ("TNear1", 5), ("TNear2", 11), ("TNear3", 21)):
+        sa, sb = smooth(a, win), smooth(b, win)
+        tabs.append((name, [bgp(3, 1, sa[i], sb[i]) for i in range(256)]))
+    tabs.append(("TFar", [bgp(3, 1, 3, 3)] * 256))
+    return tabs
+
+
+def fade_tables():
+    """BGP value -> the same palette 1, 2 or 3 shades darker."""
+    out = []
+    for n in (1, 2, 3):
+        for v in range(256):
+            out.append(bgp(*[min(3, ((v >> (i * 2)) & 3) + n) for i in range(4)]))
+    return out
+
+
 def shear_tables():
     """Camera moved sideways: lines slide in proportion to how near they are."""
     return [[int(round(s * d / GROUND)) & 255 for d in range(1, GROUND + 1)]
@@ -496,7 +567,11 @@ def main():
     for name, blk in zip(("tiles8000.bin", "tiles9000.bin", "tiles8800.bin"), blocks):
         put(name, b"".join(blk))
     put("map.bin", tilemap)
-    put("car.bin", car_tiles())
+    put("car.bin", car_tiles() + mouth_tiles())
+    put("dist.bin", dist_to_line())
+    put("lane.bin", lane_offsets())
+    put("fade.bin", fade_tables())
+    tabs = tabs + tunnel_pal_tables()
     put("rowphase.bin", row_phase())
     put("skybgp.bin", sky_bgp())
     put("bend.bin", [v for row in bends for v in row])
@@ -510,9 +585,17 @@ def main():
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {split_line}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
+        f.write(f"DEF SPAWN_DIST EQU {SPAWN_DIST}\nDEF CAR_D EQU {CAR_D}\n")
+        f.write(f"DEF MOUTH_D1 EQU {MOUTH_FROM[1]}\nDEF MOUTH_D2 EQU {MOUTH_FROM[2]}\n")
+        f.write(f"DEF MOUTH_D3 EQU {MOUTH_FROM[3]}\n")
         f.write("MACRO FILL_ALL_BANDS\n")
         for lo, hi, name, coarse in BANDS:
             f.write(f"    FILL_BAND Pal{name}, {HORIZON + hi}, {1 if coarse else 0}\n")
+        f.write("ENDM\n")
+        f.write("MACRO FILL_TUNNEL_BANDS\n")
+        for lo, hi, name, coarse in BANDS:
+            tname = "TFar" if coarse else "T" + name
+            f.write(f"    FILL_BAND Pal{tname}, {HORIZON + hi}, {1 if coarse else 0}\n")
         f.write("ENDM\n")
 
 
