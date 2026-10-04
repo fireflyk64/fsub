@@ -19,6 +19,9 @@
 ; into it and the screen fades out, the track switches to the tunnel branch, and it fades
 ; back in.  The tunnel itself is the same tilemap under darker palette tables.
 ;
+; Rivals: every car uses the same tiles.  A livery is a sprite palette, and OBP1 is one more
+; register rewritten per scanline, so each rival gets its own paint on the lines it occupies.
+;
 ; Controls: Left/Right steer, Up/Down change speed, A jumps.
 ;
 ; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
@@ -26,7 +29,8 @@
 INCLUDE "include/hardware.inc"
 INCLUDE "build/consts.inc"
 
-DEF GFX_BANK    EQU 2
+DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every frame
+DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
 DEF LCDC_UPPER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8000 | LCDCF_BG9800
 DEF LCDC_LOWER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8800 | LCDCF_BG9800
 DEF SPEED_START EQU $0300       ; world units per frame, 8.8
@@ -34,8 +38,16 @@ DEF SPEED_MAX   EQU $08
 DEF STAR_LINES  EQU 16          ; top lines scroll at half the skyline's rate
 DEF CAR_X       EQU 72          ; screen position when centred
 DEF CAR_Y       EQU 118
-DEF SHADOW_TILE EQU CAR_TILE + 12
-DEF MOUTH_TILE  EQU CAR_TILE + 16
+DEF SHADOW_TILE EQU CAR_TILE + 2
+DEF MOUTH_TILE  EQU CAR_TILE + 6
+DEF CAR12_TILE  EQU CAR_TILE + 20  ; the car at 12, 8 and 4 pixels, for rivals up the road
+DEF CAR8_TILE   EQU CAR_TILE + 22
+DEF CAR4_TILE   EQU CAR_TILE + 24
+DEF NUM_RIVALS  EQU 7
+DEF RIVAL_OAM   EQU 9 * 4       ; rivals take OAM entries from here to the end
+DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
+DEF RESPAWN_AHEAD  EQU 3000     ; rivals left far behind come round again up the road
+DEF RESPAWN_BEHIND EQU -1500    ; and ones that got far ahead come up from behind
 DEF OBJ_SPRITES EQU 5           ; OAM entries kept for the road object
 DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
 DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
@@ -66,6 +78,9 @@ StatISR:
     inc h
     ld a, [hl]
     ldh [rSCX], a
+    inc h
+    ld a, [hl]
+    ldh [rOBP1], a
     ld a, l
     cp SPLIT_LINE
     jr z, .split
@@ -89,12 +104,13 @@ SECTION "fzero code", ROM0
 VBlankISR:
     push af
     push hl
-    ldh a, [hReady]             ; a finished buffer waiting?  make it the live one
+    ldh a, [hReady]             ; a finished frame waiting?  make it the live one
     or a
     jr z, .keep
     ldh [hFront], a
     xor a
     ldh [hReady], a
+    call hDma                   ; and its sprites with it
 .keep
     ldh a, [hFront]
     ld h, a
@@ -104,37 +120,11 @@ VBlankISR:
     inc h
     ld a, [hl]
     ldh [rSCX], a
+    inc h
+    ld a, [hl]
+    ldh [rOBP1], a
     ld a, LCDC_UPPER
     ldh [rLCDC], a
-    ldh a, [hCarY]              ; OAM can only be written safely now
-    ld [_OAMRAM], a
-    ld [_OAMRAM + 4], a
-    ldh a, [hCarX]
-    ld [_OAMRAM + 1], a
-    ld [_OAMRAM + 9], a
-    add 8
-    ld [_OAMRAM + 5], a
-    ld [_OAMRAM + 13], a
-    ldh a, [hCarTile]
-    ld [_OAMRAM + 2], a
-    add 2
-    ld [_OAMRAM + 6], a
-    ldh a, [hShadowTile]
-    ld [_OAMRAM + 10], a
-    ld [_OAMRAM + 14], a
-    push bc
-    push de
-    ld hl, wObjOam
-    ld de, _OAMRAM + 16
-    ld b, OBJ_SPRITES * 4
-.objOam
-    ld a, [hl+]
-    ld [de], a
-    inc e
-    dec b
-    jr nz, .objOam
-    pop de
-    pop bc
     ld a, 1
     ldh [hVBlank], a
     pop hl
@@ -151,7 +141,7 @@ EntryPoint:
     xor a
     ldh [rLCDC], a
 
-    ld a, GFX_BANK
+    ld a, TILE_BANK
     ld [rROMB0], a
     ld de, Tiles8000
     ld hl, _VRAM8000
@@ -174,7 +164,7 @@ EntryPoint:
     ld bc, Tilemap.end - Tilemap
     call Copy
 
-    ; sprites: the car is two 8x16 objects side by side, its shadow two more behind it
+    ; sprites are staged in wOam and sent to the screen by DMA in VBlank
     ld hl, _OAMRAM
     ld b, 160
     xor a
@@ -182,14 +172,29 @@ EntryPoint:
     ld [hl+], a
     dec b
     jr nz, .clearOam
-    ld de, InitialOam
-    ld hl, _OAMRAM
-    ld bc, InitialOam.end - InitialOam
+    ld hl, wOam
+    ld b, 160
+.clearStage
+    ld [hl+], a
+    dec b
+    jr nz, .clearStage
+    ld de, DmaCode
+    ld hl, hDma
+    ld bc, DmaCode.end - DmaCode
     call Copy
-    ld a, %11100000             ; car: 1 white, 2 dark grey, 3 black
+    ld de, RivalStart
+    ld hl, wRivals
+    ld bc, NUM_RIVALS * 8
+    call Copy
+    ld hl, wOrder
+    xor a
+.order
+    ld [hl+], a
+    inc a
+    cp NUM_RIVALS
+    jr nz, .order
+    ld a, %11100000             ; player: 1 white, 2 dark grey, 3 black
     ldh [rOBP0], a
-    ld a, %10100000             ; shadow: all dark grey
-    ldh [rOBP1], a
 
     ; both line buffers: sky palette for the top, something sane for the rest
     ld hl, wLinesA
@@ -239,8 +244,10 @@ EntryPoint:
     ldh [hCarY], a
     ld a, CAR_X + 8
     ldh [hCarX], a
-    ld a, CAR_TILE
-    ldh [hCarTile], a
+    xor a
+    ldh [hLean], a
+    ld a, 3
+    ldh [hSkyStale], a
     ld a, SHEAR_MAX
     ldh [hShear], a
     ld a, SHADOW_TILE
@@ -281,6 +288,11 @@ MainLoop:
     call Drive
     call BuildLines
     call UpdateObject
+    call UpdateRivals
+    call PlayerSprites
+    ldh a, [hBuiltScx]          ; everything for this frame is staged: let VBlank show it
+    dec a
+    ldh [hReady], a
     call SongBank
     call hUGE_dosound
     ldh a, [rLY]                ; load meter: the line on which this frame's work ended
@@ -288,29 +300,25 @@ MainLoop:
     jr MainLoop
 
 ; ---------------------------------------------------------------------------------------
-; Fill one distance band of the BGP buffer.
-; \1 = palette table for the band, \2 = first line after the band, \3 = 1 for far bands
-; in: b = high byte of the BGP buffer, de = RowPhase + line.  e carries on into the next band.
+; Filling the BGP buffer.  FILL_BAND picks a distance band's palette table and how far we
+; have driven in that table's units; FILL_LINE then does one line, whose depth is a constant
+; in the code (tools/gen_gfx.py writes the list).  de = where the line's BGP goes.
 MACRO FILL_BAND
-    IF \3
+    IF \2
         ldh a, [hPosCoarse]
     ELSE
         ldh a, [hPos + 1]
     ENDC
     ld c, a
     ld h, HIGH(\1)
-.line\@
-    ld a, [de]                  ; this line's depth
-    add c                       ; plus distance driven
+ENDM
+MACRO FILL_LINE
+    ld a, c                     ; distance driven
+    add \1                      ; plus this line's depth
     ld l, a
     ld a, [hl]                  ; -> what the city looks like there
-    ld d, b
     ld [de], a
-    ld d, HIGH(RowPhase)
     inc e
-    ld a, e
-    cp \2
-    jr nz, .line\@
 ENDM
 
 BuildLines:
@@ -318,12 +326,36 @@ BuildLines:
     xor HIGH(wLinesA) ^ HIGH(wLinesB)
     ld b, a                     ; b = the buffer not on screen
 
-    ld d, HIGH(RowPhase)
+    ldh a, [hFadeLevel]
+    or a
+    jr z, .lit
+    ld a, 3
+    ldh [hSkyStale], a          ; fades scribble on the sky lines: redo them afterwards
+    ldh a, [hFadeLevel]
+    cp 3
+    jr nz, .lit
+    ld h, b                     ; fully dark: nothing to work out
+    ld l, 0
+    ld a, $FF
+.black
+    ld [hl+], a
+    ld a, l
+    cp 144
+    ld a, $FF
+    jr nz, .black
+    jp .bgpReady
+.lit
+    ld d, b
     ld e, HORIZON
     ldh a, [hTunnel]
     or a
     jp nz, .tunnel
     FILL_ALL_BANDS
+    ldh a, [hSkyStale]
+    or a
+    jp z, .bgpDone
+    dec a
+    ldh [hSkyStale], a
     ld de, SkyBgp               ; sky fades toward the horizon glow
     ld h, b
     ld l, 0
@@ -351,21 +383,23 @@ BuildLines:
     ; fading: push every line's palette through a "darker" table
     ldh a, [hFadeLevel]
     or a
-    jr z, .noFade
+    jr z, .bgpReady
     add HIGH(FadeTables) - 1
     ld h, a
     ld d, b
     ld e, 0
 .fade
-    ld a, [de]
-    ld l, a
-    ld a, [hl]
-    ld [de], a
-    inc e
+    REPT 8
+        ld a, [de]
+        ld l, a
+        ld a, [hl]
+        ld [de], a
+        inc e
+    ENDR
     ld a, e
     cp 144
     jr nz, .fade
-.noFade
+.bgpReady
 
     ; SCX: stars, skyline, then the bend table for the ground
     inc b
@@ -412,20 +446,354 @@ BuildLines:
     ld l, a
     ld e, HORIZON
 .ground
-    ld a, [bc]
-    add [hl]
-    inc bc
-    inc hl
-    ld [de], a
-    inc e
+    REPT 8
+        ld a, [bc]
+        add [hl]
+        inc bc
+        inc hl
+        ld [de], a
+        inc e
+    ENDR
     ld a, e
     cp 144
     jr nz, .ground
 
     ld a, d
-    ldh [hBuiltScx], a          ; UpdateObject looks up where the road is on each line
+    ldh [hBuiltScx], a          ; sprites look up where the road is on each line
+    ret
+
+; ---------------------------------------------------------------------------------------
+; The player's car and shadow.  Leaning is free: the two halves sit a pixel apart.
+PlayerSprites:
+    ld hl, wOam
+    ldh a, [hLean]
+    ld c, a
+    ldh a, [hCarY]
+    ld b, a
+    bit 0, c                    ; leaning left: left half lower
+    jr z, .leftY
+    inc a
+.leftY
+    ld [hl+], a
+    ldh a, [hCarX]
+    ld e, a
+    ld [hl+], a
+    ld a, CAR_TILE
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    ld a, b
+    bit 1, c                    ; leaning right: right half lower
+    jr z, .rightY
+    inc a
+.rightY
+    ld [hl+], a
+    ld a, e
+    add 8
+    ld d, a
+    ld [hl+], a
+    ld a, CAR_TILE
+    ld [hl+], a
+    ld a, OAMF_XFLIP
+    ld [hl+], a
+    ldh a, [hShadowTile]
+    ld c, a
+    ld a, CAR_Y + 30
+    ld [hl+], a
+    ld a, e
+    ld [hl+], a
+    ld a, c
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    ld a, CAR_Y + 30
+    ld [hl+], a
+    ld a, d
+    ld [hl+], a
+    ld a, c
+    ld [hl+], a
+    ld [hl], OAMF_XFLIP
+    ret
+
+; ---------------------------------------------------------------------------------------
+; Rivals.  Each keeps a distance ahead of the camera; from that comes the line it is on, its
+; size, and (with that line's SCX) where the road is under it.  They are drawn far to near so
+; that where two share scanlines the nearer one's paint wins.
+UpdateRivals:
+    ; one pass of a bubble sort a frame keeps wOrder far-to-near: the order changes slowly
+    ld hl, wOrder
+    ld b, NUM_RIVALS - 1
+.pair
+    push hl
+    ld a, [hl+]
+    ld e, [hl]
+    add a
+    add a
+    add a
+    inc a
+    ld c, a
+    ld a, e
+    add a
+    add a
+    add a
+    inc a
+    ld e, a
+    ld d, HIGH(wRivals)
+    ld h, d
+    ld l, c
+    ld a, [de]
+    ld c, a
+    ld a, [hl+]
+    sub c
+    inc e
+    ld a, [de]
+    ld c, a
+    ld a, [hl]
+    sbc c                       ; first - second, negative if the first is nearer
+    pop hl
+    bit 7, a
+    jr z, .sorted
+    ld a, [hl+]
+    ld c, [hl]
+    ld [hl-], a
+    ld [hl], c
+.sorted
+    inc hl
+    dec b
+    jr nz, .pair
+
+    ld a, RIVAL_OAM
+    ldh [hOamPtr], a
+    xor a
+.each
+    ldh [hRivalIdx], a
+    ld e, a
+    ld d, 0
+    ld hl, wOrder
+    add hl, de
+    ld a, [hl]
+    add a
+    add a
+    add a
+    ld l, a
+    ld h, HIGH(wRivals)
+    call .one
+    ldh a, [hRivalIdx]
+    inc a
+    cp NUM_RIVALS
+    jr nz, .each
+
+    ldh a, [hOamPtr]            ; park the OAM entries nobody used
+    ld l, a
+    ld h, HIGH(wOam)
+.hide
+    ld a, l
+    cp 160
+    ret nc
+    ld [hl], 0
+    add 4
+    ld l, a
+    jr .hide
+
+; hl = this rival's record
+.one
+    ; distance += its speed - ours
+    push hl
+    inc l
+    inc l
+    inc l
+    ldh a, [hSpeed]
+    ld c, a
+    ldh a, [hSpeed + 1]
+    ld b, a
+    ld a, [hl+]
+    sub c
+    ld e, a
+    ld a, [hl]
+    sbc b
+    ld d, a
+    add a
+    sbc a
+    ld b, a                     ; sign of the difference, for the top byte
+    pop hl
+    ld a, [hl]
+    add e
+    ld [hl+], a
+    ld a, [hl]
+    adc d
+    ld [hl+], a
+    ld c, a
+    ld a, [hl]
+    adc b
+    ld [hl], a
+    ld b, a                     ; bc = whole units ahead of the camera
+    ; lapped, or left behind?  bring it back round
+    add 8                       ; -2048..4095 is "in play"
+    cp 24
+    jr c, .inPlay
+    dec l
+    bit 7, b
+    jr z, .tooFar
+    ld a, LOW(RESPAWN_AHEAD)
+    ld [hl+], a
+    ld [hl], HIGH(RESPAWN_AHEAD)
+    ret
+.tooFar
+    ld a, LOW(RESPAWN_BEHIND)
+    ld [hl+], a
+    ld [hl], HIGH(RESPAWN_BEHIND)
+    ret
+.inPlay
+    ld a, b
+    cp 8
+    ret nc                      ; behind us, or beyond the horizon
+    inc l
+    inc l
+    inc l
+    ld a, [hl+]
+    ldh [hRLane], a
+    ld a, [hl]
+    ldh [hRPaint], a
+    srl b
+    rr c
+    srl b
+    rr c
+    srl b
+    rr c
+    ld l, c
+    ld h, HIGH(DistToLine)
+    ld a, [hl]                  ; ground line d
+    cp GROUND_LINES + 1
+    ret nc
+    cp RIVAL_D4
+    ret c
+    ld c, a
+
+    ; --- touching the player?  same depth, overlapping across the road, both on the ground
+    sub PLAYER_D - 7
+    cp 15
+    jr nc, .noHit
+    ldh a, [hAir]
+    or a
+    jr nz, .noHit
+    ldh a, [hRLane]
+    ld e, a
+    ld d, 0
+    ld hl, RivalLaneU
+    add hl, de
+    ld e, [hl]
+    ldh a, [hX + 1]
+    sub e                       ; our x - its x
+    ld d, a
+    add 13
+    cp 27
+    jr nc, .noHit
+    ld a, STEER_MAX             ; shoved away from it...
+    bit 7, d
+    jr z, .shove
+    ld a, -STEER_MAX
+.shove
+    ldh [hVX], a
+    ldh a, [hSpeed + 1]         ; ...and it costs speed
+    cp 2
+    jr c, .noHit
+    ldh a, [hSpeed]
+    sub $30
+    ldh [hSpeed], a
+    jr nc, .noHit
+    ldh a, [hSpeed + 1]
     dec a
-    ldh [hReady], a             ; VBlank will show it
+    ldh [hSpeed + 1], a
+.noHit
+
+    ; --- where is its lane on that line?
+    ldh a, [hRLane]
+    ld l, c
+    srl a
+    jr nc, .evenLane
+    set 7, l
+.evenLane
+    add HIGH(RivalLanes)
+    ld h, a
+    ld a, [hl]
+    add 128
+    ld b, a
+    ldh a, [hBuiltScx]
+    ld h, a
+    ld a, c
+    add HORIZON - 1
+    ld l, a
+    ld a, b
+    sub [hl]
+    ld b, a                     ; b = screen x of its centre
+
+    ; --- its paint on the lines it covers.  During a fade it borrows the player's palette,
+    ; which is being darkened anyway.
+    ld a, $FF
+    ldh [hAttrMask], a
+    ldh a, [hFadeLevel]
+    or a
+    jr z, .paintIt
+    ld a, ~OAMF_PAL1
+    ldh [hAttrMask], a
+    jr .painted
+.paintIt
+    inc h                       ; OBP1 page, l = its bottom line
+    ldh a, [hRPaint]
+    ld d, 18
+.paint
+    ld [hl], a
+    dec l
+    dec d
+    jr nz, .paint
+.painted
+
+    ld a, c
+    add HORIZON
+    ldh [hObjY], a
+    ld hl, RivalSize16
+    ld a, c
+    cp RIVAL_D16
+    jr nc, .sized
+    ld hl, RivalSize12
+    cp RIVAL_D12
+    jr nc, .sized
+    ld hl, RivalSize8
+    cp RIVAL_D8
+    jr nc, .sized
+    ld hl, RivalSize4
+.sized
+    ld a, [hl+]
+    ld c, a
+    ldh a, [hOamPtr]
+    ld e, a
+    ld d, HIGH(wOam)
+.sprite
+    ld a, e
+    cp 160
+    jr nc, .oamFull
+    ldh a, [hObjY]
+    add [hl]
+    inc hl
+    ld [de], a
+    inc e
+    ld a, [hl+]
+    add b
+    ld [de], a
+    inc e
+    ld a, [hl+]
+    ld [de], a
+    inc e
+    ldh a, [hAttrMask]
+    and [hl]
+    inc hl
+    ld [de], a
+    inc e
+    dec c
+    jr nz, .sprite
+.oamFull
+    ld a, e
+    ldh [hOamPtr], a
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -854,18 +1222,18 @@ Drive:
     ldh [hShear], a
 
     ; --- lean into the turn
-    ld c, CAR_TILE
+    ld c, 0
     ld a, b
     add BANK_AT - 1
     cp BANK_AT * 2 - 1
     jr c, .leanDone             ; |speed| < BANK_AT
-    ld c, CAR_TILE + 4          ; left
+    inc c                       ; left
     bit 7, b
     jr nz, .leanDone
-    ld c, CAR_TILE + 8          ; right
+    inc c                       ; right
 .leanDone
     ld a, c
-    ldh [hCarTile], a
+    ldh [hLean], a
 
     ; --- jumping: A launches the car; the shadow stays on the road
     ldh a, [hAir]
@@ -960,10 +1328,10 @@ FadeLevels:                     ; darkness for each eighth of a fade
     db 1, 2, 3, 3, 3, 3, 2, 1
 
 SpriteFade:                     ; OBP0, OBP1 at each darkness
-    db %11100000, %10100000
-    db %11110100, %11110000
-    db %11111000, %11110000
-    db %11111100, %11110000
+    db %11100000, %11100000
+    db %11110100, %11110100
+    db %11111000, %11111000
+    db %11111100, %11111100
 
 ; Sprites for each size of tunnel mouth: count, then (x offset from the centre, tile, flip).
 MouthSize0:
@@ -987,6 +1355,55 @@ MouthSize3:
     db 12, MOUTH_TILE + 10, OAMF_XFLIP
     db 20, MOUTH_TILE + 8, OAMF_XFLIP
 
+; Sprites for each size of rival: count, then (y offset, x offset, tile, attributes).
+DEF RP EQU OAMF_PAL1
+DEF RPX EQU OAMF_PAL1 | OAMF_XFLIP
+RivalSize16:
+    db 4
+    db -2, 0, CAR_TILE, RP
+    db -2, 8, CAR_TILE, RPX
+    db 13, 0, SHADOW_TILE, RP
+    db 13, 8, SHADOW_TILE, RPX
+RivalSize12:
+    db 2
+    db -1, 0, CAR12_TILE, RP
+    db -1, 8, CAR12_TILE, RPX
+RivalSize8:
+    db 1
+    db -1, 4, CAR8_TILE, RP
+RivalSize4:
+    db 1
+    db 0, 4, CAR4_TILE, RP
+
+RivalLaneU:
+    RIVAL_LANE_U
+
+; Each rival: distance ahead (fraction, low, high), speed 8.8, lane, paint, spare.
+; Paint is an OBP1 value.  Colour 2 stays dark grey in all of them so shadows work.
+MACRO RIVAL
+    db 0
+    dw \1, \2
+    db \3, \4, 0
+ENDM
+RivalStart:
+    RIVAL 400, $02C0, 0, %11100100   ; grey, black trim
+    RIVAL 700, $0300, 3, %00101100   ; black, white trim
+    RIVAL 1100, $02A0, 1, %01101100  ; black, grey trim
+    RIVAL 1500, $0340, 2, %01100000  ; white, grey trim
+    RIVAL 2200, $0290, 3, %00100100  ; grey, white trim
+    RIVAL 2900, $0320, 0, %11101000  ; dark, black trim
+    RIVAL -600, $0360, 2, %00101000  ; dark, white trim
+
+DmaCode:                        ; runs from HRAM: nothing else is readable during DMA
+    ld a, HIGH(wOam)
+    ldh [rDMA], a
+    ld a, 40
+.wait
+    dec a
+    jr nz, .wait
+    ret
+.end
+
 ; ---------------------------------------------------------------------------------------
 StartSong:
     call SongBank
@@ -998,14 +1415,7 @@ SongBank:
     ld [rROMB0], a
     ret
 
-InitialOam:
-    db CAR_Y + 16, CAR_X + 8, CAR_TILE, 0
-    db CAR_Y + 16, CAR_X + 16, CAR_TILE + 2, 0
-    db CAR_Y + 30, CAR_X + 8, SHADOW_TILE, OAMF_PAL1
-    db CAR_Y + 30, CAR_X + 16, SHADOW_TILE, OAMF_PAL1 | OAMF_XFLIP
-.end
-
-; hl = BGP page of a buffer (SCX page follows it)
+; hl = BGP page of a buffer (SCX and OBP1 pages follow it)
 InitLines:
     ld de, SkyBgp
     ld b, HORIZON
@@ -1027,6 +1437,12 @@ InitLines:
     inc l
     dec l
     jr nz, .scx
+    ld a, %11100000
+.obp
+    ld [hl+], a
+    inc l
+    dec l
+    jr nz, .obp
     ret
 
 ; de = source, hl = destination, bc = length
@@ -1078,18 +1494,11 @@ ShearPointers:
         dw ShearTables + N * GROUND_LINES
     ENDR
 
-BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
-    INCBIN "build/bend.bin"
-
 SkyBgp:
     INCBIN "build/skybgp.bin"
 
 ; ---------------------------------------------------------------------------------------
 ; Page-aligned lookups: the low byte of the address is the index.
-SECTION "row phase", ROM0, ALIGN[8]
-RowPhase:                       ; indexed by screen line
-    INCBIN "build/rowphase.bin"
-
 SECTION "dist to line", ROM0, ALIGN[8]
 DistToLine:                     ; distance ahead / 8 -> ground line
     INCBIN "build/dist.bin"
@@ -1097,6 +1506,10 @@ DistToLine:                     ; distance ahead / 8 -> ground line
 SECTION "lane offsets", ROM0, ALIGN[8]
 LaneOffsets:                    ; ground line -> pixels from road centre to the left lane
     INCBIN "build/lane.bin"
+
+SECTION "rival lanes", ROM0, ALIGN[8]
+RivalLanes:                     ; lane * 128 + ground line -> pixels from the road centre
+    INCBIN "build/rlane.bin"
 
 SECTION "fade tables", ROM0, ALIGN[8]
 FadeTables:                     ; BGP -> BGP one, two, three shades darker
@@ -1120,7 +1533,7 @@ ENDM
     PAL_TABLE TNear3, tnear3
     PAL_TABLE TFar, tfar
 
-SECTION "fzero gfx", ROMX, BANK[GFX_BANK]
+SECTION "fzero tiles", ROMX, BANK[TILE_BANK]
 Tiles8000:
     INCBIN "build/tiles8000.bin"
 .end
@@ -1136,18 +1549,30 @@ CarTiles:
 Tilemap:
     INCBIN "build/map.bin"
 .end
+
+SECTION "fzero line tables", ROMX, BANK[GFX_BANK]
+BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
+    INCBIN "build/bend.bin"
 ShearTables:                    ; (SHEAR_MAX*2+1) x GROUND_LINES amounts to add to SCX
     INCBIN "build/shear.bin"
 
 ; ---------------------------------------------------------------------------------------
 ; Two sets of per-line values; one is on screen while the other is being filled.
-; Each is a BGP page followed by an SCX page, indexed by screen line.
+; Each is a BGP page, an SCX page and an OBP1 page, indexed by screen line.
 SECTION "line buffers", WRAM0[$C100]
-wLinesA: ds 512
-wLinesB: ds 512
+wLinesA: ds 768
+wLinesB: ds 768
 
-SECTION "object oam", WRAM0
-wObjOam: ds OBJ_SPRITES * 4     ; staged here, copied to OAM in VBlank
+SECTION "staged oam", WRAM0[$C700]
+wOam:                           ; copied to OAM by DMA in VBlank
+    ds 16                       ; player car and shadow
+wObjOam:
+    ds OBJ_SPRITES * 4          ; road object
+    ds 160 - 16 - OBJ_SPRITES * 4   ; rivals
+
+SECTION "rivals", WRAM0[$C800]
+wRivals: ds NUM_RIVALS * 8
+wOrder:  ds NUM_RIVALS          ; rival numbers, far to near
 
 SECTION "note table", WRAM0
 wNoteTable:: ds 144
@@ -1167,7 +1592,14 @@ hX:           dw    ; car's place across the road, 8.8 pixels, 0 = centre line
 hVX:          db    ; sideways speed, signed, 1/16 pixel per frame
 hShear:       db    ; camera's place across the road, 0..SHEAR_MAX*2
 hCarX:        db
-hCarTile:     db
+hLean:        db    ; 0 level, 1 leaning left, 2 leaning right
+hOamPtr:      db    ; next free byte of wOam while rivals are drawn
+hRivalIdx:    db
+hRLane:       db
+hRPaint:      db
+hAttrMask:    db
+hSkyStale:    db    ; frames for which the sky lines still need rewriting
+hDma:         ds 10 ; the DMA routine
 hShadowTile:  db
 hAir:         db    ; nonzero while jumping
 hZ:           dw    ; height above the road, 8.8 pixels

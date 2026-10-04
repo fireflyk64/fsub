@@ -375,31 +375,62 @@ def pack_object(rows):
     return bytes(out)
 
 
-def car_frames():
-    """Straight, banking left, banking right.  Banking drops one side by a pixel."""
+def car_image():
+    """The 16x16 car.  It is symmetrical, so only the left half is stored; the right half is
+    the same object mirrored.  Every car on the track uses these tiles: liveries are palettes."""
     rows = CAR.strip().split("\n")
-    assert len(rows) == 16 and all(len(r) == 16 for r in rows)
-    base = [[0 if c == "." else int(c) for c in r] for r in rows]
-    frames = []
-    for lean in (0, -1, 1):
-        img = [[0] * 16 for _ in range(16)]
-        for y in range(16):
-            for x in range(16):
-                yy = y + int(round((x - 7.5) * 0.14 * lean))
-                if 0 <= yy < 16:
-                    img[yy][x] = base[y][x]
-        frames.append(img)
-    return frames
+    assert len(rows) == 16 and all(len(r) == 16 and r == r[::-1] for r in rows)
+    return [[0 if c == "." else int(c) for c in r] for r in rows]
+
+
+RIVAL_SIZES = (12, 8, 4)        # smaller copies of the car for rivals further up the road
+RIVAL_FROM = (80, 52, 30, 8)    # ground line d where the 16, 12, 8 and 4 pixel cars start
+RIVAL_LANES = (-36, -12, 12, 36)
+
+
+def shrink(img, n):
+    """Scale the 16x16 car down to n x n, keeping the outline where it can."""
+    out = [[0] * n for _ in range(n)]
+    for y in range(n):
+        for x in range(n):
+            votes = [0, 0, 0, 0]
+            for yy in range(y * 16 // n, max(y * 16 // n + 1, (y + 1) * 16 // n)):
+                for xx in range(x * 16 // n, max(x * 16 // n + 1, (x + 1) * 16 // n)):
+                    votes[img[yy][xx]] += 1
+            solid = sum(votes[1:])
+            if solid * 2 >= sum(votes):
+                out[y][x] = max((1, 2, 3), key=lambda c: (votes[c], c == 3))
+    return out
+
+
+def small_car_objects():
+    """8x16 objects for the shrunken cars, each drawn sitting on the bottom row."""
+    objs = []
+    for n in RIVAL_SIZES:
+        img = shrink(car_image(), n)
+        obj = [[0] * 8 for _ in range(16)]
+        for y in range(n):
+            for x in range(n):
+                if n > 8:                         # left half only, against the right edge
+                    if x < n // 2:
+                        obj[16 - n + y][8 - n // 2 + x] = img[y][x]
+                else:                             # whole car, centred
+                    obj[16 - n + y][(8 - n) // 2 + x] = img[y][x]
+        objs.append(obj)
+    return objs
 
 
 def car_tiles():
-    out = bytearray()
-    for img in car_frames():
-        out += pack_object([r[:8] for r in img]) + pack_object([r[8:] for r in img])
+    out = bytearray(pack_object([r[:8] for r in car_image()]))
     for art in (SHADOW, SHADOW_SMALL):            # left halves; the right is the mirror image
         shadow = [[0 if c == "." else int(c) for c in r] for r in art.strip().split("\n")]
         out += pack_object(shadow + [[0] * 8] * 12)
     return bytes(out)
+
+
+def rival_lane_tables():
+    """For each rival lane: ground line d -> pixels from the road centre."""
+    return [int(round(u * d / GROUND)) & 255 for u in RIVAL_LANES for d in range(128)]
 
 
 # Road objects are sprites drawn at a few sizes and swapped as they come closer.
@@ -567,12 +598,13 @@ def main():
     for name, blk in zip(("tiles8000.bin", "tiles9000.bin", "tiles8800.bin"), blocks):
         put(name, b"".join(blk))
     put("map.bin", tilemap)
-    put("car.bin", car_tiles() + mouth_tiles())
+    put("car.bin", car_tiles() + mouth_tiles()
+        + b"".join(pack_object(o) for o in small_car_objects()))
+    put("rlane.bin", rival_lane_tables())
     put("dist.bin", dist_to_line())
     put("lane.bin", lane_offsets())
     put("fade.bin", fade_tables())
     tabs = tabs + tunnel_pal_tables()
-    put("rowphase.bin", row_phase())
     put("skybgp.bin", sky_bgp())
     put("bend.bin", [v for row in bends for v in row])
     put("shear.bin", [v for row in shear_tables() for v in row])
@@ -588,15 +620,19 @@ def main():
         f.write(f"DEF SPAWN_DIST EQU {SPAWN_DIST}\nDEF CAR_D EQU {CAR_D}\n")
         f.write(f"DEF MOUTH_D1 EQU {MOUTH_FROM[1]}\nDEF MOUTH_D2 EQU {MOUTH_FROM[2]}\n")
         f.write(f"DEF MOUTH_D3 EQU {MOUTH_FROM[3]}\n")
-        f.write("MACRO FILL_ALL_BANDS\n")
-        for lo, hi, name, coarse in BANDS:
-            f.write(f"    FILL_BAND Pal{name}, {HORIZON + hi}, {1 if coarse else 0}\n")
-        f.write("ENDM\n")
-        f.write("MACRO FILL_TUNNEL_BANDS\n")
-        for lo, hi, name, coarse in BANDS:
-            tname = "TFar" if coarse else "T" + name
-            f.write(f"    FILL_BAND Pal{tname}, {HORIZON + hi}, {1 if coarse else 0}\n")
-        f.write("ENDM\n")
+        f.write(f"DEF RIVAL_D16 EQU {RIVAL_FROM[0]}\nDEF RIVAL_D12 EQU {RIVAL_FROM[1]}\n")
+        f.write(f"DEF RIVAL_D8 EQU {RIVAL_FROM[2]}\nDEF RIVAL_D4 EQU {RIVAL_FROM[3]}\n")
+        f.write("MACRO RIVAL_LANE_U\n    db " + ", ".join(map(str, RIVAL_LANES)) + "\nENDM\n")
+        # The per-line fill is unrolled: each line's depth is a constant in the code.
+        phase = row_phase()
+        for macro, table in (("FILL_ALL_BANDS", lambda n, far: n),
+                             ("FILL_TUNNEL_BANDS", lambda n, far: "TFar" if far else "T" + n)):
+            f.write(f"MACRO {macro}\n")
+            for lo, hi, name, coarse in BANDS:
+                f.write(f"    FILL_BAND Pal{table(name, coarse)}, {1 if coarse else 0}\n")
+                for d in range(lo, hi + 1):
+                    f.write(f"    FILL_LINE {phase[HORIZON + d - 1]}\n")
+            f.write("ENDM\n")
 
 
 def preview(outdir, pixels, bends, tabs):
