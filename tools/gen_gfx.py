@@ -25,9 +25,11 @@ CX = 128                # vanishing point, map pixel
 DEPTH = 16640.0         # z(d) = DEPTH / d, in world units (1 unit = 1 pixel on the bottom line)
 VIEW_X = 48             # SCX when the road is straight: shows map x 48..207
 STAR_ROWS = 16          # top lines hold only stars (and scroll at half rate)
-MAX_BEND = 48           # pixels the horizon end of the road can slide either way
+MAX_BEND = 80           # pixels the horizon end of the road can slide either way; past 48
+                        # the far rows wrap round the 256-pixel map, which only shows as
+                        # one more street in the distant city
 LEVELS = 32             # bend steps each side (65 tables)
-SHEAR_MAX = 33          # pixels the bottom line can slide either way when the camera moves
+SHEAR_MAX = 22          # pixels the bottom line can slide either way when the camera moves
 
 ROAD = 56               # road half width in world units
 BUMPER = 6              # bumper strip just inside the road edge
@@ -353,6 +355,13 @@ SHADOW = """
 ..222222
 """
 
+SHADOW_SMALL = """
+........
+....2222
+....2222
+........
+"""
+
 
 def pack_object(rows):
     """16 rows x 8 columns of colour numbers -> the two tiles of an 8x16 object."""
@@ -387,8 +396,9 @@ def car_tiles():
     out = bytearray()
     for img in car_frames():
         out += pack_object([r[:8] for r in img]) + pack_object([r[8:] for r in img])
-    shadow = [[0 if c == "." else int(c) for c in r] for r in SHADOW.strip().split("\n")]
-    out += pack_object(shadow + [[0] * 8] * 12)   # left half; the right half is it mirrored
+    for art in (SHADOW, SHADOW_SMALL):            # left halves; the right is the mirror image
+        shadow = [[0 if c == "." else int(c) for c in r] for r in art.strip().split("\n")]
+        out += pack_object(shadow + [[0] * 8] * 12)
     return bytes(out)
 
 

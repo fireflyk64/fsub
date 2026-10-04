@@ -15,7 +15,7 @@
 ; Steering moves the camera sideways, which is a shear: near lines slide a lot, far lines
 ; hardly at all.  That is one more per-line table added into SCX.
 ;
-; Controls: Left/Right steer, Up/Down change speed.
+; Controls: Left/Right steer, Up/Down change speed, A jumps.
 ;
 ; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
 
@@ -34,6 +34,9 @@ DEF SHADOW_TILE EQU CAR_TILE + 12
 DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may go
 DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
+DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
+DEF GRAVITY     EQU $28
+DEF RAIL_SCRUB  EQU $20         ; speed lost per frame against the edge of the road
 
 ; ---------------------------------------------------------------------------------------
 SECTION "vblank vector", ROM0[$40]
@@ -108,6 +111,9 @@ VBlankISR:
     ld [_OAMRAM + 2], a
     add 2
     ld [_OAMRAM + 6], a
+    ldh a, [hShadowTile]
+    ld [_OAMRAM + 10], a
+    ld [_OAMRAM + 14], a
     ld a, 1
     ldh [hVBlank], a
     pop hl
@@ -185,6 +191,11 @@ EntryPoint:
     ldh [hX], a
     ldh [hX + 1], a
     ldh [hVX], a
+    ldh [hAir], a
+    ldh [hZ], a
+    ldh [hZ + 1], a
+    ldh [hVZ], a
+    ldh [hVZ + 1], a
     ld a, HIGH(wLinesA)
     ldh [hFront], a
     ld a, LOW(SPEED_START)
@@ -204,6 +215,8 @@ EntryPoint:
     ldh [hCarTile], a
     ld a, SHEAR_MAX
     ldh [hShear], a
+    ld a, SHADOW_TILE
+    ldh [hShadowTile], a
 
     ld de, note_table_rom       ; this driver plays from a RAM copy of the note table
     ld hl, wNoteTable
@@ -418,10 +431,7 @@ Drive:
     ldh [hScript], a
 .haveTarget
 
-    ; --- ease the bend toward it, one step every other frame
-    ldh a, [hFrame]
-    rra
-    jr c, .bendDone
+    ; --- ease the bend toward it, one step a frame
     ldh a, [hTarget]
     ld c, a
     ldh a, [hBend]
@@ -463,7 +473,17 @@ Drive:
     adc d
     ldh [hSkyX + 1], a
 
+    sla e                       ; the push on the car is twice that: flat out, a full
+    rl d                        ; bend outruns the steering and you have to slow down
+
     ; --- steering: ease sideways speed toward what the d-pad asks for
+    ldh a, [hAir]
+    or a
+    jr z, .grounded
+    ldh a, [hVX]                ; no grip in the air: keep drifting the way we were
+    ld b, a
+    jr .vxDone
+.grounded
     ld c, 0
     bit 5, b                    ; PADF_LEFT
     jr z, .notLeft
@@ -522,6 +542,17 @@ Drive:
     jr z, .xStop
     ld hl, -(X_LIMIT << 8)
 .xStop
+    ldh a, [hSpeed + 1]         ; scraping the rail costs speed, down to cruising pace
+    cp 3
+    jr c, .noScrub
+    ldh a, [hSpeed]
+    sub RAIL_SCRUB
+    ldh [hSpeed], a
+    jr nc, .noScrub
+    ldh a, [hSpeed + 1]
+    dec a
+    ldh [hSpeed + 1], a
+.noScrub
     xor a
     ldh [hVX], a
     ld b, a
@@ -531,10 +562,9 @@ Drive:
     ld a, h
     ldh [hX + 1], a
 
-    ; --- the camera follows three quarters of the way; the car shows the rest
+    ; --- the camera follows half way; the car shows the rest
     sra a
-    sra a
-    ld c, a                     ; X / 4
+    ld c, a                     ; X / 2
     add CAR_X + 8
     ldh [hCarX], a
     ld a, h
@@ -556,7 +586,57 @@ Drive:
     ld a, c
     ldh [hCarTile], a
 
-    ; --- hover bob
+    ; --- jumping: A launches the car; the shadow stays on the road
+    ldh a, [hAir]
+    or a
+    jr nz, .inAir
+    ldh a, [hNewKeys]
+    and PADF_A
+    jr z, .onGround
+    ld a, 1
+    ldh [hAir], a
+    ld a, LOW(JUMP_SPEED)
+    ldh [hVZ], a
+    ld a, HIGH(JUMP_SPEED)
+    ldh [hVZ + 1], a
+.inAir
+    ldh a, [hVZ]
+    sub GRAVITY
+    ld e, a
+    ldh [hVZ], a
+    ldh a, [hVZ + 1]
+    sbc 0
+    ld d, a
+    ldh [hVZ + 1], a
+    ldh a, [hZ]
+    ld l, a
+    ldh a, [hZ + 1]
+    ld h, a
+    add hl, de
+    bit 7, h
+    jr z, .stillUp
+    xor a                       ; touched down
+    ldh [hAir], a
+    ld h, a
+    ld l, a
+.stillUp
+    ld a, l
+    ldh [hZ], a
+    ld a, h
+    ldh [hZ + 1], a
+    ld a, CAR_Y + 16
+    sub h
+    ldh [hCarY], a
+    ld a, h
+    cp 12                       ; high up: the shadow shrinks
+    ld a, SHADOW_TILE
+    jr c, .shadowSet
+    ld a, SHADOW_TILE + 2
+.shadowSet
+    ldh [hShadowTile], a
+    ret
+
+.onGround                       ; hover bob
     ldh a, [hFrame]
     and %00010000
     swap a
@@ -566,14 +646,16 @@ Drive:
 
 ; (frames to hold, bend 0..64 where 32 is straight)
 Track:
-    db 150, 32
-    db 200, 52
     db 120, 32
-    db 220, 8
-    db 100, 40
-    db 160, 64
-    db 140, 20
-    db 180, 0
+    db 140, 44                  ; easy right
+    db 90, 32
+    db 170, 0                   ; hairpin left
+    db 60, 32
+    db 150, 64                  ; hairpin right
+    db 70, 18                   ; chicane
+    db 70, 46
+    db 120, 6
+    db 100, 32
 .end
 
 ; ---------------------------------------------------------------------------------------
@@ -737,6 +819,10 @@ hVX:          db    ; sideways speed, signed, 1/16 pixel per frame
 hShear:       db    ; camera's place across the road, 0..SHEAR_MAX*2
 hCarX:        db
 hCarTile:     db
+hShadowTile:  db
+hAir:         db    ; nonzero while jumping
+hZ:           dw    ; height above the road, 8.8 pixels
+hVZ:          dw    ; upward speed, signed 8.8
 hScript:      db
 hScriptTimer: db
 hCarY:        db
