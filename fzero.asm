@@ -1,6 +1,6 @@
 ; F-Zero style city, proof of concept.
 ;
-; The picture is ONE static tilemap of a road and city drawn in perspective (fzero_gfx.py).
+; The picture is ONE static tilemap of a road and city drawn in perspective (tools/gen_gfx.py).
 ; Nothing in VRAM changes while it runs.  Every scanline, in HBlank, two registers are
 ; rewritten for the line about to be drawn:
 ;
@@ -12,11 +12,15 @@
 ; Each frame the main loop works out those two values for all 144 lines into a spare buffer
 ; and VBlank swaps it in, so the interrupt only has to copy two bytes.
 ;
-; Controls: Left/Right bend the road by hand, Start hands it back to the demo track,
-;           Up/Down change speed, Select changes the song.
+; Steering moves the camera sideways, which is a shear: near lines slide a lot, far lines
+; hardly at all.  That is one more per-line table added into SCX.
+;
+; Controls: Left/Right steer, Up/Down change speed.
+;
+; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
 
 INCLUDE "include/hardware.inc"
-INCLUDE "fzero_gfx/consts.inc"
+INCLUDE "build/consts.inc"
 
 DEF GFX_BANK    EQU 2
 DEF LCDC_UPPER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG8000 | LCDCF_BG9800
@@ -24,9 +28,12 @@ DEF LCDC_LOWER  EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG
 DEF SPEED_START EQU $0300       ; world units per frame, 8.8
 DEF SPEED_MAX   EQU $08
 DEF STAR_LINES  EQU 16          ; top lines scroll at half the skyline's rate
-DEF CAR_X       EQU 72
+DEF CAR_X       EQU 72          ; screen position when centred
 DEF CAR_Y       EQU 118
-DEF NUM_SONGS   EQU 4
+DEF SHADOW_TILE EQU CAR_TILE + 12
+DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may go
+DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
+DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 
 ; ---------------------------------------------------------------------------------------
 SECTION "vblank vector", ROM0[$40]
@@ -91,6 +98,16 @@ VBlankISR:
     ldh a, [hCarY]              ; OAM can only be written safely now
     ld [_OAMRAM], a
     ld [_OAMRAM + 4], a
+    ldh a, [hCarX]
+    ld [_OAMRAM + 1], a
+    ld [_OAMRAM + 9], a
+    add 8
+    ld [_OAMRAM + 5], a
+    ld [_OAMRAM + 13], a
+    ldh a, [hCarTile]
+    ld [_OAMRAM + 2], a
+    add 2
+    ld [_OAMRAM + 6], a
     ld a, 1
     ldh [hVBlank], a
     pop hl
@@ -130,7 +147,7 @@ EntryPoint:
     ld bc, Tilemap.end - Tilemap
     call Copy
 
-    ; sprites: the car is two 8x16 objects side by side
+    ; sprites: the car is two 8x16 objects side by side, its shadow two more behind it
     ld hl, _OAMRAM
     ld b, 160
     xor a
@@ -138,24 +155,14 @@ EntryPoint:
     ld [hl+], a
     dec b
     jr nz, .clearOam
+    ld de, InitialOam
     ld hl, _OAMRAM
-    ld a, CAR_Y + 16
-    ld [hl+], a
-    ld a, CAR_X + 8
-    ld [hl+], a
-    ld a, CAR_TILE
-    ld [hl+], a
-    xor a
-    ld [hl+], a
-    ld a, CAR_Y + 16
-    ld [hl+], a
-    ld a, CAR_X + 16
-    ld [hl+], a
-    ld a, CAR_TILE + 2
-    ld [hl+], a
-    ld [hl], 0
+    ld bc, InitialOam.end - InitialOam
+    call Copy
     ld a, %11100000             ; car: 1 white, 2 dark grey, 3 black
     ldh [rOBP0], a
+    ld a, %10100000             ; shadow: all dark grey
+    ldh [rOBP1], a
 
     ; both line buffers: sky palette for the top, something sane for the rest
     ld hl, wLinesA
@@ -175,7 +182,9 @@ EntryPoint:
     ldh [hCurKeys], a
     ldh [hNewKeys], a
     ldh [hScript], a
-    ldh [hSong], a
+    ldh [hX], a
+    ldh [hX + 1], a
+    ldh [hVX], a
     ld a, HIGH(wLinesA)
     ldh [hFront], a
     ld a, LOW(SPEED_START)
@@ -186,12 +195,17 @@ EntryPoint:
     ldh [hBend], a
     ldh [hTarget], a
     ld a, 1
-    ldh [hAuto], a
     ldh [hScriptTimer], a
     ld a, CAR_Y + 16
     ldh [hCarY], a
+    ld a, CAR_X + 8
+    ldh [hCarX], a
+    ld a, CAR_TILE
+    ldh [hCarTile], a
+    ld a, SHEAR_MAX
+    ldh [hShear], a
 
-    ld de, note_table_rom       ; this repo's driver plays from a RAM copy of the notes
+    ld de, note_table_rom       ; this driver plays from a RAM copy of the note table
     ld hl, wNoteTable
     ld bc, 144
     call Copy
@@ -285,29 +299,44 @@ BuildLines:
     ld a, c
     jr nz, .skyline
 
+    ; ground: bend (how the road curves) + shear (where the camera is across it)
+    ld d, b
     ld a, GFX_BANK
     ld [rROMB0], a
+    ldh a, [hShear]
+    add a
+    ld l, a
+    ld h, 0
+    ld bc, ShearPointers
+    add hl, bc
+    ld a, [hl+]
+    ld b, [hl]
+    ld c, a
     ldh a, [hBend]
     add a
     ld l, a
     ld h, 0
+    push de
     ld de, BendPointers
     add hl, de
+    pop de
     ld a, [hl+]
     ld h, [hl]
     ld l, a
-    ld d, b
     ld e, HORIZON
 .ground
-    ld a, [hl+]
+    ld a, [bc]
+    add [hl]
+    inc bc
+    inc hl
     ld [de], a
     inc e
     ld a, e
     cp 144
     jr nz, .ground
 
-    dec b
-    ld a, b
+    ld a, d
+    dec a
     ldh [hReady], a             ; VBlank will show it
     ret
 
@@ -316,19 +345,6 @@ BuildLines:
 Drive:
     ld hl, hFrame
     inc [hl]
-
-    ldh a, [hNewKeys]
-    and PADF_SELECT
-    jr z, .noSong
-    ldh a, [hSong]
-    inc a
-    cp NUM_SONGS
-    jr c, .songOk
-    xor a
-.songOk
-    ldh [hSong], a
-    call StartSong
-.noSong
 
     ; --- speed: Up/Down
     ldh a, [hSpeed]
@@ -379,22 +395,8 @@ Drive:
     or e
     ldh [hPosCoarse], a
 
-    ; --- where should the bend be heading?
-    ld a, b
-    and PADF_LEFT | PADF_RIGHT
-    jr z, .noSteer
-    xor a
-    ldh [hAuto], a
-.noSteer
-    bit 3, b                    ; PADF_START
-    jr z, .noStart
-    ld a, 1
-    ldh [hAuto], a
-.noStart
-    ldh a, [hAuto]
-    or a
-    jr z, .manual
-    ld hl, hScriptTimer         ; demo track: (frames, bend) pairs
+    ; --- the track: (frames, bend) pairs
+    ld hl, hScriptTimer
     dec [hl]
     jr nz, .haveTarget
     ldh a, [hScript]
@@ -414,18 +416,6 @@ Drive:
     xor a
 .scriptOk
     ldh [hScript], a
-    jr .haveTarget
-.manual
-    ld a, BEND_LEVELS
-    bit 5, b                    ; PADF_LEFT
-    jr z, .notLeft
-    xor a
-.notLeft
-    bit 4, b                    ; PADF_RIGHT
-    jr z, .notRight
-    ld a, BEND_LEVELS * 2
-.notRight
-    ldh [hTarget], a
 .haveTarget
 
     ; --- ease the bend toward it, one step every other frame
@@ -445,30 +435,126 @@ Drive:
     ldh [hBend], a
 .bendDone
 
-    ; --- the skyline turns while we are in a bend: skyX += bend * speed
+    ; --- de = bend * speed: how hard this bend is turning us this frame
+    ld hl, 0
     ldh a, [hSpeed + 1]
     or a
-    jr z, .skyDone
-    ld b, a
+    jr z, .noTurn
+    ld c, a
     ldh a, [hBend]
     sub BEND_LEVELS
     ld e, a
     add a                       ; sign extend into d
     sbc a
     ld d, a
-    ldh a, [hSkyX]
-    ld l, a
-    ldh a, [hSkyX + 1]
-    ld h, a
-.skyAdd
+.turnAdd
     add hl, de
-    dec b
-    jr nz, .skyAdd
-    ld a, l
+    dec c
+    jr nz, .turnAdd
+.noTurn
+    ld d, h
+    ld e, l
+
+    ; the skyline swings round by that much
+    ldh a, [hSkyX]
+    add e
     ldh [hSkyX], a
-    ld a, h
+    ldh a, [hSkyX + 1]
+    adc d
     ldh [hSkyX + 1], a
-.skyDone
+
+    ; --- steering: ease sideways speed toward what the d-pad asks for
+    ld c, 0
+    bit 5, b                    ; PADF_LEFT
+    jr z, .notLeft
+    ld c, -STEER_MAX
+.notLeft
+    bit 4, b                    ; PADF_RIGHT
+    jr z, .notRight
+    ld c, STEER_MAX
+.notRight
+    ldh a, [hVX]
+    ld b, a
+    ld a, c
+    sub b                       ; wanted - current
+    jr z, .vxDone
+    bit 7, a
+    jr z, .vxUp
+    dec b
+    dec b
+    dec b
+    dec b
+.vxUp
+    inc b
+    inc b
+    ld a, b
+    ldh [hVX], a
+.vxDone
+
+    ; --- X += sideways speed, and the bend throws the car toward the outside
+    ld a, b
+    ld l, a
+    add a
+    sbc a
+    ld h, a
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl                  ; 1/16 px -> 8.8
+    ldh a, [hX]
+    add l
+    ld l, a
+    ldh a, [hX + 1]
+    adc h
+    ld h, a
+    ld a, l
+    sub e
+    ld l, a
+    ld a, h
+    sbc d
+    ld h, a
+    ld a, h                     ; keep it on the road
+    add X_LIMIT
+    cp X_LIMIT * 2
+    jr c, .xOk
+    bit 7, h
+    ld hl, X_LIMIT << 8
+    jr z, .xStop
+    ld hl, -(X_LIMIT << 8)
+.xStop
+    xor a
+    ldh [hVX], a
+    ld b, a
+.xOk
+    ld a, l
+    ldh [hX], a
+    ld a, h
+    ldh [hX + 1], a
+
+    ; --- the camera follows three quarters of the way; the car shows the rest
+    sra a
+    sra a
+    ld c, a                     ; X / 4
+    add CAR_X + 8
+    ldh [hCarX], a
+    ld a, h
+    sub c
+    add SHEAR_MAX
+    ldh [hShear], a
+
+    ; --- lean into the turn
+    ld c, CAR_TILE
+    ld a, b
+    add BANK_AT - 1
+    cp BANK_AT * 2 - 1
+    jr c, .leanDone             ; |speed| < BANK_AT
+    ld c, CAR_TILE + 4          ; left
+    bit 7, b
+    jr nz, .leanDone
+    ld c, CAR_TILE + 8          ; right
+.leanDone
+    ld a, c
+    ldh [hCarTile], a
 
     ; --- hover bob
     ldh a, [hFrame]
@@ -493,38 +579,20 @@ Track:
 ; ---------------------------------------------------------------------------------------
 StartSong:
     call SongBank
-    ldh a, [hSong]
-    add a
-    add a
-    ld e, a
-    ld d, 0
-    ld hl, Songs + 2
-    add hl, de
-    ld a, [hl+]
-    ld h, [hl]
-    ld l, a
+    ld hl, race_song
     jp hUGE_init
 
 SongBank:
-    ldh a, [hSong]
-    add a
-    add a
-    ld e, a
-    ld d, 0
-    ld hl, Songs
-    add hl, de
-    ld a, [hl]
+    ld a, BANK(race_song)
     ld [rROMB0], a
     ret
 
-MACRO SONG
-    dw BANK(\1), \1
-ENDM
-Songs:
-    SONG lvl4song
-    SONG level3_music
-    SONG _level2_music
-    SONG menusong
+InitialOam:
+    db CAR_Y + 16, CAR_X + 8, CAR_TILE, 0
+    db CAR_Y + 16, CAR_X + 16, CAR_TILE + 2, 0
+    db CAR_Y + 30, CAR_X + 8, SHADOW_TILE, OAMF_PAL1
+    db CAR_Y + 30, CAR_X + 16, SHADOW_TILE, OAMF_PAL1 | OAMF_XFLIP
+.end
 
 ; hl = BGP page of a buffer (SCX page follows it)
 InitLines:
@@ -594,19 +662,27 @@ BendPointers:
         dw BendTables + N * GROUND_LINES
     ENDR
 
+ShearPointers:
+    FOR N, SHEAR_MAX * 2 + 1
+        dw ShearTables + N * GROUND_LINES
+    ENDR
+
+BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
+    INCBIN "build/bend.bin"
+
 SkyBgp:
-    INCBIN "fzero_gfx/skybgp.bin"
+    INCBIN "build/skybgp.bin"
 
 ; ---------------------------------------------------------------------------------------
 ; Page-aligned lookups: the low byte of the address is the index.
 SECTION "row phase", ROM0, ALIGN[8]
 RowPhase:                       ; indexed by screen line
-    INCBIN "fzero_gfx/rowphase.bin"
+    INCBIN "build/rowphase.bin"
 
 MACRO PAL_TABLE
 SECTION "pal \1", ROM0, ALIGN[8]
 Pal\1:
-    INCBIN "fzero_gfx/pal_\2.bin"
+    INCBIN "build/pal_\2.bin"
 ENDM
     PAL_TABLE Near0, near0
     PAL_TABLE Near1, near1
@@ -618,22 +694,22 @@ ENDM
 
 SECTION "fzero gfx", ROMX, BANK[GFX_BANK]
 Tiles8000:
-    INCBIN "fzero_gfx/tiles8000.bin"
+    INCBIN "build/tiles8000.bin"
 .end
 Tiles8800:
-    INCBIN "fzero_gfx/tiles8800.bin"
+    INCBIN "build/tiles8800.bin"
 .end
 Tiles9000:
-    INCBIN "fzero_gfx/tiles9000.bin"
+    INCBIN "build/tiles9000.bin"
 .end
 CarTiles:
-    INCBIN "fzero_gfx/car.bin"
+    INCBIN "build/car.bin"
 .end
 Tilemap:
-    INCBIN "fzero_gfx/map.bin"
+    INCBIN "build/map.bin"
 .end
-BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
-    INCBIN "fzero_gfx/bend.bin"
+ShearTables:                    ; (SHEAR_MAX*2+1) x GROUND_LINES amounts to add to SCX
+    INCBIN "build/shear.bin"
 
 ; ---------------------------------------------------------------------------------------
 ; Two sets of per-line values; one is on screen while the other is being filled.
@@ -656,11 +732,14 @@ hSpeed:       dw
 hBend:        db    ; 0 hard left .. 32 straight .. 64 hard right
 hTarget:      db
 hSkyX:        dw
-hAuto:        db
+hX:           dw    ; car's place across the road, 8.8 pixels, 0 = centre line
+hVX:          db    ; sideways speed, signed, 1/16 pixel per frame
+hShear:       db    ; camera's place across the road, 0..SHEAR_MAX*2
+hCarX:        db
+hCarTile:     db
 hScript:      db
 hScriptTimer: db
 hCarY:        db
-hSong:        db
 hCurKeys:     db
 hNewKeys:     db
 hLoad:        db

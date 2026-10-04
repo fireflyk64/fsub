@@ -13,7 +13,7 @@ Colour numbers on the ground:  0 street/void (dark)   1 road surface (never anim
                                2 building set A + road bumpers + centre dashes
                                3 building set B (staggered against A)
 
-usage: fzero_gfx.py OUTDIR [--preview DIR]
+usage: gen_gfx.py OUTDIR [--skyline future|oldtown] [--preview DIR]
 """
 import os
 import sys
@@ -24,8 +24,10 @@ GROUND = 104            # ground lines (40..143), d = 1 (horizon) .. 104 (bottom
 CX = 128                # vanishing point, map pixel
 DEPTH = 16640.0         # z(d) = DEPTH / d, in world units (1 unit = 1 pixel on the bottom line)
 VIEW_X = 48             # SCX when the road is straight: shows map x 48..207
+STAR_ROWS = 16          # top lines hold only stars (and scroll at half rate)
 MAX_BEND = 48           # pixels the horizon end of the road can slide either way
 LEVELS = 32             # bend steps each side (65 tables)
+SHEAR_MAX = 33          # pixels the bottom line can slide either way when the camera moves
 
 ROAD = 56               # road half width in world units
 BUMPER = 6              # bumper strip just inside the road edge
@@ -175,15 +177,96 @@ def row_phase():
 # ----------------------------------------------------------------------------------------
 # Sky
 # ----------------------------------------------------------------------------------------
-# Sky colour numbers: 0 sky (shade set per line), 1 building, 2 windows, 3 stars / rim light
-BUILDINGS = [
-    # (width px, height px, style)
-    (16, 14, "slab"), (8, 22, "spire"), (24, 10, "dome"), (16, 18, "twin"),
-    (8, 12, "slab"), (16, 24, "tower"), (24, 12, "slab"), (8, 16, "spire"),
-]
+# Sky colour numbers: 0 sky (shade set per line), 1 building, 2 lights, 3 stars / rim light
+# A skyline is a row of building stamps whose widths are whole tiles, so repeats cost nothing.
+# Each shape answers "is (x, height above the ground) inside me, and is it a light?".
 
 
-def sky_pixels():
+def old_building(style, w, h):
+    """Twentieth-century blocks with rows of lit windows (the "oldtown" set)."""
+    def shape(lx, hb):
+        ly = h - 1 - hb
+        if ly < 0 or lx >= w - 1:
+            return None
+        inside = True
+        if style == "spire":
+            inside = ly >= 8 or lx == 3 or (ly >= 4 and 2 <= lx <= 4)
+        elif style == "dome":
+            inside = ly >= 4 or abs(lx - (w - 1) / 2 + 0.5) < 3 + ly * 2.5
+        elif style == "twin":
+            inside = ly >= 6 or lx < 5 or lx > w - 7
+        elif style == "tower":
+            inside = ly >= 10 or 4 <= lx <= w - 6
+            if ly < 3:
+                inside = lx == w // 2 - 1
+        if not inside:
+            return None
+        return 2 if ly > 2 and hb % 3 == 0 and lx % 2 == 0 and (lx + hb // 3) % 6 else 1
+    return shape
+
+
+def future_building(style, w):
+    """Needles, saucers, domes and arches with strips of light (the "future" set)."""
+    c = (w - 1) / 2.0
+
+    def shape(lx, hb):
+        dx = abs(lx - c)
+        if style == "needle":
+            if hb < 4:
+                return 1 if dx <= 2.5 else None
+            if hb in (11, 12):
+                return (2 if hb == 12 else 1) if dx <= 3.5 else None
+            if hb < 17:
+                return 1 if dx <= 1 else None
+            return 1 if hb < 24 and lx == 3 else None
+        if style == "taper":
+            if hb >= 20:
+                return 1 if hb < 23 and lx == int(c) else None
+            if dx > 2.5 + (1 - hb / 20.0) * (w / 2.0 - 3.5):
+                return None
+            return 2 if dx < 1 and hb % 4 and 2 < hb < 17 else 1
+        if style == "saucer":
+            if hb >= 18:
+                return 1 if hb < 21 and lx == int(c) else None
+            if (dx / 7.5) ** 2 + ((hb - 14) / 3.6) ** 2 <= 1:
+                return 2 if hb == 14 and lx % 2 == 0 else 1
+            return 1 if hb < 12 and dx <= 1 else None
+        if style == "dome":
+            if hb >= 11:
+                return 1 if hb < 15 and lx == int(c) else None
+            if (dx / 11.5) ** 2 + (hb / 11.0) ** 2 > 1:
+                return None
+            return 2 if hb == 3 and lx % 2 else 1
+        if style == "arch":
+            if (dx / 11.5) ** 2 + (hb / 14.0) ** 2 > 1 or (dx / 7.5) ** 2 + (hb / 9.0) ** 2 <= 1:
+                return None
+            return 2 if hb == 12 and lx % 2 else 1
+        if style == "low":
+            if 6 <= lx <= 9 and hb < 13:
+                return 2 if lx == 8 and hb in (8, 10) else 1
+            if hb >= 7 or dx > 15.5 - max(0, hb - 3) * 1.5:
+                return None
+            return 2 if hb == 4 and lx % 3 else 1
+        return None
+    return shape
+
+
+SKYLINES = {
+    "oldtown": [(w, old_building(st, w, h)) for w, h, st in (
+        (16, 14, "slab"), (8, 16, "spire"), (16, 18, "twin"), (24, 10, "dome"),
+        (16, 24, "tower"), (8, 12, "slab"), (24, 12, "slab"), (8, 22, "spire"),
+        (24, 10, "dome"), (16, 24, "tower"), (8, 12, "slab"), (16, 18, "twin"),
+        (24, 12, "slab"), (8, 22, "spire"), (16, 14, "slab"), (8, 16, "spire"),
+        (8, 12, "slab"), (8, 22, "spire"))],
+    "future": [(w, future_building(st, w)) for st, w in (
+        ("taper", 16), ("needle", 8), ("dome", 24), ("saucer", 16), ("low", 32),
+        ("needle", 8), ("arch", 24),
+        ("saucer", 16), ("low", 32), ("needle", 8), ("taper", 16), ("arch", 24),
+        ("needle", 8), ("dome", 24))],
+}
+
+
+def sky_pixels(skyline):
     px = [[0] * W for _ in range(HORIZON)]
     # Stars: three one-pixel patterns reused all over the upper sky (cheap in tiles).
     spots = ((2, 1), (6, 3), (3, 4))
@@ -193,35 +276,17 @@ def sky_pixels():
         if not any(px[ty * 8 + r][tx * 8 + c] for r in range(8) for c in range(8)):
             px[ty * 8 + oy][tx * 8 + ox] = 3
     x = 0
-    k = 0
-    while x < W:
-        w, h, style = BUILDINGS[(k * 3 + k // 8) % len(BUILDINGS)]
-        k += 1
-        if x + w > W:
-            w = W - x
-        top = HORIZON - h
-        for yy in range(top, HORIZON):
-            for xx in range(x, x + w - 1):
-                lx, ly = xx - x, yy - top
-                inside = True
-                if style == "spire":
-                    inside = ly >= 8 or lx in (3,) or (ly >= 4 and 2 <= lx <= 4)
-                elif style == "dome":
-                    inside = ly >= 4 or abs(lx - (w - 1) / 2 + 0.5) < 3 + ly * 2.5
-                elif style == "twin":
-                    inside = ly >= 6 or lx < 5 or lx > w - 7
-                elif style == "tower":
-                    inside = ly >= 10 or 4 <= lx <= w - 6 or (ly < 3 and lx == w // 2 - 1)
-                    if ly < 3:
-                        inside = lx == w // 2 - 1
-                if not inside:
+    stamps = SKYLINES[skyline]
+    assert sum(w for w, _ in stamps) == W
+    for w, shape in stamps:
+        for hb in range(HORIZON - STAR_ROWS):
+            for lx in range(w):
+                c = shape(lx, hb)
+                if c is None:
                     continue
-                c = 1
-                if lx == 0:
+                if c == 1 and (lx == 0 or shape(lx - 1, hb) is None):
                     c = 3                         # lit left edge
-                elif ly > 2 and yy % 3 == 1 and lx % 2 == 0 and (lx + yy // 3) % 6:
-                    c = 2                         # window
-                px[yy][xx] = c
+                px[HORIZON - 1 - hb][x + lx] = c
         x += w
     return px
 
@@ -263,46 +328,81 @@ def bend_tables():
 
 
 CAR = """
-................
-......3333......
+.......33.......
+......3113......
+......3113......
+.....311113.....
 .....312213.....
-....33222233....
-..3.31222213.3..
-.33331111113333.
-.31331111113313.
-.31311111111313.
-3313113333113133
-3113131111313113
-3113132222313113
-3333312222133333
-.33.33333333.33.
-.3..31133113..3.
-....32233223....
-.....33..33.....
+....31222213....
+....31222213....
+...3113223113...
+..311113311113..
+.31111133111113.
+3111111331111113
+3122211111122213
+3122231111322213
+.33331333313333.
+....313..313....
+................
+"""
+
+SHADOW = """
+..222222
+.2222222
+.2222222
+..222222
 """
 
 
-def car_tiles():
+def pack_object(rows):
+    """16 rows x 8 columns of colour numbers -> the two tiles of an 8x16 object."""
+    out = bytearray()
+    for row in rows:
+        lo = hi = 0
+        for v in row:
+            lo = (lo << 1) | (v & 1)
+            hi = (hi << 1) | (v >> 1)
+        out += bytes((lo, hi))
+    return bytes(out)
+
+
+def car_frames():
+    """Straight, banking left, banking right.  Banking drops one side by a pixel."""
     rows = CAR.strip().split("\n")
     assert len(rows) == 16 and all(len(r) == 16 for r in rows)
-    out = bytearray()
-    for half in (0, 8):
+    base = [[0 if c == "." else int(c) for c in r] for r in rows]
+    frames = []
+    for lean in (0, -1, 1):
+        img = [[0] * 16 for _ in range(16)]
         for y in range(16):
-            lo = hi = 0
-            for x in range(8):
-                c = rows[y][half + x]
-                v = 0 if c == "." else int(c)
-                lo = (lo << 1) | (v & 1)
-                hi = (hi << 1) | (v >> 1)
-            out += bytes((lo, hi))
+            for x in range(16):
+                yy = y + int(round((x - 7.5) * 0.14 * lean))
+                if 0 <= yy < 16:
+                    img[yy][x] = base[y][x]
+        frames.append(img)
+    return frames
+
+
+def car_tiles():
+    out = bytearray()
+    for img in car_frames():
+        out += pack_object([r[:8] for r in img]) + pack_object([r[8:] for r in img])
+    shadow = [[0 if c == "." else int(c) for c in r] for r in SHADOW.strip().split("\n")]
+    out += pack_object(shadow + [[0] * 8] * 12)   # left half; the right half is it mirrored
     return bytes(out)
+
+
+def shear_tables():
+    """Camera moved sideways: lines slide in proportion to how near they are."""
+    return [[int(round(s * d / GROUND)) & 255 for d in range(1, GROUND + 1)]
+            for s in range(-SHEAR_MAX, SHEAR_MAX + 1)]
 
 
 # ----------------------------------------------------------------------------------------
 OBJ_RESERVE = 32        # tiles kept free for sprites at the end of the $8000 block
 
 
-def build():
+def build(skyline):
     """Draw everything, cut it into tiles and spread those over the three VRAM blocks.
 
     The background can only name 256 tiles at once, but LCDC bit 4 picks which block tile
@@ -310,7 +410,7 @@ def build():
     384 tiles: block $8000 for the upper part, $9000 for the lower part, and $8800
     (numbers 128-255) visible to both.
     """
-    sky = sky_pixels()
+    sky = sky_pixels(skyline)
     ground = [ground_row(d) for d in range(1, GROUND + 1)]
     pixels = sky + ground                         # 144 rows x 256
     bends = bend_tables()
@@ -324,7 +424,8 @@ def build():
                 if y < HORIZON:
                     need = True
                     break
-                reach = abs(VIEW_X - bends[0][y - HORIZON])
+                d = y - HORIZON + 1
+                reach = abs(VIEW_X - bends[0][d - 1]) + int(SHEAR_MAX * d / GROUND + 1)
                 if tx * 8 + 7 >= VIEW_X - reach and tx * 8 <= VIEW_X + 159 + reach:
                     need = True
                     break
@@ -352,7 +453,7 @@ def build():
             best = (split, only_top[:cap_top], only_bot[:128], shared)
     split, blk8000, blk9000, blk8800 = best
     total = len(blk8000) + len(blk9000) + len(blk8800)
-    print(f"fzero_gfx: {total} background tiles: {len(blk8000)} upper + {len(blk9000)} lower"
+    print(f"gen_gfx: {total} background tiles: {len(blk8000)} upper + {len(blk9000)} lower"
           f" + {len(blk8800)}/128 shared, split at line {split * 8}")
     if len(blk8800) > 128:
         sys.exit("too many tiles")
@@ -372,7 +473,8 @@ def build():
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
-    pixels, blocks, tilemap, bends, split_line = build()
+    skyline = sys.argv[sys.argv.index("--skyline") + 1] if "--skyline" in sys.argv else "future"
+    pixels, blocks, tilemap, bends, split_line = build(skyline)
     tabs = pal_tables()
     if "--preview" in sys.argv:
         preview(sys.argv[sys.argv.index("--preview") + 1], pixels, bends, dict(tabs))
@@ -388,14 +490,16 @@ def main():
     put("rowphase.bin", row_phase())
     put("skybgp.bin", sky_bgp())
     put("bend.bin", [v for row in bends for v in row])
+    put("shear.bin", [v for row in shear_tables() for v in row])
     for name, data in tabs:
         put("pal_" + name.lower() + ".bin", data)
 
     with open(os.path.join(out, "consts.inc"), "w") as f:
-        f.write("; generated by fzero_gfx.py\n")
+        f.write("; generated by gen_gfx.py\n")
         f.write(f"DEF HORIZON EQU {HORIZON}\nDEF GROUND_LINES EQU {GROUND}\n")
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {split_line}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
+        f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
         f.write("MACRO FILL_ALL_BANDS\n")
         for lo, hi, name, coarse in BANDS:
             f.write(f"    FILL_BAND Pal{name}, {HORIZON + hi}, {1 if coarse else 0}\n")

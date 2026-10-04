@@ -14,7 +14,7 @@ p{margin:.5em} a{color:#8af}
 <p class="btns"><button data-k="select">Select</button><button data-k="start">Start</button>
 <button data-k="left">←</button><button data-k="right">→</button><button data-k="up">↑</button><button data-k="down">↓</button><button id="fs">Fullscreen</button></p>
 <p id="msg">Loading…</p>
-<p>Keys: ←→ = bend the road · Enter = back to the demo track · ↑↓ = speed · Shift = next song · F = fullscreen · gamepads supported (d-pad/stick, Start/Select)</p>
+<p>Keys: ←→ = steer · ↑↓ = speed · F = fullscreen · gamepads supported (d-pad/stick, Start/Select)</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
 <script src="binjgb.js"></script>
 <script>
@@ -67,7 +67,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Running: arrows bend the road and change speed', NOSOUND='Sound is off: click, tap or press a key to turn it on';
+    const READY='Running: arrows steer and change speed', NOSOUND='Sound is off: click, tap or press a key to turn it on';
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;

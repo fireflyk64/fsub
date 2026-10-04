@@ -1,7 +1,4 @@
-*.o
-main.gb
-main.sym
+build/
 fzero.gb
 fzero.sym
-fzero_gfx/
 __pycache__/
