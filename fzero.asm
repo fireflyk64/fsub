@@ -447,8 +447,7 @@ Drive:
 
     ; --- the skyline turns while we are in a bend: skyX += bend * speed
     ldh a, [hSpeed + 1]
-    add a
-    add a
+    or a
     jr z, .skyDone
     ld b, a
     ldh a, [hBend]
