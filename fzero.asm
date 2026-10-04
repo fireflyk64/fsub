@@ -25,7 +25,12 @@
 ; The race: one lap is 64 chunks of 256 units.  The course shape, the rivals' pace and the
 ; places things happen (finish line, recharge strip, tunnel) are all tables indexed by chunk.
 ;
-; Controls: Left/Right steer, A (or Up) accelerate, Down brake, B jump.
+; Driving feel: the throttle pulls hard at low speed and tails off toward the top; bends
+; throw the car outward, less if you lift off; braking while steering is a skid turn (much
+; more steering, at a cost in speed); the rail bounces you back and hurts; boosts (one per
+; lap, or free from a dash plate) break the speed limit for a moment.
+;
+; Controls: Left/Right steer, A accelerate, Down brake, B jump, Up boost.
 ;           Start after a race: go again.  Select+Start together steps through the modes:
 ;           race, practice (Select and Start bend the road by hand), two-player link.
 ;
@@ -56,7 +61,16 @@ DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
 DEF RIVAL_OAM   EQU 9 * 4       ; rivals own four OAM entries each from here on
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
-DEF ACCEL       EQU $000A       ; speed gained per frame on the throttle, 8.8
+DEF BOOST_MAX   EQU $0B         ; top speed while boosting
+DEF BOOST_TIME  EQU 80          ; frames a boost lasts
+DEF DASH_TIME   EQU 45          ; frames of boost from a dash plate
+DEF BOOSTS_MAX  EQU 3
+DEF COUNTDOWN   EQU 180         ; frames on the grid before the start
+DEF STEER_SKID  EQU 40          ; sideways speed in a skid turn
+DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
+DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
+DEF RAIL_COST   EQU 4           ; health lost hitting it
+DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF FRICTION    EQU $0004       ; lost per frame off it
 DEF BRAKE       EQU $0020
 DEF HEALTH_MAX  EQU 64
@@ -85,13 +99,14 @@ DEF FREE_X        EQU %01000000 ; lane byte: not in a lane; x is in the skill by
 DEF HIDDEN        EQU -30000    ; a distance no car is ever seen at
 DEF OBJ_SPRITES EQU 5           ; OAM entries kept for the road object
 DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
+DEF SCX_STAMP   EQU 200         ; offset in an SCX page of its (bend, shear) note
 DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
 DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may go
 DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
 DEF GRAVITY     EQU $28
-DEF RAIL_SCRUB  EQU $20         ; speed lost per frame against the edge of the road
+DEF RAIL_SCRUB  EQU $0100       ; speed lost hitting the rail
 
 ; ---------------------------------------------------------------------------------------
 SECTION "vblank vector", ROM0[$40]
@@ -414,16 +429,7 @@ BuildLines:
     ld a, $FF
     jr nz, .roof
 .bgpDone
-    push bc                     ; paint the finish line and the recharge strip on the road
-    ld de, 0
-    ld hl, LINE_END
-    call RoadBand
-    pop bc
-    push bc
-    ld de, PIT_START
-    ld hl, PIT_END
-    call RoadBand
-    pop bc
+    call RoadFeatures           ; finish line, recharge strip, dash and jump plates
 
 .bgpReady
 
@@ -452,10 +458,27 @@ BuildLines:
     ld a, c
     jr nz, .skyline
 
-    ; ground: bend (how the road curves) + shear (where the camera is across it)
+    ; ground: bend (how the road curves) + shear (where the camera is across it).
+    ; Each buffer notes the bend and shear it was filled for (in two spare bytes of its SCX
+    ; page): on a straight with the wheel still, that is unchanged and the fill is skipped.
     ld d, b
     ld a, GFX_BANK
     ld [rROMB0], a
+    ld h, b
+    ld l, SCX_STAMP
+    ldh a, [hBend]
+    cp [hl]
+    jr nz, .refill
+    inc l
+    ldh a, [hShear]
+    cp [hl]
+    jr z, .scxDone
+    dec l
+.refill
+    ldh a, [hBend]
+    ld [hl+], a
+    ldh a, [hShear]
+    ld [hl], a
     ldh a, [hShear]
     add a
     ld l, a
@@ -490,7 +513,7 @@ BuildLines:
     ld a, e
     cp 144
     jr nz, .ground
-
+.scxDone
     ld a, d
     ldh [hBuiltScx], a          ; sprites look up where the road is on each line
     ret
@@ -800,6 +823,13 @@ UpdateRivals:
     jr z, .fullPace
     srl a
 .fullPace
+    ld c, a
+    ldh a, [hCount]             ; nobody moves until the start
+    or a
+    ld a, c
+    jr z, .racing
+    xor a
+.racing
     ld l, a
     ld h, 0
     add hl, hl
@@ -1171,8 +1201,164 @@ Damage:
     pop bc
     ret
 
-; Paint a stretch of the road white.  de = where it starts, hl = where it ends, in units from
-; the finish line.  b = BGP page being built.
+; Things painted across the road: finish line, recharge strip, dash plates, jump plates.
+; Each is drawn if it is in view and acted on if the car is on it.  b = BGP page being built.
+RoadFeatures:
+    ld hl, Features
+.next
+    ld a, [hl+]                 ; first chunk it can be seen from; $FF ends the list
+    cp $FF
+    ret z
+    ld c, a
+    ldh a, [hChunk]
+    sub c
+    and CHUNK_MASK
+    cp [hl]                     ; how many chunks it stays relevant for
+    inc hl
+    jr c, .near
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    inc hl
+    jr .next
+.near
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a                     ; de = where it starts
+    ld a, [hl+]
+    ldh [hBandEnd], a
+    ld a, [hl+]
+    ldh [hBandEnd + 1], a
+    ld a, [hl+]
+    push hl
+    ld c, a                     ; what it is
+    ; --- is the car on it?  (lap position - start) < length
+    ldh a, [hPos + 1]
+    sub e
+    ld l, a
+    ldh a, [hPos + 2]
+    and CHUNK_MASK
+    sbc d
+    and CHUNK_MASK
+    ld h, a                     ; hl = how far past its start we are
+    ldh a, [hBandEnd]
+    sub e
+    push de
+    ld e, a
+    ldh a, [hBandEnd + 1]
+    sbc d
+    ld d, a                     ; de = its length
+    ld a, l
+    sub e
+    ld a, h
+    sbc d
+    pop de
+    jr nc, .notOn
+    ldh a, [hAir]
+    ld l, a
+    ldh a, [hState]
+    or l
+    jr nz, .notOn
+    ld a, c
+    cp FEATURE_DASH
+    jr nz, .notDash
+    ldh a, [hBoost]             ; dash plate: a free burst
+    or a
+    jr nz, .notOn
+    ld a, DASH_TIME
+    ldh [hBoost], a
+    ld a, SFX_BOOST
+    call Sfx
+    jr .notOn
+.notDash
+    cp FEATURE_JUMP
+    jr nz, .notOn
+    ld a, 1                     ; jump plate: thrown into the air
+    ldh [hAir], a
+    ld a, LOW(JUMP_PLATE)
+    ldh [hVZ], a
+    ld a, HIGH(JUMP_PLATE)
+    ldh [hVZ + 1], a
+.notOn
+    ; --- paint it: white, black for a jump plate; a dash plate flashes
+    ldh a, [hFadeLevel]
+    add a
+    add a
+    ld l, a
+    ld a, c
+    cp FEATURE_JUMP
+    jr nz, .notBlack
+    ld l, %00001100
+.notBlack
+    cp FEATURE_DASH
+    jr nz, .steady
+    ldh a, [hFrame]
+    and %00000100
+    jr z, .skip
+.steady
+    ld a, l
+    ldh [hBandOr], a
+    ldh a, [hBandEnd]
+    ld l, a
+    ldh a, [hBandEnd + 1]
+    ld h, a
+    push bc
+    call RoadBand
+    pop bc
+.skip
+    pop hl
+    jp .next
+
+DEF FEATURE_PLAIN EQU 0
+DEF FEATURE_DASH  EQU 1
+DEF FEATURE_JUMP  EQU 2
+; \1 start, \2 end (units from the finish line), \3 kind.  In view from 8 chunks before.
+MACRO FEATURE
+    db ((\1) / 256 - 8) & CHUNK_MASK
+    db ((\2) - 1) / 256 - (\1) / 256 + 9
+    dw \1, \2
+    db \3
+ENDM
+Features:
+    FEATURE 0, LINE_END, FEATURE_PLAIN
+    FEATURE PIT_START, PIT_END, FEATURE_PLAIN
+    FEATURE 12 * 256, 12 * 256 + 90, FEATURE_DASH
+    FEATURE 35 * 256, 35 * 256 + 60, FEATURE_JUMP
+    FEATURE 45 * 256, 45 * 256 + 90, FEATURE_DASH
+    FEATURE 61 * 256, 61 * 256 + 90, FEATURE_DASH
+    db $FF
+
+; Sound effects on the noise channel (the music's drums take it back on their next hit).
+DEF SFX_SKID  EQU 0
+DEF SFX_HIT   EQU 2
+DEF SFX_BOOST EQU 4
+Sfx:
+    push hl
+    push de
+    ld e, a
+    ld d, 0
+    ld hl, .table
+    add hl, de
+    xor a
+    ldh [rAUD4LEN], a
+    ld a, [hl+]
+    ldh [rAUD4ENV], a
+    ld a, [hl]
+    ldh [rAUD4POLY], a
+    ld a, $80
+    ldh [rAUD4GO], a
+    pop de
+    pop hl
+    ret
+.table
+    db $51, $23                 ; skid: short hiss
+    db $F2, $65                 ; hit: thud
+    db $A5, $14                 ; boost: rush
+
+; Paint a stretch of the road.  de = where it starts, hl = where it ends, in units from
+; the finish line.  b = BGP page being built, hBandOr = the road colour's bits there.
 RoadBand:
     push bc
     ldh a, [hPos + 1]
@@ -1255,9 +1441,7 @@ RoadBand:
     add HORIZON - 1
     ld l, a
     ld h, b
-    ldh a, [hFadeLevel]         ; white, or as near as the fade allows
-    add a
-    add a
+    ldh a, [hBandOr]
     ld e, a
     ld d, %11110011
     ld a, c
@@ -1306,6 +1490,17 @@ UpdateHud:
     xor b
     ld b, a
     ldh a, [hHealth]
+    ld c, a
+    ldh a, [hBoosts]
+    rrca
+    rrca
+    add c
+    ld c, a
+    ldh a, [hCount]
+    add 59
+    and %11000000
+    rrca
+    add c
     ld c, a
     ldh a, [hLinked]
     add c
@@ -1388,11 +1583,41 @@ UpdateHud:
     call .digit
 .bar
     ld a, HUD_BLANK
-    ld b, 5
-.gap
+    ld [hl+], a
+    ldh a, [hCount]             ; the start countdown: 3, 2, 1
+    or a
+    jr z, .boosts
+    add 59
+    rlca
+    rlca
+    and 3
+    jr nz, .counting
+    inc a
+.counting
+    call .digit
+    ld a, HUD_BLANK
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    jr .health
+.boosts
+    ldh a, [hBoosts]            ; otherwise, a pip for each boost in hand
+    ld c, a
+    ld b, 3
+.pip
+    ld a, HUD_BLANK
+    inc c
+    dec c
+    jr z, .noPip
+    dec c
+    ld a, HUD_HALF
+.noPip
     ld [hl+], a
     dec b
-    jr nz, .gap
+    jr nz, .pip
+    ld a, HUD_BLANK
+    ld [hl+], a
+.health
     ldh a, [hHealth]
     ld c, a                     ; health left to show
     ld b, 8
@@ -1888,6 +2113,18 @@ InitRace:
     ld a, $FF                   ; force the status bar to redraw
     ldh [hHudSeen], a
     ldh [hHudSeen + 1], a
+    xor a
+    ldh [hBoost], a
+    ldh [hSkid], a
+    ldh [hCount], a
+    ldh a, [hPractice]
+    or a
+    jr nz, .noCountdown
+    ld a, COUNTDOWN
+    ldh [hCount], a
+.noCountdown
+    ld a, 1
+    ldh [hBoosts], a
     ld a, HEALTH_MAX
     ldh [hHealth], a
     ld a, 1
@@ -1993,23 +2230,75 @@ Drive:
     ld l, a
     ldh a, [hSpeed + 1]
     ld h, a
-    ld de, -BRAKE
     ldh a, [hState]
     cp STATE_DEAD
-    jr z, .slow                 ; a wreck just stops
+    jr z, .braking              ; a wreck just stops
     or a
     jr nz, .coast               ; past the flag: roll to a halt
-    ld a, b
-    and PADF_A | PADF_UP
+    ldh a, [hCount]             ; on the grid: wait for the start
+    or a
+    jr z, .go
+    dec a
+    ldh [hCount], a
+    ld hl, 0
+    jp .speedSet
+.go
+    ; Up fires a boost if there is one
+    ldh a, [hNewKeys]
+    and PADF_UP
+    jr z, .noFire
+    ldh a, [hBoosts]
+    or a
+    jr z, .noFire
+    dec a
+    ldh [hBoosts], a
+    ld a, BOOST_TIME
+    ldh [hBoost], a
+    ld a, SFX_BOOST
+    call Sfx
+.noFire
+    ldh a, [hBoost]
+    or a
+    jr z, .noBoost
+    dec a
+    ldh [hBoost], a
+    ld de, $0040                ; boosting: shove toward the higher limit
+    add hl, de
+    ld a, h
+    cp BOOST_MAX
+    jr c, .speedSet
+    ld hl, BOOST_MAX << 8
+    jr .speedSet
+.noBoost
+    ld a, h                     ; over the normal limit (after a boost): bleed back down
+    cp SPEED_MAX
+    jr c, .underLimit
+    ld de, -$0010
+    add hl, de
+    jr .speedSet
+.underLimit
+    bit 0, b                    ; PADF_A
     jr z, .coast
-    ld de, ACCEL
+    ; the throttle: strong from rest, fading to nothing at top speed
+    ld a, SPEED_MAX
+    sub h                       ; 1..8 "gears" below the limit
+    add a
+    add 3
+    ld e, a
+    ld d, 0
     add hl, de
     ld a, h
     cp SPEED_MAX
-    jr c, .speedSet
+    jr c, .throttled
     ld hl, SPEED_MAX << 8
-    jr .speedSet
+.throttled
+    bit 7, b                    ; throttle and brake together: the brake wins a little
+    jr z, .speedSet
+.braking
+    ld de, -BRAKE
+    jr .slow
 .coast
+    ld de, -BRAKE
     bit 7, b                    ; PADF_DOWN
     jr nz, .slow
     ld de, -FRICTION
@@ -2132,6 +2421,11 @@ Drive:
 .nextLap
     inc a
     ldh [hLap], a
+    ldh a, [hBoosts]            ; a boost for every lap done
+    cp BOOSTS_MAX
+    jr nc, .sameChunk
+    inc a
+    ldh [hBoosts], a
     jr .sameChunk
 .notLine
     cp MOUTH_CHUNK
@@ -2249,8 +2543,11 @@ Drive:
     adc d
     ldh [hSkyX + 1], a
 
-    sla e                       ; the push on the car is twice that: flat out, a full
-    rl d                        ; bend outruns the steering and you have to slow down
+    bit 0, b                    ; on the throttle the push on the car is twice that: flat
+    jr z, .lifted               ; out, a full bend outruns the steering.  Lift off and the
+    sla e                       ; car grips
+    rl d
+.lifted
 
     ; --- steering: ease sideways speed toward what the d-pad asks for
     ldh a, [hAir]
@@ -2262,14 +2559,46 @@ Drive:
     ld b, a
     jr .vxDone
 .grounded
+    ; braking while steering at speed is a skid turn: far more steering, less speed
+    xor a
+    ldh [hSkid], a
+    ld h, STEER_MAX
+    ld a, b
+    and PADF_LEFT | PADF_RIGHT
+    jr z, .noSkid
+    bit 7, b                    ; PADF_DOWN
+    jr z, .noSkid
+    ldh a, [hSpeed + 1]
+    cp 3
+    jr c, .noSkid
+    ld h, STEER_SKID
+    ld a, 1
+    ldh [hSkid], a
+    ldh a, [hSpeed]
+    sub LOW(SKID_COST)
+    ldh [hSpeed], a
+    jr nc, .skidSound
+    ldh a, [hSpeed + 1]
+    dec a
+    ldh [hSpeed + 1], a
+.skidSound
+    ldh a, [hFrame]
+    and 7
+    jr nz, .noSkid
+    ld a, SFX_SKID
+    call Sfx
+.noSkid
     ld c, 0
     bit 5, b                    ; PADF_LEFT
     jr z, .notLeft
-    ld c, -STEER_MAX
+    ld a, h
+    cpl
+    inc a
+    ld c, a
 .notLeft
     bit 4, b                    ; PADF_RIGHT
     jr z, .notRight
-    ld c, STEER_MAX
+    ld c, h
 .notRight
     ldh a, [hVX]
     ld b, a
@@ -2282,9 +2611,22 @@ Drive:
     dec b
     dec b
     dec b
+    dec b
+    dec b
+    dec b
+    dec b
 .vxUp
     inc b
     inc b
+    inc b
+    inc b
+    ld a, c                     ; (do not overshoot what was asked for)
+    sub b
+    add 3
+    cp 7
+    jr nc, .vxSet
+    ld b, c
+.vxSet
     ld a, b
     ldh [hVX], a
 .vxDone
@@ -2318,31 +2660,24 @@ Drive:
     add X_LIMIT
     cp X_LIMIT * 2
     jr c, .xOk
-    bit 7, h
+    bit 7, h                    ; the rail: bounce back off it, at a price
     ld hl, X_LIMIT << 8
-    jr z, .xStop
+    ld b, -RAIL_BOUNCE
+    jr z, .bounce
     ld hl, -(X_LIMIT << 8)
-.xStop
-    ldh a, [hFrame]             ; scraping it wears the car down...
-    and 3
-    jr nz, .noWear
-    ld a, 1
-    call Damage
-.noWear
-    ldh a, [hSpeed + 1]         ; ...and costs speed, down to a crawl
-    cp 3
-    jr c, .noScrub
-    ldh a, [hSpeed]
-    sub RAIL_SCRUB
-    ldh [hSpeed], a
-    jr nc, .noScrub
-    ldh a, [hSpeed + 1]
-    dec a
-    ldh [hSpeed + 1], a
-.noScrub
-    xor a
+    ld b, RAIL_BOUNCE
+.bounce
+    ld a, b
     ldh [hVX], a
-    ld b, a
+    ld a, RAIL_COST
+    call Damage
+    ld a, SFX_HIT
+    call Sfx
+    ldh a, [hSpeed + 1]
+    or a
+    jr z, .xOk
+    dec a                       ; RAIL_SCRUB is one whole unit
+    ldh [hSpeed + 1], a
 .xOk
     ld a, l
     ldh [hX], a
@@ -2840,6 +3175,12 @@ hPace:        db    ; added to every rival's speed on this level
 hRivalRec:    db    ; low byte of the rival record being worked on
 hHudSeen:     dw    ; what the status bar was last drawn from
 hHudDirty:    db    ; wHud is waiting to be copied to the screen
+hBoost:       db    ; frames of boost left
+hBoosts:      db    ; boosts in hand
+hSkid:        db    ; in a skid turn this frame
+hCount:       db    ; frames until the start
+hBandEnd:     dw
+hBandOr:      db
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db
