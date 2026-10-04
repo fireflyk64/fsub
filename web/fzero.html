@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>Geometry Dash (Game Boy)</title>
+<title>F-Zero city test (Game Boy)</title>
 <style>
 html,body{margin:0;height:100%;background:#111;color:#ddd;font:14px sans-serif;text-align:center}
 canvas{image-rendering:pixelated;width:min(96vw,calc(80vh*160/144));aspect-ratio:160/144;background:#000;margin-top:2vh;touch-action:none}
@@ -12,10 +12,10 @@ p{margin:.5em} a{color:#8af}
 </style></head><body>
 <div id="wrap"><canvas id="screen" width="160" height="144"></canvas></div>
 <p class="btns"><button data-k="select">Select</button><button data-k="start">Start</button>
-<button data-k="up">↑</button><button data-k="down">↓</button><button data-k="A">Jump (A)</button><button id="fs">Fullscreen</button></p>
+<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">↑</button><button data-k="down">↓</button><button id="fs">Fullscreen</button></p>
 <p id="msg">Loading…</p>
-<p>Keys: Enter = Start · Space / Z / ↑ = Jump · ↑↓ = pick level · Shift = Select · F = fullscreen · tap the screen to jump · gamepads supported (A/B/X/Y = jump, d-pad/stick = menu, Start/Select)</p>
-<p><a href="geometrydash.gb">Download ROM</a> · <a href="https://github.com/anderrh/geometrydash">Source</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
+<p>Keys: ←→ = bend the road · Enter = back to the demo track · ↑↓ = speed · Shift = next song · F = fullscreen · gamepads supported (d-pad/stick, Start/Select)</p>
+<p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
 <script src="binjgb.js"></script>
 <script>
 "use strict";
@@ -28,7 +28,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
 (async()=>{
   try{
     const m=await Binjgb();
-    const rom=new Uint8Array(await (await fetch('geometrydash.gb')).arrayBuffer());
+    const rom=new Uint8Array(await (await fetch('fsub.gb')).arrayBuffer());
     const size=(rom.length+0x7fff)&~0x7fff;
     const ptr=m._malloc(size);
     new Uint8Array(m.HEAP8.buffer,ptr,size).fill(0).set(rom);
@@ -67,7 +67,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Press Enter / Start to play', NOSOUND='Sound is off: click, tap or press a key to turn it on';
+    const READY='Running: arrows bend the road and change speed', NOSOUND='Sound is off: click, tap or press a key to turn it on';
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;

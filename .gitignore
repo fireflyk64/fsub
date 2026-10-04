@@ -1,3 +1,7 @@
 *.o
 main.gb
 main.sym
+fzero.gb
+fzero.sym
+fzero_gfx/
+__pycache__/
