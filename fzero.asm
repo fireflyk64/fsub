@@ -30,10 +30,13 @@
 ; more steering, at a cost in speed); the rail bounces you back and hurts; boosts (one per
 ; lap, or free from a dash plate) break the speed limit for a moment.
 ;
-; Hazards: dirt strips (dark bands that drag the car down unless you jump them) and barriers
-; (blocks in one lane that hurt, slow and toss the car unless you steer round or jump).
+; Hazards, both things to steer round: dirt patches (rough dark ground over one half of the
+; road that drags the car down) and barriers (blocks in one lane that hurt, slow and toss it).
 ;
-; Controls: Left/Right steer, A accelerate, Down brake, B jump, Up boost.
+; A wreck: the car's sprite is switched to a spare tile which is then overwritten in VRAM
+; with noise for the explosion, and put back from ROM for the next race.
+;
+; Controls: Left/Right steer, A accelerate, B (or Down) brake, Up boost.
 ;           Select turns the engine note on and off (it borrows the music's second channel).
 ;           Start after a race: go again.  Select+Start together steps through the modes:
 ;           race, practice (Select and Start bend the road by hand), two-player link.
@@ -76,6 +79,10 @@ DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 4           ; health lost hitting it
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
+DEF DIRT_TIME   EQU 30          ; frames a patch drags for once driven into
+DEF DIRT_TILE   EQU CAR_TILE + 24  ; dirt patch pieces, 8, 12 and 16 lines deep
+DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
+DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
 DEF BARRIER_COST EQU 8          ; health lost hitting a barrier
 DEF BARRIER_HOP EQU $0200       ; and how hard it throws the car up
@@ -190,6 +197,62 @@ VBlankISR:
     xor a
     ldh [hReady], a
     call hDma                   ; and its sprites with it
+    ldh a, [hTileJob]           ; anything to draw into the explosion's tile?
+    or a
+    jr z, .noJob
+    push bc
+    ld b, a
+    xor a
+    ldh [hTileJob], a
+    ld hl, _VRAM8000 + BOOM_TILE * 16
+    dec b
+    jr nz, .boom
+    push de                     ; TILE_RESTORE: the small shadow, back from ROM
+    ld de, BoomTilePristine
+    ld b, 32
+.restore
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    dec b
+    jr nz, .restore
+    pop de
+    jr .jobDone
+.boom                           ; TILE_BOOM: noise, thinning out as the explosion ages
+    ldh a, [hRand]
+    ld c, a
+    ld b, 32
+.noise
+    ld a, c                     ; an 8-bit shift register for the noise
+    srl a
+    jr nc, .noTap
+    xor $B8
+.noTap
+    ld c, a
+    ldh a, [hBoom]
+    cp BOOM_TIME / 2
+    ld a, c
+    jr c, .dense
+    rrca
+    and c                       ; later: sparser
+    push af
+    ldh a, [hBoom]
+    cp BOOM_TIME - 8
+    jr c, .sparse
+    pop af
+    xor a                       ; last frames: gone
+    push af
+.sparse
+    pop af
+.dense
+    ld [hl+], a
+    dec b
+    jr nz, .noise
+    ld a, c
+    ldh [hRand], a
+.jobDone
+    pop bc
+.noJob
     ldh a, [hHudDirty]
     or a
     jr z, .keep
@@ -297,6 +360,7 @@ EntryPoint:
     ldh [hCurKeys], a
     ldh [hNewKeys], a
     ldh [hMode], a
+    ldh [hTileJob], a
     ldh [hEngine], a
     ldh [hPractice], a
     ldh [hLinked], a
@@ -582,12 +646,16 @@ PlayerSprites:
     ld c, a
     ldh a, [hCarY]
     ld b, a
+    ld a, CAR_TILE
+    ldh [hCarTile], a
     ldh a, [hState]
-    cp STATE_DEAD               ; destroyed: flicker out
+    cp STATE_DEAD               ; destroyed: the explosion plays in a spare tile, then nothing
     jr nz, .alive
-    ldh a, [hFrame]
-    and 2
-    jr z, .alive
+    ld a, BOOM_TILE
+    ldh [hCarTile], a
+    ldh a, [hBoom]
+    cp BOOM_TIME
+    jr c, .alive
     ld b, 0
 .alive
     ld a, b
@@ -599,7 +667,7 @@ PlayerSprites:
     ldh a, [hCarX]
     ld e, a
     ld [hl+], a
-    ld a, CAR_TILE
+    ldh a, [hCarTile]
     ld [hl+], a
     xor a
     ld [hl+], a
@@ -613,13 +681,19 @@ PlayerSprites:
     add 8
     ld d, a
     ld [hl+], a
-    ld a, CAR_TILE
+    ldh a, [hCarTile]
     ld [hl+], a
     ld a, OAMF_XFLIP
     ld [hl+], a
     ldh a, [hShadowTile]
     ld c, a
+    ldh a, [hState]             ; (a wreck casts no shadow)
+    cp STATE_DEAD
     ld a, CAR_Y + 30
+    jr nz, .shadowY
+    xor a
+.shadowY
+    ld b, a
     ld [hl+], a
     ld a, e
     ld [hl+], a
@@ -627,7 +701,7 @@ PlayerSprites:
     ld [hl+], a
     xor a
     ld [hl+], a
-    ld a, CAR_Y + 30
+    ld a, b
     ld [hl+], a
     ld a, d
     ld [hl+], a
@@ -1169,6 +1243,27 @@ UpdateObject:
     ldh a, [hObjKind]
     or a
     jr z, .mouth
+    cp KIND_DIRT_L
+    jr c, .barrier
+    ldh a, [hX + 1]             ; a dirt patch over one half of the road: are we on that half?
+    jr nz, .dirtRight
+    cp $FE                      ; left half: x of -3 or less
+    jp nc, .draw
+    cp $80
+    jp c, .draw
+    jr .inDirt
+.dirtRight
+    cp 3                        ; right half: x of 3 or more
+    jp c, .draw
+    cp $80
+    jp nc, .draw
+.inDirt
+    ld a, DIRT_TIME
+    ldh [hDirt], a
+    ld a, SFX_SKID
+    call Sfx
+    jp .draw
+.barrier
     dec a                       ; a barrier: are we in its lane?
     ld e, a
     ld d, 0
@@ -1209,6 +1304,14 @@ UpdateObject:
     ldh a, [hObjKind]
     or a
     jr z, .laneFound
+    cp KIND_DIRT_L
+    jr z, .laneFound            ; dirt on the left is where the tunnel mouth goes
+    jr c, .barrierLane
+    ld a, [hl]                  ; dirt on the right: the same distance the other way
+    cpl
+    inc a
+    jr .haveLane
+.barrierLane
     dec a                       ; barriers sit in the rivals' lanes
     srl a
     jr nc, .evenLane
@@ -1218,6 +1321,7 @@ UpdateObject:
     ld h, a
 .laneFound
     ld a, [hl]
+.haveLane
     add 128
     ld b, a
     ldh a, [hBuiltScx]
@@ -1235,6 +1339,18 @@ UpdateObject:
     ldh a, [hObjKind]
     or a
     jr z, .mouthSizes
+    cp KIND_DIRT_L
+    jr c, .barrierSizes
+    ld hl, DirtSize1
+    ld a, c
+    cp MOUTH_D2
+    jr c, .sized
+    ld hl, DirtSize2
+    cp MOUTH_D3
+    jr c, .sized
+    ld hl, DirtSize3
+    jr .sized
+.barrierSizes
     ld hl, BarrierFar           ; a barrier: a dot far off, then a block
     ld a, c
     cp MOUTH_D2
@@ -1449,11 +1565,8 @@ Features:
     FEATURE 0, LINE_END, FEATURE_PLAIN
     FEATURE PIT_START, PIT_END, FEATURE_PLAIN
     FEATURE 12 * 256, 12 * 256 + 90, FEATURE_DASH
-    FEATURE 19 * 256, 19 * 256 + 200, FEATURE_DIRT
     FEATURE 35 * 256, 35 * 256 + 60, FEATURE_JUMP
-    FEATURE 42 * 256, 42 * 256 + 200, FEATURE_DIRT
     FEATURE 45 * 256, 45 * 256 + 90, FEATURE_DASH
-    FEATURE 54 * 256, 54 * 256 + 200, FEATURE_DIRT
     FEATURE 61 * 256, 61 * 256 + 90, FEATURE_DASH
     db $FF
 
@@ -1461,6 +1574,7 @@ Features:
 DEF SFX_SKID  EQU 0
 DEF SFX_HIT   EQU 2
 DEF SFX_BOOST EQU 4
+DEF SFX_BOOM  EQU 6
 Sfx:
     push hl
     push de
@@ -1483,6 +1597,7 @@ Sfx:
     db $51, $23                 ; skid: short hiss
     db $F2, $65                 ; hit: thud
     db $A5, $14                 ; boost: rush
+    db $F7, $73                 ; wreck: long low roar
 
 ; Paint a stretch of the road.  de = where it starts, hl = where it ends, in units from
 ; the finish line.  b = BGP page being built, hBandOr = the road colour's bits there.
@@ -1700,6 +1815,19 @@ UpdateHud:
     ld [hl+], a
     jr .bar
 .laps
+    ldh a, [hState]
+    cp STATE_DEAD
+    jr nz, .lapCount
+    ld a, HUD_O                 ; wrecked: OUT
+    ld [hl+], a
+    ld a, HUD_U
+    ld [hl+], a
+    ld a, HUD_T
+    ld [hl+], a
+    ld a, HUD_BLANK
+    ld [hl+], a
+    jr .bar
+.lapCount
     ld a, HUD_L
     ld [hl+], a
     ldh a, [hLap]
@@ -2240,7 +2368,11 @@ InitRace:
     ld a, $FF                   ; force the status bar to redraw
     ldh [hHudSeen], a
     ldh [hHudSeen + 1], a
+    ld a, TILE_RESTORE          ; undo any explosion drawn over the spare tile
+    ldh [hTileJob], a
     xor a
+    ldh [hBoom], a
+    ldh [hDirt], a
     ldh [hBoost], a
     ldh [hSkid], a
     ldh [hCount], a
@@ -2305,6 +2437,10 @@ Drive:
     ld hl, hFrame
     inc [hl]
     ldh a, [hCurKeys]
+    bit 1, a                    ; B brakes, as Down does
+    jr z, .noB
+    set 7, a
+.noB
     ld b, a
 
     ; --- Select and Start together: switch between racing and practice
@@ -2386,6 +2522,36 @@ Drive:
     ld l, a
     ldh a, [hSpeed + 1]
     ld h, a
+    ldh a, [hDirt]              ; in the dirt: dragged down toward a crawl
+    or a
+    jr z, .clean
+    dec a
+    ldh [hDirt], a
+    ld a, h
+    cp DIRT_SPEED
+    jr c, .clean
+    ld de, -DIRT_DRAG
+    add hl, de
+.clean
+    ldh a, [hState]             ; a wreck: count its explosion along
+    cp STATE_DEAD
+    jr nz, .noBoom
+    ldh a, [hBoom]
+    cp BOOM_TIME + 4
+    jr nc, .noBoom
+    inc a
+    ldh [hBoom], a
+    cp 1
+    jr nz, .boomTick
+    ld a, SFX_BOOM
+    call Sfx
+.boomTick
+    ldh a, [hBoom]
+    and 3
+    jr nz, .noBoom
+    ld a, TILE_BOOM             ; a new frame of it every fourth frame
+    ldh [hTileJob], a
+.noBoom
     ldh a, [hState]
     cp STATE_DEAD
     jr z, .braking              ; a wreck just stops
@@ -2736,12 +2902,22 @@ Drive:
 .lifted
 
     ; --- steering: ease sideways speed toward what the d-pad asks for
+    ldh a, [hState]
+    cp STATE_DEAD
+    jr nz, .notWreck
+    xor a                       ; a wreck goes nowhere
+    ldh [hVX], a
+    ld b, a
+    ld d, a
+    ld e, a
+    jr .vxDone
+.notWreck
     ldh a, [hAir]
     ld c, a
     ldh a, [hState]
     or c
     jr z, .grounded
-    ldh a, [hVX]                ; no grip in the air (or in a wreck): keep drifting
+    ldh a, [hVX]                ; no grip in the air: keep drifting the way we were
     ld b, a
     jr .vxDone
 .grounded
@@ -2749,6 +2925,11 @@ Drive:
     xor a
     ldh [hSkid], a
     ld h, STEER_MAX
+    ldh a, [hSpeed + 1]         ; (a hovercar cannot shuffle sideways at a standstill)
+    or a
+    jr nz, .moving
+    ld h, a
+.moving
     ld a, b
     and PADF_LEFT | PADF_RIGHT
     jr z, .noSkid
@@ -2903,22 +3084,11 @@ Drive:
     ld a, c
     ldh [hLean], a
 
-    ; --- jumping: B launches the car; the shadow stays on the road
+    ; --- in the air: the shadow stays on the road
     ldh a, [hAir]
     or a
     jr nz, .inAir
-    ldh a, [hState]
-    or a
-    jr nz, .onGround
-    ldh a, [hNewKeys]
-    and PADF_B
-    jr z, .onGround
-    ld a, 1
-    ldh [hAir], a
-    ld a, LOW(JUMP_SPEED)
-    ldh [hVZ], a
-    ld a, HIGH(JUMP_SPEED)
-    ldh [hVZ + 1], a
+    jr .onGround                ; (only jump plates and barriers put the car in the air)
 .inAir
     ldh a, [hVZ]
     sub GRAVITY
@@ -3002,15 +3172,18 @@ TrackBend:
 ; lane 0-3.  It turns up SPAWN_DIST (four chunks) further on.
 DEF MOUTH    EQU 1
 DEF BARRIER  EQU 2
+DEF DIRT_L   EQU 6              ; a dirt patch over the left half of the road
+DEF DIRT_R   EQU 7              ; ...or the right
+DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
 ChunkSpawn:
     db 0, 0, 0, BARRIER + 1, 0, 0, 0, 0
     db 0, 0, MOUTH, 0, 0, 0, 0, 0
-    db 0, 0, 0, 0, 0, 0, 0, 0
-    db 0, 0, BARRIER + 2, 0, 0, 0, 0, 0
-    db 0, BARRIER + 0, 0, 0, 0, 0, 0, 0
-    db BARRIER + 3, 0, 0, 0, 0, 0, 0, BARRIER + 1
-    db 0, 0, 0, 0, 0, BARRIER + 2, 0, 0
-    db 0, 0, BARRIER + 0, 0, 0, 0, 0, 0
+    db DIRT_R, 0, 0, 0, 0, 0, BARRIER + 2, 0
+    db 0, 0, 0, DIRT_L, 0, 0, 0, 0
+    db 0, BARRIER + 0, 0, 0, 0, 0, DIRT_R, 0
+    db 0, 0, 0, BARRIER + 3, 0, 0, 0, 0
+    db DIRT_L, 0, 0, 0, 0, BARRIER + 1, 0, 0
+    db 0, 0, DIRT_R, 0, 0, 0, 0, 0
     ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
 
 TunnelBend:                     ; what the same chunks are like underground
@@ -3050,6 +3223,23 @@ SpriteFade:                     ; OBP0 at each darkness
 BarrierFar:
     db 1
     db 4, CAR4_TILE, 0
+DirtSize1:
+    db 2
+    db 0, DIRT_TILE, 0
+    db 8, DIRT_TILE, OAMF_XFLIP
+DirtSize2:
+    db 4
+    db -8, DIRT_TILE + 2, 0
+    db 0, DIRT_TILE + 2, OAMF_XFLIP
+    db 8, DIRT_TILE + 2, 0
+    db 16, DIRT_TILE + 2, OAMF_XFLIP
+DirtSize3:
+    db 5
+    db -12, DIRT_TILE + 4, 0
+    db -4, DIRT_TILE + 4, OAMF_XFLIP
+    db 4, DIRT_TILE + 4, 0
+    db 12, DIRT_TILE + 4, OAMF_XFLIP
+    db 20, DIRT_TILE + 4, 0
 MouthSize1:
     db 2
     db 0, MOUTH_TILE, 0
@@ -3248,6 +3438,11 @@ ShearPointers:
         dw ShearTables + N * GROUND_LINES
     ENDR
 
+DEF TILE_RESTORE EQU 1
+DEF TILE_BOOM    EQU 2
+BoomTilePristine:               ; the small shadow's two tiles as they are in car.bin
+    INCBIN "build/car.bin", 64, 32
+
 SkyBgp:
     INCBIN "build/skybgp.bin"
 
@@ -3395,6 +3590,11 @@ hBandEnd:     dw
 hBandOr:      db
 hObjKind:     db    ; road object: 0 tunnel mouth, 1-4 barrier in lane 0-3
 hEngine:      db    ; engine note on
+hCarTile:     db
+hDirt:        db    ; frames of dirt drag left
+hBoom:        db    ; frames since the car was wrecked
+hTileJob:     db    ; VBlank work on the explosion tile: TILE_RESTORE, TILE_BOOM
+hRand:        db
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db

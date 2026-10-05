@@ -423,6 +423,24 @@ def car_tiles():
     return bytes(out)
 
 
+DIRT_HEIGHTS = (8, 12, 16)      # dirt patch pieces: one 8-wide object each, tiled side by side
+
+
+def dirt_objects():
+    """Rough dark grey blocks with a ragged far edge and a few holes, bottom-aligned."""
+    objs = []
+    for h in DIRT_HEIGHTS:
+        obj = [[0] * 8 for _ in range(16)]
+        for y in range(16 - h, 16):
+            for x in range(8):
+                top = y == 16 - h
+                hole = (x * 5 + y * 3) % 11 == 0
+                if not (top and x % 2) and not hole:
+                    obj[y][x] = 2
+        objs.append(obj)
+    return objs
+
+
 def rival_lane_tables():
     """For each rival lane: ground line d -> pixels from the road centre."""
     return [int(round(u * d / GROUND)) & 255 for u in RIVAL_LANES for d in range(128)]
@@ -507,7 +525,7 @@ def shear_tables():
 
 
 # ----------------------------------------------------------------------------------------
-OBJ_RESERVE = 24        # tiles kept free for sprites at the end of the $8000 block
+OBJ_RESERVE = 30        # tiles kept free for sprites at the end of the $8000 block
 
 
 # Status bar glyphs: colour 2 is white, 1 dark grey, 0 black under HUD_BGP.
@@ -524,8 +542,11 @@ FONT = {
     "P": ("####.", "#...#", "#...#", "####.", "#....", "#....", "#...."),
     "L": ("#....", "#....", "#....", "#....", "#....", "#....", "#####"),
     "SLASH": ("....#", "....#", "...#.", "..#..", ".#...", "#....", "#...."),
+    "O": (".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
+    "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
 }
-HUD_ORDER = ["BLANK", "1", "2", "3", "4", "5", "6", "7", "8", "P", "L", "SLASH",
+HUD_ORDER = ["BLANK", "1", "2", "3", "4", "5", "6", "7", "8", "P", "L", "SLASH", "O", "U", "T",
              "FULL", "HALF", "EMPTY"]
 
 
@@ -644,7 +665,8 @@ def main():
         put(name, b"".join(blk))
     put("map.bin", tilemap)
     put("car.bin", car_tiles() + mouth_tiles()
-        + b"".join(pack_object(o) for o in small_car_objects()))
+        + b"".join(pack_object(o) for o in small_car_objects())
+        + b"".join(pack_object(o) for o in dirt_objects()))
     put("rlane.bin", rival_lane_tables())
     put("dist.bin", dist_to_line())
     put("lane.bin", lane_offsets())
