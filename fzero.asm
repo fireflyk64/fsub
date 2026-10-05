@@ -83,6 +83,7 @@ DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 2           ; health lost hitting it, plus half the speed
 DEF RAIL_COOL   EQU 40          ; frames of no throttle after a hit, and before another can hurt
+DEF BEND_LEAD   EQU 384         ; how far ahead of the car the drawn road looks for its bend
 DEF PUSH_K      EQU 54          ; how hard bends throw the car outward (see PushScale)
 DEF CATCH_UP    EQU 20          ; extra pace for rivals behind the player
 DEF EASE_OFF    EQU 12          ; and less for ones far ahead
@@ -608,7 +609,7 @@ BuildLines:
     ld [rROMB0], a
     ld h, b
     ld l, SCX_STAMP
-    ldh a, [hBend]
+    ldh a, [hSeen + 1]
     cp [hl]
     jr nz, .refill
     inc l
@@ -617,7 +618,7 @@ BuildLines:
     jr z, .scxDone
     dec l
 .refill
-    ldh a, [hBend]
+    ldh a, [hSeen + 1]
     ld [hl+], a
     ldh a, [hShear]
     ld [hl], a
@@ -630,7 +631,7 @@ BuildLines:
     ld a, [hl+]
     ld b, [hl]
     ld c, a
-    ldh a, [hBend]
+    ldh a, [hSeen + 1]
     add a
     ld l, a
     ld h, 0
@@ -817,7 +818,11 @@ PlayerSprites:
     ld [hl], OAMF_XFLIP
 
     ; The lap strip along the top of the sky: a small car for us and a dot for whoever is
-    ; furthest ahead, each as far across the screen as it is round the lap.
+    ; furthest ahead, each as far across the screen as it is round the lap.  (It creeps: every
+    ; fourth frame is plenty.)
+    ldh a, [hFrame]
+    and 3
+    ret nz
     ld hl, wOam + STRIP_OAM
     ld a, 9
     ld [hl+], a
@@ -886,9 +891,19 @@ PlayerSprites:
 ; every frame's OBP1 lines though, so that is redone from a remembered line.  They are
 ; visited far to near so that where two share scanlines the nearer one's paint wins.
 UpdateRivals:
-    ; one pass of a bubble sort a frame keeps wOrder far-to-near: the order changes slowly
+    ; wOrder is kept far-to-near by comparing one neighbouring pair a frame: the order
+    ; only changes when somebody overtakes
+    ldh a, [hSortAt]
+    inc a
+    cp NUM_RIVALS - 1
+    jr c, .sortAt
+    xor a
+.sortAt
+    ldh [hSortAt], a
+    ld e, a
+    ld d, 0
     ld hl, wOrder
-    ld b, NUM_RIVALS - 1
+    add hl, de
 .pair
     push hl
     ld a, [hl+]
@@ -924,9 +939,6 @@ UpdateRivals:
     ld [hl-], a
     ld [hl], c
 .sorted
-    inc hl
-    dec b
-    jr nz, .pair
 
     xor a
     ldh [hRankCount], a
@@ -1003,8 +1015,33 @@ UpdateRivals:
     ldh a, [hBuiltScx]
     inc a
     ld h, a
+    ld a, l                     ; a small car far up the road covers few lines
+    cp HORIZON - 1 + RIVAL_D8
+    jr c, .paint6
+    cp HORIZON - 1 + RIVAL_D12
+    jr c, .paint10
+    cp HORIZON - 1 + RIVAL_D16
+    jr c, .paint14
     ld a, d
-    REPT 18
+    REPT 4
+        ld [hl], a
+        dec l
+    ENDR
+.paint14
+    ld a, d
+    REPT 4
+        ld [hl], a
+        dec l
+    ENDR
+.paint10
+    ld a, d
+    REPT 4
+        ld [hl], a
+        dec l
+    ENDR
+.paint6
+    ld a, d
+    REPT 6
         ld [hl], a
         dec l
     ENDR
@@ -1407,12 +1444,14 @@ UpdateObject:
     ldh a, [hObjOam]
     ld l, a
     ld h, HIGH(wOam)
-    ld b, OBJ_SPRITES * 4
     xor a
-.clear
-    ld [hl+], a
-    dec b
-    jr nz, .clear
+    REPT OBJ_SPRITES            ; park its sprites (a y of 0 is off screen)
+        ld [hl], a
+        inc l
+        inc l
+        inc l
+        inc l
+    ENDR
     ldh a, [hObjOn]
     or a
     ret z
@@ -2694,6 +2733,9 @@ InitRace:
     ld a, BEND_LEVELS
     ldh [hBend], a
     ldh [hTarget], a
+    ldh [hSeen + 1], a
+    xor a
+    ldh [hSeen], a
     ld a, CAR_Y + 16
     ldh [hCarY], a
     ld a, CAR_X + 8
@@ -3345,6 +3387,58 @@ Drive:
     inc a
     ldh [hBend], a
 .bendDone
+
+    ; --- The road is DRAWN bending before the car FEELS it, so a corner can be seen coming.
+    ; What is drawn heads for the bend a way up the road, quickly at first then settling
+    ; (each frame it closes part of the gap, more the faster we go), so the far end of the
+    ; road swings over about a second before the forces arrive.
+    ldh a, [hTarget]
+    ld c, a
+    ldh a, [hPractice]
+    or a
+    jr nz, .seenTarget          ; (bending it by hand: no looking ahead)
+    ldh a, [hPos + 1]
+    add LOW(PLAYER_Z + BEND_LEAD)
+    ldh a, [hPos + 2]
+    adc HIGH(PLAYER_Z + BEND_LEAD)
+    and CHUNK_MASK
+    ld e, a
+    ld d, 0
+    ld hl, TrackBend
+    ldh a, [hTunnel]
+    or a
+    jr z, .leadTable
+    ld hl, TunnelBend
+.leadTable
+    add hl, de
+    ld c, [hl]
+.seenTarget
+    ldh a, [hSeen + 1]
+    ld e, a
+    ld a, c
+    sub e                       ; gap, in bend steps
+    jr z, .seenDone
+    ld e, a
+    add a
+    sbc a
+    ld d, a                     ; de = gap, signed
+    ld hl, 0
+    ldh a, [hSpeed + 1]
+    or a
+    jr z, .seenDone             ; (standing still: nothing changes)
+    ld c, a
+.seenMul
+    add hl, de
+    dec c
+    jr nz, .seenMul
+    add hl, hl                  ; gap * speed / 128 of a step this frame
+    ldh a, [hSeen]
+    add l
+    ldh [hSeen], a
+    ldh a, [hSeen + 1]
+    adc h
+    ldh [hSeen + 1], a
+.seenDone
 
     ; --- de = bend * speed: how hard this bend is turning us this frame
     ld hl, 0
@@ -4096,7 +4190,8 @@ hFrame:       db
 hPos:         ds 3  ; distance driven: fraction, units, 256s
 hPosCoarse:   db    ; the same in steps of 16 units
 hSpeed:       dw
-hBend:        db    ; 0 hard left .. 32 straight .. 64 hard right
+hBend:        db    ; the bend the car feels: 0 hard left .. 32 straight .. 64 hard right
+hSeen:        dw    ; the bend the road is drawn with (8.8), which leads it
 hTarget:      db
 hSkyX:        dw
 hX:           dw    ; car's place across the road, 8.8 pixels, 0 = centre line
@@ -4162,6 +4257,7 @@ hTurnSign:    db
 hRailCool:    db    ; frames until the rail can hurt again
 hLapFlash:    db    ; frames the lap count flashes for after crossing the line
 hObjAttr:     db
+hSortAt:      db    ; which pair of wOrder gets compared this frame
 hBandBase:    ds 7  ; high byte of each distance band's palette table, far band first
 hRoof:        db    ; under a roof: no sky
 hFlash:       db    ; frames of sky flash left after a boost starts
