@@ -4,7 +4,8 @@
 // Needs SameBoy built as a library (git clone https://github.com/LIJI32/SameBoy; make lib bootroms CC=gcc):
 //   gcc -O2 -o linktest tools/linktest.c -I SameBoy SameBoy/build/lib/libsameboy.a -lm
 //   ./linktest fzero.gb fzero.sym SameBoy/build/bin/BootROMs/dmg_boot.bin FRAMES CABLE [SHOT_FROM SHOT_TO]
-// CABLE: 1 = linked two-player, 2 = two separate single-player races, 0 = link mode with no cable.
+// CABLE: 1 = linked two-player, 2 = two separate single-player races.  A ninth argument is the
+// track console 0 picks in its menu (console 1 leaves its own at 0 and must follow).
 // SHOT_FROM..SHOT_TO writes both screens to link.rgba (160x144 RGBA, console 0 then 1, every 2nd frame).
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,10 +31,10 @@ static int sym(const char *path, const char *name) {
 #define RD(i, a) GB_safe_read_memory(gb[i], (a))
 int main(int argc, char **argv) {
     const char *rom = argv[1], *symf = argv[2], *boot = argv[3]; int frames = atoi(argv[4]); int cable = atoi(argv[5]);
-    int shot_from = argc > 6 ? atoi(argv[6]) : 1 << 30, shot_to = argc > 7 ? atoi(argv[7]) : 0;
+    int shot_from = argc > 6 ? atoi(argv[6]) : 1 << 30, shot_to = argc > 7 ? atoi(argv[7]) : 0, pick = argc > 8 ? atoi(argv[8]) : 0;
     int hX = sym(symf, "hX"), hBend = sym(symf, "hBend"), hSpeed = sym(symf, "hSpeed"), hState = sym(symf, "hState"), hLinked = sym(symf, "hLinked"),
         hRank = sym(symf, "hRank"), hLap = sym(symf, "hLap"), hPos = sym(symf, "hPos"), wRivals = sym(symf, "wRivals"), hMode = sym(symf, "hMode"),
-        hFrame = sym(symf, "hFrame"), hLoad = sym(symf, "hLoad"), hHealth = sym(symf, "hHealth"), hLinkStale = sym(symf, "hLinkStale");
+        hFrame = sym(symf, "hFrame"), hMenu = sym(symf, "hMenu"), wMenuRow = sym(symf, "wMenuRow"), hTrackNo = sym(symf, "hTrackNo"), hLoad = sym(symf, "hLoad"), hHealth = sym(symf, "hHealth"), hLinkStale = sym(symf, "hLinkStale");
     for (int i = 0; i < 2; i++) {
         gb[i] = GB_alloc(); GB_init(gb[i], GB_MODEL_DMG_B);
         if (GB_load_boot_rom(gb[i], boot)) { fprintf(stderr, "boot rom?\n"); return 1; }
@@ -53,17 +54,25 @@ int main(int argc, char **argv) {
         while (!vb[0] || !vb[1]) { int i = (!vb[0] && (vb[1] || t[0] <= t[1])) ? 0 : 1; t[i] += GB_run(gb[i]); }
         for (int i = 0; i < 2; i++) {
             int8_t x = RD(i, hX + 1); int bend = RD(i, hBend) - 32, spd = RD(i, hSpeed + 1), st = RD(i, hState), mode = RD(i, hMode), linked = RD(i, hLinked);
-            bool chord = false, start = false;
-            if (cable != 2 && f > 200 && mode != 2 && f % 40 < 10) chord = true;             // Select+Start until link mode
-            if (i == 0 && f > 500 && mode == 2 && !linked && f % 60 < 5) start = true;  // console 0 calls
+            bool chord = false, start = false, mup = false, mdown = false, mleft = false, mright = false;
+            if (f > 60 && RD(i, hMenu)) {         // the menu: (console 0: a track,) link mode, Start
+                int row = RD(i, wMenuRow), trk = RD(i, hTrackNo), want_trk = i == 0 ? pick : 0, want_mode = cable == 1 ? 2 : 0;
+                bool tap = f % 8 < 4;
+                if (trk != want_trk) { if (row != 0) mup = tap; else if (trk < want_trk) mright = tap; else mleft = tap; }
+                else if (mode != want_mode) { if (row < 2) mdown = tap; else if (row > 2) mup = tap; else if (mode < want_mode) mright = tap; else mleft = tap; }
+                else start = tap;
+            }
+            else if (i == 0 && f > 300 && mode == 2 && !linked && f % 60 < 5) start = true;  // console 0 calls
             if (st && f % 300 < 5 && i == 1) start = true;                       // console 1 restarts after the race
             int target = (i ? 14 : -14), want = abs(bend) > 20 ? 4 : abs(bend) > 8 ? 6 : (i ? 7 : 8);
             GB_set_key_state(gb[i], GB_KEY_SELECT, chord); GB_set_key_state(gb[i], GB_KEY_START, chord || start);
-            GB_set_key_state(gb[i], GB_KEY_LEFT, x > target + 3); GB_set_key_state(gb[i], GB_KEY_RIGHT, x < target - 3);
-            GB_set_key_state(gb[i], GB_KEY_B, (linked || cable == 2) && spd < want && !st); GB_set_key_state(gb[i], GB_KEY_DOWN, spd > want);
+            bool menu = RD(i, hMenu);
+            GB_set_key_state(gb[i], GB_KEY_UP, mup);
+            GB_set_key_state(gb[i], GB_KEY_LEFT, menu ? mleft : x > target + 3); GB_set_key_state(gb[i], GB_KEY_RIGHT, menu ? mright : x < target - 3);
+            GB_set_key_state(gb[i], GB_KEY_B, !menu && (linked || cable == 2) && spd < want && !st); GB_set_key_state(gb[i], GB_KEY_DOWN, menu ? mdown : spd > want);
             int fr = RD(i, hFrame); if (f > 300 && lastf[i] >= 0 && ((fr - lastf[i]) & 255) != 1) { drops[i]++; printf("drop gb%d f%d load %d\n", i, f, RD(i, hLoad)); } lastf[i] = fr;
             int l = RD(i, hLoad); l = l >= 144 ? l - 144 : l + 10; if (f > 300 && l > maxload[i]) maxload[i] = l;
-            char line[200]; sprintf(line, "mode%d linked%d lap%d rank%d st%d", mode, linked, RD(i, hLap), RD(i, hRank), st);
+            char line[200]; sprintf(line, "menu%d track%d mode%d linked%d lap%d rank%d st%d", RD(i, hMenu), RD(i, hTrackNo), mode, linked, RD(i, hLap), RD(i, hRank), st);
             if (strcmp(line, last[i])) { printf("f%d gb%d %s hp%d\n", f, i, line, RD(i, hHealth)); strcpy(last[i], line); }
         }
         if (f % 600 == 599 && RD(0, hLinked)) {   // does each console see the other where it really is?

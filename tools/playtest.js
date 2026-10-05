@@ -1,7 +1,7 @@
 // Playtest bots: drive a full race in the ROM (headless, in the web build's emulator) at
 // three levels of skill and report how each got on.  For tuning the balance.
 //
-//   node tools/playtest.js [masher|casual|expert ...] [--level N] [--gif NAME FROM TO]
+//   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--gif NAME FROM TO]
 //
 // masher  holds the throttle and steers for the middle of the road.  Nothing else.
 // casual  also brakes when a sharp bend is already throwing it wide, dodges what it sees,
@@ -16,6 +16,7 @@ for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { cons
 const args = process.argv.slice(2);
 const bots = args.filter(a => ['masher', 'casual', 'expert'].includes(a));
 const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : 0;
+const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
 const gifAt = args.indexOf('--gif');
 
 async function race(kind, record) {
@@ -26,14 +27,23 @@ async function race(kind, record) {
   const rd = a => m._emulator_read_mem(e, a), s8 = v => (v << 24) >> 24, s16 = v => (v << 16) >> 16;
   const keys = {}; const set = (k, v) => { if (!!keys[k] !== !!v) { keys[k] = !!v; m['_set_joyp_' + k](e, v ? 1 : 0); } };
   let ticks = 0; const step = () => { ticks += 70224; for (;;) { if (m._emulator_run_until_f64(e, ticks) & 4) break; } };
-  const bendAt = chunk => rd(sym.TrackBend + (chunk & 63)) - 32;
+  // a chunk's bend as the car feels it: the top bit marks a corner half as tight again
+  const felt = v => ((v & 127) - 32) * (v & 128 ? 1.5 : 1);
+  const bendAt = chunk => felt(rd(sym.wTrackBend + (chunk & 63)));
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
   let lastHp = 64, lastLap = 1, lastF = -1, started = false;
   for (let i = 0; i < 40000; i++) {
     step();
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
-    if (!started) { if (i > 30 && count > 0) started = true; else continue; }
+    if (i > 20 && rd(sym.hMenu)) {        // the menu: pick the track and the level, then Start
+      const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), tap = i % 6 < 3;
+      let key = 'start';
+      if (trk !== track) key = row !== 0 ? 'up' : (trk < track ? 'right' : 'left');
+      else if (level && lv !== level) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
+      for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, tap && k === key);
+      continue; }
+    if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
     const ld = rd(sym.hLoad); out.peak = Math.max(out.peak, ld >= 144 ? ld - 144 : ld + 10);
     if (record && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
@@ -46,11 +56,8 @@ async function race(kind, record) {
       out.gaps = []; for (let r = 0; r < 7; r++) out.gaps.push(s16(rd(sym.wRivals + r * 8 + 1) | rd(sym.wRivals + r * 8 + 2) << 8) - 175);
       break;
     }
-    if (rd(sym.hWait)) {        // on the grid: set the level, then go
-      const lv = rd(sym.hLevel), want = level || lv;
-      set('left', lv > want && i % 4 < 2); set('right', lv < want && i % 4 < 2); set('B', lv === want && i % 4 < 2); out.level = lv; continue; }
     // ---- the bot
-    const x = s8(rd(sym.hX + 1)), bend = rd(sym.hBend) - 32, speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
+    const x = s8(rd(sym.hX + 1)), bend = (rd(sym.hBend) - 32) * (rd(sym.wTight) ? 1.5 : 1), speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
     const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8, chunk = (pos >> 8) & 63, boosts = rd(sym.hBoosts), air = rd(sym.hAir);
     let target = 0, gas = true, brake = false, boost = false;
     const objs = [];
@@ -67,7 +74,7 @@ async function race(kind, record) {
       if (boosts && bend === 0 && bendAt(chunk + 1) === 0 && speed > 7.5) boost = true;
     } else if (kind === 'expert') {
       const limit = b => Math.abs(b) < 2 ? 12 : 8 * Math.sqrt(12.3 / Math.abs(b));
-      let want = Math.min(limit(bend), limit(bendAt(chunk)), limit(rd(sym.TrackBend + (((pos + 230) >> 8) & 63)) - 32));
+      let want = Math.min(limit(bend), limit(bendAt(chunk)), limit(bendAt((pos + 230) >> 8)));
       const ahead = bendAt(chunk) || bend;
       if (Math.abs(ahead) > 8) target = ahead > 0 ? 18 : -18;        // inside line
       dodge(480);
@@ -86,7 +93,7 @@ async function race(kind, record) {
   for (const kind of bots.length ? bots : ['masher', 'casual', 'expert']) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
-    console.log(`level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
     if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
   }

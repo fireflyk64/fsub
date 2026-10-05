@@ -42,10 +42,13 @@
 ;
 ; Controls: Left/Right steer, B accelerate, A (or Down) brake, Up boost.
 ;           Select turns the engine note on and off (it borrows the music's second channel).
-;           On the grid before a race: Left/Right set how quick the rivals are (the bar
-;           between LO and TOP on the status bar), B or Start begins the countdown.
-;           Start after a race: go again.  Select+Start together steps through the modes:
-;           race, practice (Select and Start bend the road by hand), two-player link.
+;           Start after a race: go again; Select then: back to the menu.
+;           Select+Start together: back to the menu at any time.
+;
+; The menu picks the track, how quick the rivals are, the mode (race, practice, two-player
+; link) and the engine note.  It has real lettering because it borrows the tiles a track's
+; skyline uses; choosing a track loads that skyline, the track's tables (into RAM, so the
+; rest of the code just reads fixed addresses), its sceneries and its song.
 ;
 ; Two players: both pick link mode, one presses Start.  Each console runs its own car and
 ; two rivals and tells the other where they are; the other shows them a few frames late.
@@ -58,7 +61,11 @@ INCLUDE "build/consts.inc"
 
 DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every frame
 DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
-DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades
+DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades:
+DEF PAL_BANK2   EQU 6           ; one bank per set of sceneries (a track uses one set)
+DEF NUM_TRACKS  EQU 4
+DEF SKY_FONT    EQU 4           ; the menu's lettering, loaded where a skyline goes
+DEF MENU_LCDC   EQU LCDCF_ON | LCDCF_BGON | LCDCF_BG8000 | LCDCF_BG9C00
 DEF LCDC_COMMON EQU LCDCF_ON | LCDCF_BGON | LCDCF_OBJON | LCDCF_OBJ16 | LCDCF_BG9800 | LCDCF_WINON | LCDCF_WIN9C00
 DEF LCDC_UPPER  EQU LCDC_COMMON | LCDCF_BG8000
 DEF LCDC_LOWER  EQU LCDC_COMMON | LCDCF_BG8800
@@ -108,8 +115,6 @@ DEF HEALTH_MAX  EQU 64
 DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
-DEF TUNNEL_SKIP EQU 3           ; chunks the tunnel cuts off the lap
-DEF EXIT_CHUNK  EQU 30          ; where the tunnel comes back up
 DEF PIT_START   EQU 256         ; recharge strip, in units from the finish line
 DEF PIT_END     EQU 768
 DEF LINE_END    EQU 20          ; depth of the painted finish line
@@ -205,6 +210,14 @@ SECTION "fzero code", ROM0
 
 VBlankISR:
     push af
+    ldh a, [hMenu]              ; in the menu there is nothing to do but say it happened
+    or a
+    jr z, .game
+    ld a, 1
+    ldh [hVBlank], a
+    pop af
+    reti
+.game
     push hl
     ldh a, [hReady]             ; a finished frame waiting?  make it the live one
     or a
@@ -337,8 +350,8 @@ EntryPoint:
     ld hl, _VRAM9000
     ld bc, Tiles9000.end - Tiles9000
     call Copy
-    ld de, Tilemap
-    ld hl, _SCRN0
+    ld de, Tilemap              ; the ground: tile rows 5 down.  The sky rows come with a track
+    ld hl, _SCRN0 + SKY_MAP_BYTES
     ld bc, Tilemap.end - Tilemap
     call Copy
 
@@ -363,12 +376,6 @@ EntryPoint:
     ld a, %11100000             ; player: 1 white, 2 dark grey, 3 black
     ldh [rOBP0], a
 
-    ; both line buffers: sky palette for the top, something sane for the rest
-    ld hl, wLinesA
-    call InitLines
-    ld hl, wLinesB
-    call InitLines
-
     xor a
     ldh [hReady], a
     ldh [hVBlank], a
@@ -384,11 +391,14 @@ EntryPoint:
     ldh [hGen], a
     ldh [hSkyX], a
     ldh [hSkyX + 1], a
+    ldh [hTrackNo], a
+    ld [wMenuRow], a
+    dec a
+    ld [wSongNow], a            ; (no song yet)
     ld a, HIGH(wLinesA)
     ldh [hFront], a
     ld a, LEVEL_START
     ldh [hLevel], a
-    call InitRace
 
     ld de, note_table_rom       ; this driver plays from a RAM copy of the note table
     ld hl, wNoteTable
@@ -402,19 +412,276 @@ EntryPoint:
     ldh [rAUDVOL], a
     call StartSong
 
-    ld hl, _SCRN1               ; the status bar: a window over the bottom eight lines
+    ld a, HUD_LINE              ; the status bar: a window over the bottom eight lines
+    ldh [rWY], a
+    ld a, 7
+    ldh [rWX], a
+    ld a, SKY_STATIC - 1
+    ldh [rLYC], a
+    ; fall through into the menu (the screen is still off)
+
+; ---------------------------------------------------------------------------------------
+; The menu.  Up/Down pick a line, Left/Right change it, Start (or A or B) goes racing.
+Menu:
+    ld sp, $E000                ; (we get here from deep inside the game too)
+    call LcdOff
+    ld a, 1
+    ldh [hMenu], a
+    xor a
+    ldh [rSCX], a
+    ldh [rSCY], a
+    ldh [rSC], a                ; coming back here drops any link
+    ldh [hLinked], a
+    ldh [hLinkTry], a
+    ldh [rAUD2ENV], a           ; and silences the engine
+    ld b, 1
+    ld c, a
+    call hUGE_mute_channel
+    ld a, %00011011             ; white letters on black
+    ldh [rBGP], a
+    ld a, SKY_FONT
+    call LoadSky
+    ld hl, _SCRN1
+    ld bc, 32 * 18
+.clear
+    ld a, ' '
+    ld [hl+], a
+    dec bc
+    ld a, b
+    or c
+    jr nz, .clear
+    ld hl, MenuText
+.label                          ; (address, length, text) until a zero length
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a
+    ld a, [hl+]
+    or a
+    jr z, .labelled
+    ld b, a
+.letter
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .letter
+    jr .label
+.labelled
+    call DrawMenu
+    xor a
+    ldh [rIF], a
+    ld a, IEF_VBLANK
+    ldh [rIE], a
+    ld a, MENU_LCDC
+    ldh [rLCDC], a
+    ei
+.frame
+    xor a
+    ldh [hVBlank], a
+.wait
+    di
+    ldh a, [hVBlank]
+    or a
+    jr nz, .awake
+    ei
+    halt
+    jr .wait
+.awake
+    ei
+    ld a, [wMenuDirty]          ; (VBlank has just begun: a safe moment to redraw)
+    or a
+    call nz, DrawMenu
+    call UpdateKeys
+    ldh a, [hNewKeys]
+    ld b, a
+    and PADF_START | PADF_A | PADF_B
+    jp nz, StartRace
+    ld a, [wMenuRow]
+    bit 6, b                    ; PADF_UP
+    jr z, .notUp
+    or a
+    jr z, .notUp
+    dec a
+.notUp
+    bit 7, b                    ; PADF_DOWN
+    jr z, .notDown
+    cp 3
+    jr nc, .notDown
+    inc a
+.notDown
+    ld [wMenuRow], a
+    add a                       ; each line: where its value lives, and how many it has
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, MenuLines
+    add hl, de
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a                     ; de -> the value
+    ld a, [hl+]
+    ld c, a                     ; lowest
+    ld h, [hl]                  ; highest
+    ld a, [de]
+    bit 5, b                    ; PADF_LEFT
+    jr z, .notLeft
+    cp c
+    jr z, .notLeft
+    dec a
+.notLeft
+    bit 4, b                    ; PADF_RIGHT
+    jr z, .notRight
+    cp h
+    jr nc, .notRight
+    inc a
+.notRight
+    ld [de], a
+    ld a, b
+    and PADF_UP | PADF_DOWN | PADF_LEFT | PADF_RIGHT
+    ld [wMenuDirty], a
+    call SongBank
+    call hUGE_dosound
+    jr .frame
+
+MenuLines:                      ; value, lowest, highest
+    dw hTrackNo
+    db 0, NUM_TRACKS - 1
+    dw hLevel
+    db 1, LEVELS
+    dw hMode
+    db 0, MODE_LINK
+    dw hEngine
+    db 0, 1
+
+MACRO MENU_TEXT                 ; \1 = row, \2 = column, \3 = text
+    dw _SCRN1 + (\1) * 32 + (\2)
+    db STRLEN(\3), \3
+ENDM
+MenuText:
+    MENU_TEXT 2, 5, "FSUB RACER"
+    MENU_TEXT 6, 3, "TRACK"
+    MENU_TEXT 8, 3, "RIVALS"
+    MENU_TEXT 10, 3, "MODE"
+    MENU_TEXT 12, 3, "ENGINE"
+    MENU_TEXT 15, 5, "START - GO"
+    dw 0
+    db 0
+
+DEF MENU_VALUE EQU 9            ; letters in a value
+MenuValues:                     ; for each line, its values in order
+    dw .tracks, .rivals, .modes, .engine
+.tracks
+    db "NEO CITY ", "BLUE DEEP", "GOLD WIND", "OLD PORT "
+.rivals
+    db "         ", "ROOKIE   ", "EASY     ", "NORMAL   ", "HARD     ", "EXPERT   "
+.modes
+    db "RACE     ", "PRACTICE ", "LINK     "
+.engine
+    db "OFF      ", "ON       "
+
+; Write the cursor and the four values.  (Only when the screen is off or VBlank has just begun.)
+DrawMenu:
+    xor a
+    ld [wMenuDirty], a
+    ld c, a                     ; line
+.line
+    ld a, c                     ; where on the screen: rows 6, 8, 10, 12
+    add a
+    add 6
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    ld de, _SCRN1 + 1
+    add hl, de
+    ld a, [wMenuRow]
+    cp c
+    ld a, '>'
+    jr z, .cursor
+    ld a, ' '
+.cursor
+    ld [hl], a
+    ld de, 9
+    add hl, de                  ; the value starts at column 10
+    push hl
+    ld a, c
+    add a
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, MenuLines
+    add hl, de
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld b, [hl]                  ; the value's number
+    ld a, c
+    add a
+    ld e, a
+    ld hl, MenuValues
+    add hl, de
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld a, b
+    add a
+    add a
+    add a
+    add b                       ; * MENU_VALUE
+    ld e, a
+    add hl, de
+    ld d, h
+    ld e, l
+    pop hl
+    ld b, MENU_VALUE
+.value
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    dec b
+    jr nz, .value
+    inc c
+    ld a, c
+    cp 4
+    jr nz, .line
+    ret
+
+; Leave the menu: load the chosen track and start a race.
+StartRace:
+    call LcdOff
+    xor a
+    ldh [hMenu], a
+    ldh [hReady], a
+    ldh [hGen], a
+    call LoadTrackData
+    ld hl, _SCRN1               ; a clean status bar
     ld b, 32
     ld a, HUD_BLANK
 .clearHud
     ld [hl+], a
     dec b
     jr nz, .clearHud
-    ld a, HUD_LINE
-    ldh [rWY], a
-    ld a, 7
-    ldh [rWX], a
-    ld a, SKY_STATIC - 1
-    ldh [rLYC], a
+    ld hl, wLinesA
+    call InitLines
+    ld hl, wLinesB
+    call InitLines
+    ld a, HIGH(wLinesA)
+    ldh [hFront], a
+    ldh a, [hMode]
+    cp MODE_PRACTICE
+    ld a, 0
+    jr nz, .practice
+    inc a
+.practice
+    ldh [hPractice], a
+    call StartSong
+    call EngineApply
+    call InitRace
     ld a, STATF_LYC
     ldh [rSTAT], a
     xor a
@@ -424,6 +691,119 @@ EntryPoint:
     ld a, LCDC_UPPER
     ldh [rLCDC], a
     ei
+    jp MainLoop
+
+; Turn the screen off (only ever done in VBlank; interrupts are left off for the caller).
+LcdOff:
+    di
+    ldh a, [rLCDC]
+    add a
+    ret nc                      ; already off
+.wait
+    ldh a, [rLY]
+    cp 145
+    jr nz, .wait
+    xor a
+    ldh [rLCDC], a
+    ret
+
+; Everything a track needs, from its number in hTrackNo.  The screen must be off.
+LoadTrackData:
+    ld a, TILE_BANK
+    ld [rROMB0], a
+    ld de, Tracks
+    ldh a, [hTrackNo]
+    add a                       ; 512 bytes each
+    add d
+    ld d, a
+    ld hl, wTrack
+    ld bc, 512
+    call Copy
+    ld hl, PalSetA              ; its set of sceneries: which bank, and the table pages
+    ld a, [wTrkPalSet]
+    or a
+    jr z, .set
+    ld hl, PalSetB
+.set
+    ld a, [hl+]
+    ld [wPalBank], a
+    ld de, wScenePages
+    ld b, 21
+.pages
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .pages
+    ld a, 3
+    ldh [hSkyStale], a
+    ld a, [wTrkSkyline]
+    ; fall through
+
+; Load skyline a (or the menu's lettering) into the sky's tile slots, with its part of the
+; tilemap and its sky palettes if it has them.  The screen must be off.
+LoadSky:
+    ld l, a
+    ld h, 0
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl                  ; 16 bytes an entry
+    ld de, SkyTable
+    add hl, de
+    ld a, TILE_BANK
+    ld [rROMB0], a
+    ld de, _VRAM8000 + SKY_8000_FIRST * 16
+    call .piece
+    ld de, _VRAM8800 + SKY_8800_FIRST * 16
+    call .piece
+    ld de, _SCRN0
+    call .piece
+    ld de, wSkyBgp
+.piece                          ; (source, length) at hl, destination de
+    push de
+    ld a, [hl+]
+    ld e, a
+    ld a, [hl+]
+    ld d, a                     ; de = source
+    ld a, [hl+]
+    ld c, a
+    ld a, [hl+]
+    ld b, a                     ; bc = length
+    push hl                     ; our place in the table
+    ld hl, sp + 2
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a                     ; hl = destination
+    ld a, b
+    or c
+    call nz, Copy
+    pop hl
+    pop de
+    ret
+
+; The engine note setting -> the sound hardware.
+EngineApply:
+    ldh a, [hEngine]
+    ld c, a
+    ld b, 1                     ; it takes channel 2 from the music
+    call hUGE_mute_channel
+    xor a
+    ldh [hEngineMode], a
+    ldh a, [hEngine]
+    or a
+    jr z, .off
+    ld a, %01000000             ; 25% duty
+    ldh [rAUD2LEN], a
+    ld a, $50
+    ldh [rAUD2ENV], a
+    ld a, $80 | HIGH(ENGINE_BASE)
+    ldh [rAUD2HIGH], a
+    ret
+.off
+    xor a
+    ldh [rAUD2ENV], a
+    ret
 
 MainLoop:
     xor a
@@ -503,7 +883,7 @@ BuildLines:
     ldh a, [hFront]
     xor HIGH(wLinesA) ^ HIGH(wLinesB)
     ld b, a                     ; b = the buffer not on screen
-    ld a, PAL_BANK
+    ld a, [wPalBank]
     ld [rROMB0], a
 
     ldh a, [hFadeLevel]
@@ -536,23 +916,23 @@ BuildLines:
     ldh a, [hRoof]
     or a
     jr nz, .roofed
-    ld de, SkyBgp               ; sky fades toward the horizon glow
+    ld de, wSkyBgp              ; sky fades toward the horizon glow
     ldh a, [hFadeLevel]         ; (its darker copies follow it too)
     or a
     jr z, .flashing
-    ld de, SkyBgp + HORIZON
+    ld de, wSkyBgp + HORIZON
     dec a
     jr z, .skyTable
-    ld de, SkyBgp + HORIZON * 2
+    ld de, wSkyBgp + HORIZON * 2
     jr .skyTable
 .flashing
     ldh a, [hFlash]             ; a boost has just fired: the sky flashes white, then grey
     or a
     jr z, .skyTable
-    ld de, SkyFlash
+    ld de, wSkyFlash
     cp 5
     jr nc, .skyTable
-    ld de, SkyFlash + HORIZON
+    ld de, wSkyFlash + HORIZON
 .skyTable
     ld h, b
     ld l, 0
@@ -694,7 +1074,7 @@ UpdateScene:
     sub e
     add c
     ld e, a
-    ld hl, ScenePages
+    ld hl, wScenePages
     add hl, de
     ld a, [hl]
     ld e, c
@@ -721,7 +1101,7 @@ UpdateScene:
     and CHUNK_MASK
     ld e, a
     ld d, 0
-    ld hl, SceneOfChunk
+    ld hl, wSceneOfChunk
     add hl, de
     ldh a, [hTunnel]
     or a
@@ -733,10 +1113,33 @@ UpdateScene:
 DEF SCENE_CITY  EQU 0
 DEF SCENE_UNDER EQU 1
 DEF SCENE_WATER EQU 2
-ScenePages:
+PalSetA:                        ; sceneries 0 city, 1 underpass, 2 water
+    db PAL_BANK
     db HIGH(PalFar2), HIGH(PalFar1), HIGH(PalFar0), HIGH(PalNear3), HIGH(PalNear2), HIGH(PalNear1), HIGH(PalNear0)
     BAND_TABLES T
     BAND_TABLES W
+PalSetB:                        ; sceneries 0 wheat, 1 underpass, 2 city
+    db PAL_BANK2
+    BAND_TABLES F
+    BAND_TABLES 2T
+    db HIGH(Pal2Far2), HIGH(Pal2Far1), HIGH(Pal2Far0), HIGH(Pal2Near3), HIGH(Pal2Near2), HIGH(Pal2Near1), HIGH(Pal2Near0)
+
+; What goes in the sky's tile slots: for each skyline (and then the menu's lettering), the
+; tiles for the $8000 block, the tiles for the $8800 block, its rows of the tilemap and its
+; sky palettes, each as (address, length).
+MACRO SKY_PIECE
+    dw \1, \1.end - \1
+ENDM
+SkyTable:
+    FOR N, 4
+        SKY_PIECE Sky{d:N}Low
+        SKY_PIECE Sky{d:N}High
+        SKY_PIECE Sky{d:N}Map
+        SKY_PIECE Sky{d:N}Bgp
+    ENDR
+    SKY_PIECE FontLow
+    SKY_PIECE FontHigh
+    dw 0, 0, 0, 0
 BandAhead:                      ; how far ahead each band looks, far band first
     dw 2040, 2040, 900, 550, 400, 280, 200
 
@@ -1149,7 +1552,7 @@ UpdateRivals:
     dec [hl]
 .awake
     ld d, 0
-    ld hl, SpeedProfile
+    ld hl, wSpeedProfile
     add hl, de
     ld a, [hl]
     add c
@@ -1787,7 +2190,7 @@ Damage:
 ; Things painted across the road: finish line, recharge strip, dash plates, jump plates.
 ; Each is drawn if it is in view and acted on if the car is on it.  b = BGP page being built.
 RoadFeatures:
-    ld hl, Features
+    ld hl, wFeatures
 .next
     ld a, [hl+]                 ; first chunk it can be seen from; $FF ends the list
     cp $FF
@@ -1872,7 +2275,9 @@ RoadFeatures:
 .notDirt
     cp FEATURE_JUMP
     jr nz, .notOn
-    ld a, 1                     ; jump plate: thrown into the air
+    xor a                       ; jump plate: thrown into the air, straight (any sideways
+    ldh [hVX], a                ; slide would otherwise carry on all the way to the landing)
+    ld a, 1
     ldh [hAir], a
     ld a, LOW(JUMP_PLATE)
     ldh [hVZ], a
@@ -1920,24 +2325,6 @@ DEF FEATURE_DASH  EQU 1
 DEF FEATURE_JUMP  EQU 2
 DEF FEATURE_DIRT  EQU 3
 DEF FEATURE_DARK  EQU 4         ; a black band that does nothing
-; \1 start, \2 end (units from the finish line), \3 kind.  In view from 8 chunks before.
-MACRO FEATURE
-    db ((\1) / 256 - 8) & CHUNK_MASK
-    db ((\2) - 1) / 256 - (\1) / 256 + 9
-    dw \1, \2
-    db \3
-ENDM
-Features:
-    FEATURE 0, 24, FEATURE_PLAIN                ; the start line: three stripes
-    FEATURE 24, 48, FEATURE_DARK
-    FEATURE 48, 72, FEATURE_PLAIN
-    FEATURE PIT_START, PIT_END, FEATURE_PLAIN
-    FEATURE 12 * 256, 12 * 256 + 90, FEATURE_DASH
-    FEATURE 35 * 256, 35 * 256 + 60, FEATURE_JUMP
-    FEATURE 45 * 256, 45 * 256 + 90, FEATURE_DASH
-    FEATURE 61 * 256, 61 * 256 + 90, FEATURE_DASH
-    db $FF
-
 ; Sound effects on the noise channel (the music's drums take it back on their next hit).
 DEF SFX_SKID  EQU 0
 DEF SFX_HIT   EQU 2
@@ -2127,17 +2514,7 @@ UpdateHud:
     swap a
     add c
     ld c, a
-    ldh a, [hWait]
-    or a
-    jr z, .seen
-    ldh a, [hLevel]             ; (waiting on the grid: the level bar)
-    add a
-    add a
-    add a
-    add c
-    add 128
-    ld c, a
-.seen
+
     ldh a, [hHudSeen]
     cp b
     jr nz, .redo
@@ -2152,39 +2529,7 @@ UpdateHud:
     ld a, 1
     ldh [hHudDirty], a
     ld hl, wHud
-    ldh a, [hWait]
-    or a
-    jr z, .notOnGrid
-    ld a, HUD_L                 ; on the grid: LO [level bar] TOP
-    ld [hl+], a
-    ld a, HUD_O
-    ld [hl+], a
-    ldh a, [hLevel]
-    ld c, a
-    ld b, LEVELS
-.levelCell
-    ld a, HUD_EMPTY
-    inc c
-    dec c
-    jr z, .levelPut
-    dec c
-    ld a, HUD_FULL
-.levelPut
-    ld [hl+], a
-    dec b
-    jr nz, .levelCell
-    ld a, HUD_BLANK
-    ld [hl+], a
-    ld a, HUD_T
-    ld [hl+], a
-    ld a, HUD_O
-    ld [hl+], a
-    ld a, HUD_P
-    ld [hl+], a
-    ld a, HUD_BLANK
-    ld [hl+], a
-    jp .health
-.notOnGrid
+
     ldh a, [hMode]
     cp MODE_LINK
     jr nz, .notWaiting
@@ -2549,6 +2894,11 @@ BuildPacket:
     xor 1
     ldh [hLinkWhich], a
     ld c, a                     ; which of our two rivals goes in this one
+    ldh a, [hTrackNo]
+    add a
+    add a
+    or c
+    ld c, a
     ldh a, [hGen]
     add a
     or c
@@ -2665,6 +3015,27 @@ LinkApply:
     ldh [hGen], a
     jp InitRace
 .sameRace
+    ldh a, [hLinked]            ; the console that called chose the track: the other follows
+    cp LINK_SLAVE
+    jr nz, .sameTrack
+    ld a, [wRemote]
+    rrca
+    rrca
+    and 3
+    ld b, a
+    ldh a, [hTrackNo]
+    cp b
+    jr z, .sameTrack
+    ld a, b
+    ldh [hTrackNo], a
+    call LcdOff
+    call LoadTrackData
+    call StartSong
+    ld a, LCDC_UPPER
+    ldh [rLCDC], a
+    ei
+    jp InitRace
+.sameTrack
     ld hl, wRemote + 1
     call .get14
     ld a, [hl]                  ; bits 14-15 of their position
@@ -2828,7 +3199,7 @@ InitRace:
     ld a, TILE_RESTORE          ; undo any explosion drawn over the spare tile
     ldh [hTileJob], a
     ld hl, hBandBase            ; city everywhere until UpdateScene says otherwise
-    ld de, ScenePages
+    ld de, wScenePages
     ld b, 7
 .bands
     ld a, [de]
@@ -2865,14 +3236,7 @@ InitRace:
     ld a, NUM_RIVALS + 1
     ldh [hRank], a
     call SetLevel
-    xor a                       ; a solo race waits on the grid for the player to pick a level
-    ldh [hWait], a
-    ldh a, [hMode]
-    or a
-    jr nz, .noWait
-    inc a
-    ldh [hWait], a
-.noWait
+
     ld de, RivalStart
     ldh a, [hMode]
     cp MODE_LINK
@@ -2915,60 +3279,26 @@ Drive:
 .noBrakeButton
     ld b, a
 
-    ; --- Select and Start together: switch between racing and practice
+    ; --- Select and Start together: back to the menu
     and PADF_START | PADF_SELECT
     cp PADF_START | PADF_SELECT
-    jr nz, .noChord
-    ldh a, [hNewKeys]
-    and PADF_START | PADF_SELECT
-    jr z, .noChord
-    ldh a, [hMode]              ; race -> practice -> link -> race
-    inc a
-    cp MODE_LINK + 1
-    jr c, .modeSet
-    xor a
-.modeSet
-    ldh [hMode], a
-    cp MODE_PRACTICE
-    ld a, 0
-    jr nz, .practiceSet
-    inc a
-.practiceSet
-    ldh [hPractice], a
-    xor a                       ; any change of mode drops the cable
-    ldh [hLinked], a
-    ldh [hLinkTry], a
-    ldh [rSC], a
-    jp InitRace
-.noChord
-    ; --- Select (outside practice): engine note on / off
+    jp z, Menu
+    ; --- Select (outside practice): engine note on / off.  Once the race is over: the menu
     ldh a, [hPractice]
     or a
     jr nz, .engineSet
     ldh a, [hNewKeys]
     and PADF_SELECT
     jr z, .engineSet
+    ldh a, [hState]
+    or a
+    jp nz, Menu
     ldh a, [hEngine]
     xor 1
     ldh [hEngine], a
     push bc
-    ld c, a
-    ld b, 1                     ; it takes over channel 2 from the music
-    call hUGE_mute_channel
+    call EngineApply
     pop bc
-    ldh a, [hEngine]
-    or a
-    jr z, .engineOff
-    ld a, %01000000             ; 25% duty
-    ldh [rAUD2LEN], a
-    ld a, $50
-    ldh [rAUD2ENV], a
-    ld a, $80 | HIGH(ENGINE_BASE)
-    ldh [rAUD2HIGH], a
-    jr .engineSet
-.engineOff
-    xor a
-    ldh [rAUD2ENV], a
 .engineSet
     ; --- Start once the race is over: go again, on the next level if we finished
     ldh a, [hState]
@@ -3060,37 +3390,7 @@ Drive:
     jp z, .braking              ; a wreck just stops
     or a
     jp nz, .coast               ; past the flag: roll to a halt
-    ldh a, [hWait]              ; on the grid, before the countdown: Left/Right set how quick
-    or a                        ; the rivals are; B or Start begins the countdown
-    jr z, .counting
-    ldh a, [hNewKeys]
-    ld c, a
-    ldh a, [hLevel]
-    bit 5, c                    ; PADF_LEFT
-    jr z, .notEasier
-    cp 2
-    jr c, .notEasier
-    dec a
-.notEasier
-    bit 4, c                    ; PADF_RIGHT
-    jr z, .notHarder
-    cp LEVELS
-    jr nc, .notHarder
-    inc a
-.notHarder
-    ldh [hLevel], a
-    push bc
-    call SetLevel
-    pop bc
-    ld a, c
-    and PADF_B | PADF_START
-    jr z, .held
-    xor a
-    ldh [hWait], a
-.held
-    ld hl, 0
-    jp .speedSet
-.counting
+
     ldh a, [hCount]             ; the countdown
     or a
     jr z, .go
@@ -3315,13 +3615,15 @@ Drive:
     or a
     jr z, .fadeLevel
     ldh a, [hPos + 2]           ; the tunnel is a short cut: we come out further on,
-    add TUNNEL_SKIP
+    ld hl, wTrkSkip
+    add [hl]
     ldh [hPos + 2], a
+    ld b, [hl]
     ld hl, wRivals + 2          ; which puts every rival that much less far ahead
     ld c, NUM_RIVALS
 .shift
     ld a, [hl]
-    sub TUNNEL_SKIP
+    sub b
     ld [hl], a
     ld a, l
     add 8
@@ -3394,7 +3696,7 @@ Drive:
 .notLine
     ld e, a                     ; does something appear on the road ahead here?
     ld d, 0
-    ld hl, ChunkSpawn
+    ld hl, wChunkSpawn
     add hl, de
     ld a, [hl]
     or a
@@ -3422,8 +3724,9 @@ Drive:
     ld [hl], a
     jr .sameChunk
 .notMouth
+    ld hl, wTrkExit
     ldh a, [hChunk]
-    cp EXIT_CHUNK
+    cp [hl]
     jr nz, .sameChunk
     ldh a, [hTunnel]
     or a
@@ -3455,17 +3758,23 @@ Drive:
     ldh a, [hPractice]
     or a
     jr nz, .byHand
-    ld hl, TrackBend
+    ld hl, wTrackBend
     ldh a, [hTunnel]
     or a
     jr z, .surface
-    ld hl, TunnelBend
+    ld hl, wTunnelBend
 .surface
     ld e, c
     ld d, 0
     add hl, de
     ld a, [hl]
+    ld e, a
+    and $7F
     ldh [hTarget], a
+    ld a, e                     ; the top bit marks a corner that is tighter than it looks
+    rlca
+    and 1
+    ld [wTight], a
     jr .haveTarget
 .byHand                         ; practice: Select bends it left, Start right
     ldh a, [hTarget]
@@ -3514,14 +3823,16 @@ Drive:
     and CHUNK_MASK
     ld e, a
     ld d, 0
-    ld hl, TrackBend
+    ld hl, wTrackBend
     ldh a, [hTunnel]
     or a
     jr z, .leadTable
-    ld hl, TunnelBend
+    ld hl, wTunnelBend
 .leadTable
     add hl, de
-    ld c, [hl]
+    ld a, [hl]
+    and $7F
+    ld c, a
 .seenTarget
     ldh a, [hSeen + 1]
     ld e, a
@@ -3629,8 +3940,60 @@ Drive:
     sub h
     ld h, a
 .pushSigned
+    ld a, [wTight]              ; a "special tight" corner: half as hard again
+    or a
+    jr z, .notTight
     ld d, h
     ld e, l
+    sra d
+    rr e
+    add hl, de
+.notTight
+    ld d, h
+    ld e, l
+
+    ; --- the crosswind of this chunk, gusting: it pushes the car too (once it is moving)
+    ldh a, [hSpeed + 1]
+    or a
+    jr z, .calm
+    ldh a, [hChunk]
+    add LOW(wWind)
+    ld l, a
+    ld h, HIGH(wWind)
+    ld a, [hl]
+    or a
+    jr z, .calm
+    ld l, a
+    add a
+    sbc a
+    ld h, a
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl                  ; 1/16 pixel -> 8.8
+    ldh a, [hFrame]
+    bit 6, a
+    jr z, .steady
+    push de                     ; a gust: half as much again for a second, every other second
+    ld d, h
+    ld e, l
+    sra d
+    rr e
+    add hl, de
+    pop de
+    ldh a, [hFrame]
+    and 15
+    jr nz, .steady
+    ld a, SFX_SKID              ; (and you can hear it)
+    call Sfx
+.steady
+    ld a, e                     ; (the push is taken off x, so the wind is taken off the push)
+    sub l
+    ld e, a
+    ld a, d
+    sbc h
+    ld d, a
+.calm
 
     ; --- steering: ease sideways speed toward what the d-pad asks for
     ldh a, [hState]
@@ -3882,87 +4245,14 @@ Drive:
 DEF STATE_FINISHED EQU 1
 DEF STATE_DEAD     EQU 2
 
-; The course, one entry per chunk.  \1 chunks at bend \2 (0 hard left, 32 straight, 64 hard right).
-MACRO STRETCH
-    REPT \1
-        db \2
-    ENDR
-ENDM
-
-TrackBend:
-    STRETCH 6, 32               ; start/finish straight, recharge strip
-    STRETCH 4, 44               ; easy right
-    STRETCH 6, 32               ; the tunnel mouth is on this straight
-    STRETCH 6, 4                ; hairpin left
-    STRETCH 2, 32
-    STRETCH 6, 60               ; hairpin right
-    STRETCH 2, 18               ; chicane
-    STRETCH 2, 46
-    STRETCH 4, 32
-    STRETCH 6, 12               ; long left
-    STRETCH 4, 32
-    STRETCH 4, 50               ; right
-    STRETCH 4, 16               ; left
-    STRETCH 4, 44               ; right
-    STRETCH 4, 32
-    ASSERT @ - TrackBend == CHUNK_MASK + 1
-
-; What appears ahead on entering each chunk: 0 nothing, 1 the tunnel mouth, 2-5 a barrier in
-; lane 0-3.  It turns up SPAWN_DIST (four chunks) further on.
-DEF MOUTH    EQU 1
+DEF MOUTH    EQU 1              ; what a track's "things" table can name (tools/gen_tracks.py)
 DEF BARRIER  EQU 2
-DEF DIRT_L   EQU 6              ; a dirt patch over the left half of the road
-DEF DIRT_R   EQU 7              ; ...or the right
-DEF PAD_L    EQU 8              ; a boost pad over the left half
+DEF DIRT_L   EQU 6
+DEF DIRT_R   EQU 7
+DEF PAD_L    EQU 8
 DEF PAD_R    EQU 9
 DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
 DEF KIND_PAD_L  EQU PAD_L - 1
-ChunkSpawn:                     ; (each entry is two chunks before where the thing sits)
-    db 0, 0, PAD_R, 0, 0, BARRIER + 3, BARRIER + 2, 0  ; launch pad; Barrier Bend: inside blocked
-    db 0, 0, MOUTH, PAD_R, 0, 0, DIRT_L, 0             ; the Fork: tunnel left or boost right
-    db DIRT_L, 0, DIRT_L, 0, 0, PAD_L, 0, 0            ; Dirt Hairpin: no inside line; Sucker Pad
-    db 0, 0, 0, 0, 0, BARRIER + 0, 0, BARRIER + 3      ; (clean hairpin: skid it); Barrier Chicane
-    db 0, 0, 0, 0, 0, DIRT_L, DIRT_R, DIRT_L           ; the Jump; Causeway Slalom
-    db DIRT_R, 0, 0, 0, 0, 0, 0, PAD_L                 ; Speed Trap; Pad Bend: boost on the outside
-    db 0, BARRIER + 3, 0, BARRIER + 1, BARRIER + 2, BARRIER + 1, BARRIER + 2, 0   ; the Underpass: hug a wall
-    db 0, 0, 0, 0, 0, 0, 0, 0                          ; run to the line
-    ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
-
-; The scenery of each chunk.
-SceneOfChunk:
-    STRETCH 38, SCENE_CITY
-    STRETCH 8, SCENE_WATER      ; the causeway: slalom and speed trap
-    STRETCH 6, SCENE_CITY
-    STRETCH 6, SCENE_UNDER      ; the underpass
-    STRETCH 6, SCENE_CITY
-    ASSERT @ - SceneOfChunk == CHUNK_MASK + 1
-
-TunnelBend:                     ; what the same chunks are like underground
-    STRETCH 24, 32
-    STRETCH 4, 38
-    STRETCH 4, 28
-    STRETCH 32, 32
-    ASSERT @ - TunnelBend == CHUNK_MASK + 1
-
-; The pace the field runs at through each chunk, in 1/32 unit per frame.
-; Each rival adds its own skill to this.
-SpeedProfile:                   ; (the best rival adds 50: about the limit of the physics)
-    STRETCH 6, 200              ; straight
-    STRETCH 4, 184              ; easy right
-    STRETCH 6, 200
-    STRETCH 6, 116              ; hairpin
-    STRETCH 2, 190
-    STRETCH 6, 116              ; hairpin
-    STRETCH 2, 174              ; chicane
-    STRETCH 2, 174
-    STRETCH 4, 200
-    STRETCH 6, 184              ; long left
-    STRETCH 4, 200
-    STRETCH 4, 158              ; right
-    STRETCH 4, 162              ; left
-    STRETCH 4, 170              ; right
-    STRETCH 4, 200
-    ASSERT @ - SpeedProfile == CHUNK_MASK + 1
 
 FadeLevels:                     ; darkness for each eighth of a fade
     db 1, 2, 3, 3, 3, 3, 2, 1
@@ -4091,19 +4381,46 @@ DmaCode:                        ; runs from HRAM: nothing else is readable durin
 .end
 
 ; ---------------------------------------------------------------------------------------
+; Play the chosen track's song (unless it already is).
 StartSong:
-    call SongBank
-    ld hl, race_song
+    ldh a, [hTrackNo]
+    ld hl, wSongNow
+    cp [hl]
+    ret z
+    ld [hl], a
+    ld e, a
+    add a
+    add e
+    ld e, a
+    ld d, 0
+    ld hl, Songs
+    add hl, de
+    ld a, [hl+]
+    ld [wSongBank], a
+    ld [rROMB0], a
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
     jp hUGE_init
 
 SongBank:
-    ld a, BANK(race_song)
+    ld a, [wSongBank]
     ld [rROMB0], a
     ret
 
+MACRO SONG
+    db BANK(\1)
+    dw \1
+ENDM
+Songs:
+    SONG race_song
+    SONG ocean_song
+    SONG wind_song
+    SONG port_song
+
 ; hl = BGP page of a buffer (SCX and OBP1 pages follow it)
 InitLines:
-    ld de, SkyBgp
+    ld de, wSkyBgp
     ld b, HORIZON
 .sky
     ld a, [de]
@@ -4195,16 +4512,10 @@ BoomTilePristine:               ; the small shadow's two tiles as they are in ca
 
 ; How hard a bend pushes at each speed (index: speed in quarter units): PUSH_K at 8, with
 ; the square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
-SkyFlash:                       ; two brighter skies, for the boost flash
-    INCBIN "build/skyflash.bin"
-
 PushScale:
     FOR N, 48
         db (PUSH_K * N * N + 512) / 1024
     ENDR
-
-SkyBgp:
-    INCBIN "build/skybgp.bin"
 
 ; ---------------------------------------------------------------------------------------
 ; Page-aligned lookups: the low byte of the address is the index.
@@ -4219,6 +4530,29 @@ LaneOffsets:                    ; ground line -> pixels from road centre to the 
 SECTION "rival lanes", ROM0, ALIGN[8]
 RivalLanes:                     ; lane * 128 + ground line -> pixels from the road centre
     INCBIN "build/rlane.bin"
+
+MACRO PAL_TABLE2                ; the same, in the second bank, under another name
+SECTION "pal2 \1", ROMX, BANK[PAL_BANK2], ALIGN[8]
+Pal\1:
+    INCBIN "build/pal_\2.bin"
+ENDM
+    PAL_TABLE2 FNear0, fnear0
+    PAL_TABLE2 FNear1, fnear1
+    PAL_TABLE2 FNear2, fnear2
+    PAL_TABLE2 FNear3, fnear3
+    PAL_TABLE2 FFar, ffar
+    PAL_TABLE2 2TNear0, tnear0
+    PAL_TABLE2 2TNear1, tnear1
+    PAL_TABLE2 2TNear2, tnear2
+    PAL_TABLE2 2TNear3, tnear3
+    PAL_TABLE2 2TFar, tfar
+    PAL_TABLE2 2Near0, near0
+    PAL_TABLE2 2Near1, near1
+    PAL_TABLE2 2Near2, near2
+    PAL_TABLE2 2Near3, near3
+    PAL_TABLE2 2Far0, far0
+    PAL_TABLE2 2Far1, far1
+    PAL_TABLE2 2Far2, far2
 
 MACRO PAL_TABLE
 SECTION "pal \1", ROMX, BANK[PAL_BANK], ALIGN[8]
@@ -4259,6 +4593,33 @@ CarTiles:
 Tilemap:
     INCBIN "build/map.bin"
 .end
+MACRO SKY_DATA                  ; \1 = number, \2 = name
+Sky\1Low:
+    INCBIN "build/sky_\2_8000.bin"
+.end
+Sky\1High:
+    INCBIN "build/sky_\2_8800.bin"
+.end
+Sky\1Map:
+    INCBIN "build/sky_\2_map.bin"
+.end
+Sky\1Bgp:
+    INCBIN "build/sky_\2_bgp.bin"
+.end
+ENDM
+    SKY_DATA 0, future
+    SKY_DATA 1, oldtown
+    SKY_DATA 2, ocean
+    SKY_DATA 3, plains
+FontLow:
+    INCBIN "build/font_8000.bin"
+.end
+FontHigh:
+    INCBIN "build/font_8800.bin"
+.end
+    ALIGN 8
+Tracks:                         ; 512 bytes each: see tools/gen_tracks.py
+    INCBIN "build/tracks.bin"
 
 SECTION "fzero line tables", ROMX, BANK[GFX_BANK]
 BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
@@ -4285,6 +4646,29 @@ wRivals: ds NUM_RIVALS * 8
 wOrder:  ds NUM_RIVALS          ; rival numbers, far to near
 wObjSlots: ds 4 * OBJ_SLOTS     ; road objects: on, kind, place along the track (2 bytes)
 wHud:    ds 20                  ; the status bar's tiles
+wMenuRow:   db
+wMenuDirty: db
+wSongNow:   db                  ; which track's song is playing
+wSongBank:  db
+wPalBank:   db                  ; bank of the track's palette tables
+wTight:     db                  ; the chunk we are in is a "special tight" corner
+wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
+wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
+wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash
+
+SECTION "track", WRAM0[$CA00]   ; the chosen track, copied here (see tools/gen_tracks.py)
+wTrack:
+wTrackBend:    ds 64
+wTunnelBend:   ds 64
+wSpeedProfile: ds 64
+wChunkSpawn:   ds 64
+wSceneOfChunk: ds 64
+wWind:         ds 64
+wTrkSkyline:   db
+wTrkPalSet:    db
+wTrkExit:      db
+wTrkSkip:      db
+wFeatures:     ds 512 - 388
 wLinkTx: ds LINK_N              ; the packet being sent
 wLinkRx: ds LINK_N              ; the one arriving
 wRemote: ds LINK_N              ; the last good one
@@ -4339,7 +4723,8 @@ hLinkWhich:   db    ; which of our rivals the next packet carries
 hGen:         db    ; flips when a linked race is restarted
 hState:       db    ; 0 racing, STATE_FINISHED, STATE_DEAD
 hLevel:       db    ; difficulty, 1..LEVELS
-hWait:        db    ; on the grid choosing a level, before the countdown
+hMenu:        db    ; in the menu
+hTrackNo:     db    ; which track
 hLaps:        db    ; laps in this race
 hLap:         db    ; the one we are on, from 1
 hChunk:       db    ; chunk of the lap we were in last frame

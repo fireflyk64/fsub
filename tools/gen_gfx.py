@@ -13,7 +13,7 @@ Colour numbers on the ground:  0 street/void (dark)   1 road surface (never anim
                                2 building set A + road bumpers + centre dashes
                                3 building set B (staggered against A)
 
-usage: gen_gfx.py OUTDIR [--skyline future|oldtown] [--preview DIR]
+usage: gen_gfx.py OUTDIR
 """
 import os
 import sys
@@ -32,7 +32,7 @@ MAX_BEND = 80           # pixels the horizon end of the road can slide either wa
                         # the far rows wrap round the 256-pixel map, which only shows as
                         # one more street in the distant city
 LEVELS = 32             # bend steps each side (65 tables)
-SHEAR_MAX = 22          # pixels the bottom line can slide either way when the camera moves
+SHEAR_MAX = 20          # pixels the bottom line can slide either way when the camera moves
 
 ROAD = 56               # road half width in world units
 BUMPER = 6              # bumper strip just inside the road edge
@@ -256,7 +256,47 @@ def future_building(style, w):
     return shape
 
 
+def nature(style, w):
+    """Horizons without a city: islands and sea stacks, or hills, windmills, silos and barns."""
+    c = (w - 1) / 2.0
+
+    def shape(lx, hb):
+        dx = abs(lx - c)
+        if style == "isle":
+            return 1 if (dx / (w / 2.0 - 0.5)) ** 2 + (hb / 5.0) ** 2 <= 1 else None
+        if style == "rock":
+            return 1 if hb < 14 and dx <= 0.6 + (14 - hb) * 0.22 else None
+        if style == "hill":
+            return 1 if (dx / (w / 2.0 - 0.5)) ** 2 + (hb / 7.0) ** 2 <= 1 else None
+        if style == "mill":
+            if hb < 12:
+                return 1 if dx <= 1 + (12 - hb) * 0.12 else None
+            by = abs(hb - 13)                     # the sails: an X
+            if by <= 6 and abs(dx - by) < 0.8:
+                return 2 if by % 2 else 1
+            return None
+        if style == "silo":
+            if hb < 12:
+                return (2 if lx == int(c) and hb % 3 == 1 else 1) if dx <= 3 else None
+            return 1 if hb < 15 and dx <= 3 - (hb - 12) else None
+        if style == "barn":
+            if hb < 7:
+                return (2 if 2 <= hb <= 4 and dx < 1.5 else 1) if dx <= w / 2.0 - 2 else None
+            return 1 if hb < 12 and dx <= (w / 2.0 - 2) - (hb - 7) * 1.4 else None
+        return None                               # "sea": open horizon
+    return shape
+
+
+SKYLINE_NAMES = ["future", "oldtown", "ocean", "plains"]   # the order fzero.asm knows them in
 SKYLINES = {
+    "ocean": [(w, nature(st, w)) for st, w in (
+        ("isle", 32), ("sea", 24), ("rock", 8), ("sea", 16), ("isle", 24), ("sea", 24),
+        ("rock", 8), ("isle", 32), ("sea", 24), ("rock", 8), ("sea", 16), ("isle", 24),
+        ("sea", 16))],
+    "plains": [(w, nature(st, w)) for st, w in (
+        ("hill", 32), ("mill", 16), ("barn", 24), ("silo", 8), ("hill", 24), ("mill", 16),
+        ("hill", 32), ("silo", 8), ("barn", 24), ("mill", 16), ("hill", 24), ("silo", 8),
+        ("hill", 24))],
     "oldtown": [(w, old_building(st, w, h)) for w, h, st in (
         (16, 14, "slab"), (8, 16, "spire"), (16, 18, "twin"), (24, 10, "dome"),
         (16, 24, "tower"), (8, 12, "slab"), (24, 12, "slab"), (8, 22, "spire"),
@@ -296,12 +336,21 @@ def sky_pixels(skyline):
     return px
 
 
-def sky_bgp():
-    """BGP for lines 0..39.  Lines 0..SKY_STATIC are one palette (dark sky, black buildings,
-    white lights and stars); below that the sky brightens to a glow at the horizon."""
+SKY_MOOD = {"future": "night", "oldtown": "night", "ocean": "day", "plains": "bright"}
+
+
+def sky_bgp(mood="night"):
+    """BGP for lines 0..39.  Lines 0..SKY_STATIC are one palette; below that the sky changes
+    toward the horizon.  night: dark sky, black shapes, white lights and stars, a glow low
+    down.  day: light grey sky going white.  bright: white sky."""
     out = []
     for y in range(HORIZON):
-        if y <= SKY_STATIC:
+        if mood == "day":
+            sky = 1 if y <= SKY_STATIC or (y < 37 and y % 2) else 0
+            out.append(bgp(sky, 3, 0, 2))
+        elif mood == "bright":
+            out.append(bgp(0, 3, 1, 2))
+        elif y <= SKY_STATIC:
             out.append(bgp(2, 3, 0, 0))
         else:
             sky = 2 if y < 35 and y % 2 else (1 if y < 38 else 0)
@@ -520,6 +569,18 @@ def water_pal_tables():
     return tabs
 
 
+def field_pal_tables():
+    """Wheat: pale fields with rows flowing past, dark soil between."""
+    a = [2 if i % 16 < 2 else 0 for i in range(256)]
+    b = [0 if i % 32 < 4 else 1 for i in range(256)]
+    tabs = []
+    for name, win in (("FNear0", 1), ("FNear1", 5), ("FNear2", 11), ("FNear3", 21)):
+        sa, sb = smooth(a, win), smooth(b, win)
+        tabs.append((name, [bgp(2, 1, sa[i], sb[i]) for i in range(256)]))
+    tabs.append(("FFar", [bgp(2, 1, 0, 1)] * 256))
+    return tabs
+
+
 def sky_flash():
     """Two brighter skies for the flash when a boost fires: white, then light grey."""
     return [bgp(0, 3, 1, 2)] * HORIZON + [bgp(1, 3, 0, 2)] * HORIZON
@@ -563,6 +624,51 @@ FONT = {
     "U": ("#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."),
     "T": ("#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."),
 }
+MENU_FONT = dict(FONT)
+MENU_FONT.update({
+    "A": (".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "B": ("####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."),
+    "C": (".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."),
+    "D": ("####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."),
+    "E": ("#####", "#....", "#....", "####.", "#....", "#....", "#####"),
+    "F": ("#####", "#....", "#....", "####.", "#....", "#....", "#...."),
+    "G": (".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."),
+    "H": ("#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"),
+    "I": (".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."),
+    "J": ("..###", "...#.", "...#.", "...#.", "...#.", "#..#.", ".##.."),
+    "K": ("#...#", "#..#.", "#.#..", "##...", "#.#..", "#..#.", "#...#"),
+    "M": ("#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"),
+    "N": ("#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"),
+    "Q": (".###.", "#...#", "#...#", "#...#", "#.#.#", "#..#.", ".##.#"),
+    "R": ("####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"),
+    "S": (".####", "#....", "#....", ".###.", "....#", "....#", "####."),
+    "V": ("#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."),
+    "W": ("#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"),
+    "X": ("#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"),
+    "Y": ("#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."),
+    "Z": ("#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"),
+    "0": (".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."),
+    "9": (".###.", "#...#", "#...#", ".####", "....#", "....#", ".###."),
+    ">": ("#....", ".#...", "..#..", "...#.", "..#..", ".#...", "#...."),
+    "-": (".....", ".....", ".....", "#####", ".....", ".....", "....."),
+    " ": (".....",) * 7,
+})
+MENU_CHARS = " ABCDEFGHIKLMNOPRSTUVWXY>-"     # (only the letters the menu uses)
+
+
+def menu_glyph(ch):
+    """The menu's letters: colour 3 on colour 0.  They borrow the sky's tile slots."""
+    data = bytearray()
+    rows = MENU_FONT[ch] + (".....",)
+    for row in rows:
+        bits = 0
+        for x, c in enumerate(row):
+            if c == "#":
+                bits |= 0x40 >> x
+        data += bytes((bits, bits))
+    return bytes(data)
+
+
 HUD_ORDER = ["BLANK", "1", "2", "3", "4", "5", "6", "7", "8", "P", "L", "SLASH", "O", "U", "T",
              "FULL", "HALF", "EMPTY"]
 
@@ -589,22 +695,10 @@ def hud_glyph(name):
     return bytes(data)
 
 
-def build(skyline):
-    """Draw everything, cut it into tiles and spread those over the three VRAM blocks.
-
-    The background can only name 256 tiles at once, but LCDC bit 4 picks which block tile
-    numbers 0-127 come from.  Flipping it part way down the screen gives the picture up to
-    384 tiles: block $8000 for the upper part, $9000 for the lower part, and $8800
-    (numbers 128-255) visible to both.
-    """
-    sky = sky_pixels(skyline)
-    ground = [ground_row(d) for d in range(1, GROUND + 1)]
-    pixels = sky + ground                         # 144 rows x 256
-    bends = bend_tables()
-
-    # Map columns that can never reach the screen on a given tile row are "don't care".
+def cut_tiles(pixels, ty0, ty1, bends):
+    """Tile rows ty0..ty1-1 of a picture -> tile data per map slot (None = never on screen)."""
     slots = []
-    for ty in range(18):
+    for ty in range(ty0, ty1):
         for tx in range(32):
             need = False
             for y in range(ty * 8, ty * 8 + 8):
@@ -625,54 +719,87 @@ def build(skyline):
             for y in range(ty * 8, ty * 8 + 8):
                 lo = hi = 0
                 for x in range(tx * 8, tx * 8 + 8):
-                    v = pixels[y][x]
+                    v = pixels[y - ty0 * 8][x]
                     lo = (lo << 1) | (v & 1)
                     hi = (hi << 1) | (v >> 1)
                 data += bytes((lo, hi))
             slots.append(bytes(data))
+    return slots
 
-    # The status bar is a window over the bottom lines, so its glyphs live with the lower tiles.
-    glyphs = {name: hud_glyph(name) for name in HUD_ORDER}
 
-    best = None
-    for split in (8,):                            # first tile row drawn from the $9000 block:
-        # line 64, which the HBlank handler can spot with a single mask (see fzero.asm)
-        top = {t for t in slots[:split * 32] if t}
-        bot = {t for t in slots[split * 32:] if t} | set(glyphs.values())
-        cap_top = 128 - OBJ_RESERVE
-        only_top, only_bot = sorted(top - bot), sorted(bot - top)
-        shared = sorted(top & bot) + only_top[cap_top:] + only_bot[128:]
-        if best is None or len(shared) < len(best[3]):
-            best = (split, only_top[:cap_top], only_bot[:128], shared)
-    split, blk8000, blk9000, blk8800 = best
-    total = len(blk8000) + len(blk9000) + len(blk8800)
-    print(f"gen_gfx: {total} background tiles: {len(blk8000)} upper + {len(blk9000)} lower"
-          f" + {len(blk8800)}/128 shared, split at line {split * 8}")
-    if len(blk8800) > 128:
-        sys.exit("too many tiles")
+SKY_ROWS = HORIZON // 8         # tile rows of sky
+SPLIT_ROW = 8                   # first tile row drawn from the $9000 block: line 64, which the
+                                # HBlank handler can spot with a single mask (see fzero.asm)
+
+
+def build():
+    """Draw everything, cut it into tiles and spread those over the three VRAM blocks.
+
+    The background can only name 256 tiles at once, but LCDC bit 4 picks which block tile
+    numbers 0-127 come from.  Flipping it part way down the screen gives the picture up to
+    384 tiles: block $8000 for the upper part, $9000 for the lower part, and $8800
+    (numbers 128-255) visible to both.
+
+    The ground is the same on every track and is placed first, always in the same tiles.
+    Whatever is left of the upper and shared blocks is the "sky slots": each track's skyline
+    is loaded into them, and so is the menu's lettering.
+    """
+    bends = bend_tables()
+    ground = [ground_row(d) for d in range(1, GROUND + 1)]
+    gslots = cut_tiles(ground, SKY_ROWS, 18, bends)          # tile rows 5..17
+    glyphs = {name: hud_glyph(name) for name in HUD_ORDER}   # the status bar: lower tiles
+
+    ntop = (SPLIT_ROW - SKY_ROWS) * 32
+    gtop = {t for t in gslots[:ntop] if t}
+    bot = {t for t in gslots[ntop:] if t} | set(glyphs.values())
+    cap_top = 128 - OBJ_RESERVE
+    only_gtop, only_bot = sorted(gtop - bot), sorted(bot - gtop)
+    blk9000 = only_bot[:128]
+    blk8000 = only_gtop[:cap_top]
+    blk8800 = sorted(gtop & bot) + only_bot[128:] + only_gtop[cap_top:]
+    sky_slots = list(range(len(blk8000), cap_top)) + list(range(128 + len(blk8800), 256))
+    print(f"gen_gfx: ground {len(blk8000)} upper + {len(blk9000)} lower + {len(blk8800)} shared"
+          f" tiles; {len(sky_slots)} slots left for a skyline")
+
+    def top_id(t):
+        return 128 + blk8800.index(t) if t in blk8800 else blk8000.index(t)
 
     tilemap = []
-    for i, t in enumerate(slots):
-        own = blk8000 if i < split * 32 else blk9000
+    for i, t in enumerate(gslots):
         if t is None:
             tilemap.append(0)
-        elif t in blk8800:
-            tilemap.append(128 + blk8800.index(t))
+        elif i < ntop:
+            tilemap.append(top_id(t))
         else:
-            tilemap.append(own.index(t))
+            tilemap.append(128 + blk8800.index(t) if t in blk8800 else blk9000.index(t))
     hud = {name: 128 + blk8800.index(t) if t in blk8800 else blk9000.index(t)
            for name, t in glyphs.items()}
-    return pixels, (blk8000, blk9000, blk8800), tilemap, bends, split * 8, hud
+
+    skies = {}
+    for name in SKYLINE_NAMES:
+        slots = cut_tiles(sky_pixels(name), 0, SKY_ROWS, bends)
+        reach = set(blk8000) | set(blk8800)
+        new = sorted(set(slots) - reach)
+        if len(new) > len(sky_slots):
+            sys.exit(f"skyline {name}: {len(new)} tiles, only {len(sky_slots)} slots")
+        ids = {t: sky_slots[i] for i, t in enumerate(new)}
+        skies[name] = (new, [ids[t] if t in ids else top_id(t) for t in slots])
+        print(f"gen_gfx: skyline {name}: {len(new)} tiles")
+    return {"bends": bends, "blocks": (blk8000, blk9000, blk8800), "tilemap": tilemap,
+            "hud": hud, "sky_slots": sky_slots, "skies": skies}
+
+
+def slot_blobs(tiles, sky_slots):
+    """Tile data in sky-slot order, split into the part for $8000 and the part for $8800."""
+    n8000 = sum(1 for s in sky_slots if s < 128)
+    return b"".join(tiles[:n8000]), b"".join(tiles[n8000:])
 
 
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
-    skyline = sys.argv[sys.argv.index("--skyline") + 1] if "--skyline" in sys.argv else "future"
-    pixels, blocks, tilemap, bends, split_line, hud = build(skyline)
-    tabs = pal_tables()
-    if "--preview" in sys.argv:
-        preview(sys.argv[sys.argv.index("--preview") + 1], pixels, bends, dict(tabs))
+    art = build()
+    bends, blocks, hud, sky_slots = art["bends"], art["blocks"], art["hud"], art["sky_slots"]
 
     def put(name, data):
         with open(os.path.join(out, name), "wb") as f:
@@ -680,18 +807,26 @@ def main():
 
     for name, blk in zip(("tiles8000.bin", "tiles9000.bin", "tiles8800.bin"), blocks):
         put(name, b"".join(blk))
-    put("map.bin", tilemap)
+    put("map.bin", art["tilemap"])                # tile rows 5..17: the ground
+    for name in SKYLINE_NAMES:
+        tiles, skymap = art["skies"][name]
+        lo, hi = slot_blobs(tiles, sky_slots)
+        put(f"sky_{name}_8000.bin", lo)
+        put(f"sky_{name}_8800.bin", hi)
+        put(f"sky_{name}_map.bin", skymap)
+        put(f"sky_{name}_bgp.bin", with_fades(sky_bgp(SKY_MOOD[name])) + sky_flash())
+    lo, hi = slot_blobs([menu_glyph(c) for c in MENU_CHARS], sky_slots)
+    put("font_8000.bin", lo)
+    put("font_8800.bin", hi)
     put("car.bin", car_tiles() + mouth_tiles()
         + b"".join(pack_object(o) for o in small_car_objects())
         + b"".join(pack_object(o) for o in dirt_objects()))
     put("rlane.bin", rival_lane_tables())
     put("dist.bin", dist_to_line())
     put("lane.bin", lane_offsets())
-    tabs = tabs + tunnel_pal_tables() + water_pal_tables()
-    put("skyflash.bin", sky_flash())
-    put("skybgp.bin", with_fades(sky_bgp()))
     put("bend.bin", [v for row in bends for v in row])
     put("shear.bin", [v for row in shear_tables() for v in row])
+    tabs = pal_tables() + tunnel_pal_tables() + water_pal_tables() + field_pal_tables()
     for name, data in tabs:
         put("pal_" + name.lower() + ".bin", with_fades(data))
 
@@ -701,10 +836,15 @@ def main():
         f.write(f"DEF VISIBLE_D EQU {VISIBLE}\nDEF HUD_LINE EQU {HUD_LINE}\n")
         f.write(f"DEF SKY_STATIC EQU {SKY_STATIC}\nDEF HUD_BGP EQU {HUD_BGP}\n")
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
-        f.write(f"DEF SPLIT_LINE EQU {split_line}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
+        f.write(f"DEF SPLIT_LINE EQU {SPLIT_ROW * 8}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
+        f.write(f"DEF SKY_8000_FIRST EQU {sky_slots[0]}\n")
+        f.write(f"DEF SKY_8800_FIRST EQU {next(s for s in sky_slots if s >= 128) - 128}\n")
+        f.write(f"DEF SKY_MAP_BYTES EQU {SKY_ROWS * 32}\n")
         for name in HUD_ORDER:
             f.write(f"DEF HUD_{name} EQU {hud[name]}\n")
+        for i, ch in enumerate(MENU_CHARS):       # so that  db "TEXT"  gives menu tiles
+            f.write(f'CHARMAP "{ch}", {sky_slots[i]}\n')
         f.write(f"DEF SPAWN_DIST EQU {SPAWN_DIST}\nDEF CAR_D EQU {CAR_D}\n")
         f.write(f"DEF MOUTH_D2 EQU {MOUTH_FROM[1]}\nDEF MOUTH_D3 EQU {MOUTH_FROM[2]}\n")
         f.write(f"DEF RIVAL_D16 EQU {RIVAL_FROM[0]}\nDEF RIVAL_D12 EQU {RIVAL_FROM[1]}\n")
@@ -721,31 +861,6 @@ def main():
         f.write("ENDM\n")
         f.write("MACRO BAND_TABLES  ; \\1 = prefix of a scenery's palette tables, far band first\n    db "
                 + ", ".join(f"HIGH(Pal\\1{'Far' if coarse else name})" for _, _, name, coarse in BANDS) + "\nENDM\n")
-
-
-def preview(outdir, pixels, bends, tabs):
-    """Render what the Game Boy should show, to judge the art without building the ROM."""
-    from PIL import Image
-    os.makedirs(outdir, exist_ok=True)
-    grey = [(224, 248, 208), (136, 192, 112), (52, 104, 86), (8, 24, 32)]
-    phase = row_phase()
-    skyp = sky_bgp()
-    for name, pos, lv in (("a", 0, 0), ("b", 9, 0), ("c", 18, 0), ("left", 300, -32),
-                          ("right", 700, 20)):
-        img = Image.new("RGB", (160, 144))
-        for y in range(144):
-            if y < HORIZON:
-                pal, scx = skyp[y], 0
-            else:
-                d = y - HORIZON + 1
-                band = next(b for b in BANDS if b[0] <= d <= b[1])
-                t = (pos >> 4) if band[3] else pos
-                pal = tabs[band[2]][(phase[y] + t) & 255]
-                scx = bends[lv + LEVELS][d - 1]
-            for x in range(160):
-                c = pixels[y][(x + scx) & 255]
-                img.putpixel((x, y), grey[(pal >> (c * 2)) & 3])
-        img.resize((480, 432), Image.NEAREST).save(os.path.join(outdir, f"pre_{name}.png"))
 
 
 if __name__ == "__main__":
