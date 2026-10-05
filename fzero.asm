@@ -64,9 +64,9 @@ DEF MOUTH_TILE  EQU CAR_TILE + 6
 DEF CAR12_TILE  EQU CAR_TILE + 18  ; the car at 12, 8 and 4 pixels, for rivals up the road
 DEF CAR8_TILE   EQU CAR_TILE + 20
 DEF CAR4_TILE   EQU CAR_TILE + 22
-DEF NUM_RIVALS  EQU 6
+DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
-DEF RIVAL_OAM   EQU 14 * 4      ; rivals own four OAM entries each from here on
+DEF RIVAL_OAM   EQU 14 * 4      ; rivals own three OAM entries each from here on
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
 DEF BOOST_MAX   EQU $0B         ; top speed while boosting
 DEF BOOST_TIME  EQU 80          ; frames a boost lasts
@@ -716,7 +716,7 @@ PlayerSprites:
 ; size, and (with that line's SCX) where the road is under it.
 ;
 ; To fit the frame, each rival is only moved and redrawn every other frame (half of them on
-; even frames, half on odd), covering two frames of travel at a time.  Each owns four OAM
+; even frames, half on odd), covering two frames of travel at a time.  Each owns three OAM
 ; entries, which simply keep their last position in between.  Its paint has to go into
 ; every frame's OBP1 lines though, so that is redone from a remembered line.  They are
 ; visited far to near so that where two share scanlines the nearer one's paint wins.
@@ -873,16 +873,12 @@ UpdateRivals:
     add 7
     ld l, a
     ld [hl], 0
-    ld a, c                     ; record offset is rival * 8; its OAM is rival * 16 on
-    add a
+    ld a, c                     ; record offset is rival * 8; its OAM is rival * 12 on
+    srl a
+    add c
     add RIVAL_OAM
     ld l, a
     ld h, HIGH(wOam)
-    xor a
-    ld [hl], a
-    ld a, l
-    add 4
-    ld l, a
     xor a
     ld [hl], a
     ld a, l
@@ -1147,14 +1143,16 @@ UpdateRivals:
     ld hl, RivalSize4
 .sized
     ldh a, [hRivalRec]
-    add a
+    ld e, a
+    srl a
+    add e
     add RIVAL_OAM
     ld e, a
     ld d, HIGH(wOam)
     ld a, [hl+]
     ld c, a                     ; sprites in this size
     cpl
-    add 5                       ; 4 - that many entries left over
+    add 4                       ; 3 - that many entries left over
     ldh [hRivalIdx + 1], a
 .sprite
     ldh a, [hObjY]
@@ -3296,12 +3294,11 @@ MouthSize3:
 ; Sprites for each size of rival: count, then (y offset, x offset, tile, attributes).
 DEF RP EQU OAMF_PAL1
 DEF RPX EQU OAMF_PAL1 | OAMF_XFLIP
-RivalSize16:
-    db 4
+RivalSize16:                    ; (one piece of shadow under the middle, to keep it to three)
+    db 3
     db -2, 0, CAR_TILE, RP
     db -2, 8, CAR_TILE, RPX
-    db 13, 0, SHADOW_TILE, RP
-    db 13, 8, SHADOW_TILE, RPX
+    db 13, 4, SHADOW_TILE, RP
 RivalSize12:
     db 2
     db -1, 0, CAR12_TILE, RP
@@ -3342,12 +3339,14 @@ RivalsMaster:
     GHOST PAINT_D, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
     GHOST PAINT_P, REMOTE
+    GHOST PAINT_P, REMOTE
 RivalsSlave:
     RIVAL PLAYER_Z + 150, 30, 1, PAINT_C
     RIVAL PLAYER_Z + 190, 20, 2, PAINT_D
     GHOST PAINT_A, REMOTE
     GHOST PAINT_B, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
+    GHOST PAINT_P, REMOTE
     GHOST PAINT_P, REMOTE
 RivalsAlone:
     REPT NUM_RIVALS
@@ -3357,10 +3356,11 @@ RivalsAlone:
 RivalStart:                     ; the grid: everyone starts ahead of the player
     RIVAL PLAYER_Z + 40, 10, 1, %11100100   ; grey, black trim
     RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
-    RIVAL PLAYER_Z + 120, 34, 3, %01100000  ; white, grey trim
-    RIVAL PLAYER_Z + 160, 16, 0, %00100100  ; grey, white trim
-    RIVAL PLAYER_Z + 200, 28, 2, %11101000  ; dark, black trim
-    RIVAL PLAYER_Z + 240, 40, 1, %00101000  ; dark, white trim
+    RIVAL PLAYER_Z + 120, 4, 0, %01101100   ; black, grey trim
+    RIVAL PLAYER_Z + 160, 34, 3, %01100000  ; white, grey trim
+    RIVAL PLAYER_Z + 200, 16, 1, %00100100  ; grey, white trim
+    RIVAL PLAYER_Z + 240, 28, 2, %11101000  ; dark, black trim
+    RIVAL PLAYER_Z + 280, 40, 0, %00101000  ; dark, white trim
 
 DmaCode:                        ; runs from HRAM: nothing else is readable during DMA
     ld a, HIGH(wOam)
