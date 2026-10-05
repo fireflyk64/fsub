@@ -1,23 +1,55 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>F-Zero city test (Game Boy)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<title>FSUB Racer (Game Boy)</title>
 <style>
-html,body{margin:0;height:100%;background:#111;color:#ddd;font:14px sans-serif;text-align:center}
-canvas{image-rendering:pixelated;width:min(96vw,calc(80vh*160/144));aspect-ratio:160/144;background:#000;margin-top:2vh;touch-action:none}
-#wrap:fullscreen{display:flex;align-items:center;justify-content:center;background:#000}
-#wrap:fullscreen canvas{margin:0;width:min(100vw,calc(100vh*160/144))}
-p{margin:.5em} a{color:#8af}
-.btns button{font-size:18px;padding:.6em 1.2em;margin:.2em;border-radius:8px;border:1px solid #666;background:#222;color:#ddd;touch-action:none}
+/* Nothing on the play area can be selected, long-pressed, highlighted, scrolled or zoomed. */
+*{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;box-sizing:border-box}
+html,body{margin:0;background:#111;color:#ddd;font:14px sans-serif;text-align:center;overscroll-behavior:none}
+#wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;align-items:center;touch-action:none;background:#111;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(100vw,calc(52dvh*160/144));flex:none;touch-action:none}
+#top{display:flex;gap:8px;align-items:center;justify-content:center;width:100%;padding:6px;flex:none}
+#msg{flex:1;font-size:12px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#pads{flex:1;display:flex;width:100%;min-height:0;gap:10px;padding:6px 10px 12px}
+#stick{flex:1;position:relative;border:2px dashed #555;border-radius:18px;color:#777;display:flex;align-items:center;justify-content:center;font-size:13px;min-height:90px}
+#knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:#8af;opacity:.0;pointer-events:none;left:50%;top:50%}
+#acts{flex:1;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 2fr;gap:10px;min-height:90px}
+button{font:bold 15px sans-serif;border-radius:14px;border:2px solid #666;background:#222;color:#ddd;touch-action:none;padding:0;margin:0}
+button.on{background:#555;border-color:#aaa}
+#top button{padding:8px 12px;font-size:12px;border-radius:9px}
+#boost{grid-column:1/3}
+#gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
+#brake{background:#422;border-color:#a55} #brake.on{background:#a44}
+/* Wide screens (a phone on its side, a desktop): pads either side of the picture. */
+@media (min-aspect-ratio: 11/10){
+  #wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;align-content:flex-start}
+  #top{order:0;height:44px}
+  canvas{order:2;width:auto;height:calc(100dvh - 56px);max-width:56vw}
+  #pads{display:contents}
+  #stick{order:1;height:calc(100dvh - 68px);margin:6px;max-width:22vw}
+  #acts{order:3;height:calc(100dvh - 68px);margin:6px;max-width:22vw}
+}
+#help{padding:10px 14px;text-align:left;max-width:640px;margin:auto;-webkit-user-select:text;user-select:text}
+#help *{-webkit-user-select:text;user-select:text}
+summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
-<div id="wrap"><canvas id="screen" width="160" height="144"></canvas></div>
-<p class="btns"><button data-k="select">Select</button><button data-k="start">Start</button>
-<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">Boost</button><button data-k="A">Brake</button><button data-k="B">Gas</button><button id="fs">Fullscreen</button></p>
-<p id="msg">Loading…</p>
+<div id="wrap">
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="fs">FULL</button></div>
+  <canvas id="screen" width="160" height="144"></canvas>
+  <div id="pads">
+    <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
+    <div id="acts"><button id="boost" data-k="up">BOOST</button><button id="brake" data-k="A">BRAKE</button><button id="gas" data-k="B">GAS</button></div>
+  </div>
+</div>
+<details id="help"><summary>How to play</summary>
+<p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival; race, practice or two-player link.</p>
-<p><b>Driving:</b> ←→ steer · X / Space = accelerate (or hold a finger on the screen) · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
-<p>Corners throw you wide with the square of your speed, so brake for them; hitting the rail costs most of your speed. Rough dark patches are dirt, blocks are barriers, flashing white patches are boost pads, the black strip is a jump: do not steer in the air. The white strip after the start line recharges health. A mistake lets a rival pounce. The little car along the top of the sky shows how far round the lap you are. Two-player link needs two consoles and a cable, so not this page.</p>
+<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
+<p>Corners throw you wide with the square of your speed, so brake for them; hitting the rail costs most of your speed. Rough dark patches are dirt, blocks are barriers, flashing white patches are boost pads, the black strip is a jump. The white strip after the start line recharges health. A mistake lets a rival pounce. The little car along the top of the sky shows how far round the lap you are. Two-player link needs two consoles and a cable, so not this page.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
+</details>
 <script src="binjgb.js"></script>
 <script>
 "use strict";
@@ -43,18 +75,35 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const src={kb:{},touch:{},pad:{}}, cur={};
     const apply=()=>{for(const k of KEYS){const v=!!(src.kb[k]||src.touch[k]||src.pad[k]); if(cur[k]!==v){cur[k]=v;m['_set_joyp_'+k](e,v?1:0);}}};
     const wrap=document.getElementById('wrap');
-    const toggleFS=()=>{ if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
-      else{(wrap.requestFullscreen||wrap.webkitRequestFullscreen).call(wrap);} };
+    const toggleFS=()=>{ try{ if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
+      else{const f=wrap.requestFullscreen||wrap.webkitRequestFullscreen; if(f) f.call(wrap); else msg.textContent='No fullscreen here: add the page to your home screen instead';} }catch(err){} };
     document.getElementById('fs').addEventListener('click',toggleFS);
     addEventListener('keydown',ev=>{ac.resume(); if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k){src.kb[k]=0;apply();ev.preventDefault();}});
-    cv.addEventListener('dblclick',toggleFS);
-    cv.addEventListener('pointerdown',ev=>{ac.resume();src.touch.B=1;apply();ev.preventDefault();});
-    addEventListener('pointerup',()=>{src.touch.B=0;apply();});
-    document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k;
-      b.addEventListener('pointerdown',ev=>{ac.resume();src.touch[k]=1;apply();ev.preventDefault();});
-      const up=()=>{src.touch[k]=0;apply();}; b.addEventListener('pointerup',up); b.addEventListener('pointerleave',up);});
+    // Touch.  Nothing here may select text, open a menu, scroll or zoom.
+    for(const t of ['contextmenu','selectstart','dragstart','gesturestart']) wrap.addEventListener(t,ev=>ev.preventDefault());
+    for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>ev.preventDefault(),{passive:false});
+    // A button is down for as long as a finger that started on it stays on the glass.
+    document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k; const ids=new Set();
+      const set=()=>{src.touch[k]=ids.size?1:0; b.classList.toggle('on',ids.size>0); apply();};
+      b.addEventListener('pointerdown',ev=>{ac.resume(); ids.add(ev.pointerId); try{b.setPointerCapture(ev.pointerId);}catch(err){} set(); ev.preventDefault();});
+      for(const t of ['pointerup','pointercancel','lostpointercapture']) b.addEventListener(t,ev=>{ids.delete(ev.pointerId); set();});});
+    // Steering: put a finger on the pad (or on the picture) and drag.  How far it has moved from
+    // where it landed is the direction; the centre follows a long drag so reversing is quick.
+    const knob=document.getElementById('knob'), DEAD=12, REACH=44, TALL=26;
+    const stickOn=el=>{ let id=null, x0=0, y0=0;
+      const dirs=(dx,dy)=>{ src.touch.left=dx<-DEAD?1:0; src.touch.right=dx>DEAD?1:0;
+        const tall=Math.abs(dy)>TALL&&Math.abs(dy)>Math.abs(dx); src.touch.up=tall&&dy<0?1:0; src.touch.down=tall&&dy>0?1:0; apply(); };
+      const show=(dx,dy,on)=>{ if(el.id!=='stick') return; knob.style.opacity=on?.7:0; knob.style.transform=`translate(${dx}px,${dy}px)`; };
+      el.addEventListener('pointerdown',ev=>{ if(id!==null) return; ac.resume(); id=ev.pointerId; x0=ev.clientX; y0=ev.clientY;
+        try{el.setPointerCapture(id);}catch(err){} dirs(0,0); show(0,0,true); ev.preventDefault(); });
+      el.addEventListener('pointermove',ev=>{ if(ev.pointerId!==id) return; let dx=ev.clientX-x0, dy=ev.clientY-y0;
+        if(dx>REACH){x0+=dx-REACH;dx=REACH;} if(dx<-REACH){x0+=dx+REACH;dx=-REACH;}
+        if(dy>REACH){y0+=dy-REACH;dy=REACH;} if(dy<-REACH){y0+=dy+REACH;dy=-REACH;}
+        dirs(dx,dy); show(dx,dy,true); ev.preventDefault(); });
+      for(const t of ['pointerup','pointercancel','lostpointercapture']) el.addEventListener(t,ev=>{ if(ev.pointerId!==id) return; id=null; dirs(0,0); show(0,0,false); }); };
+    stickOn(document.getElementById('stick')); stickOn(cv);
     const pollPad=()=>{
       const p={}, pads=navigator.getGamepads?navigator.getGamepads():[];
       for(const g of pads){ if(!g||!g.connected) continue; const B=i=>g.buttons[i]&&g.buttons[i].pressed;
@@ -69,7 +118,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Arrows choose in the menu, Enter starts; then hold X or Space to accelerate', NOSOUND='Sound is off: click, tap or press a key to turn it on';
+    const READY='Menu: drag or arrows to choose; GAS or Enter starts', NOSOUND='Sound is off: tap or press a key';
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;
