@@ -27,7 +27,7 @@
 ;
 ; Driving feel: the throttle pulls hard at low speed and tails off toward the top; bends
 ; throw the car outward, less if you lift off; braking while steering is a skid turn (much
-; more steering, at a cost in speed); the rail bounces you back and hurts; boosts (one per
+; more steering, at a cost in speed); the rail bounces you back and costs health (never speed: only dirt slows the car); boosts (one per
 ; lap, or free from a dash plate) break the speed limit for a moment.
 ;
 ; Hazards, both things to steer round: dirt patches (rough dark ground over one half of the
@@ -80,7 +80,6 @@ DEF CAR4_TILE   EQU CAR_TILE + 22
 DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
 DEF RIVAL_OAM   EQU 14 * 4      ; rivals own three OAM entries each from here on
-DEF STRIP_OAM   EQU RIVAL_OAM + NUM_RIVALS * 12   ; then two for the lap strip
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
 DEF BOOST_MAX   EQU $0B         ; top speed while boosting
 DEF BOOST_TIME  EQU 80          ; frames a boost lasts
@@ -92,8 +91,8 @@ DEF LEVEL_START EQU 3
 DEF STEER_SKID  EQU 40          ; sideways speed in a skid turn
 DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
-DEF RAIL_COST   EQU 2           ; health lost hitting it, plus half the speed
-DEF RAIL_COOL   EQU 40          ; frames of no throttle after a hit, and before another can hurt
+DEF RAIL_COST   EQU 2           ; health lost hitting it
+DEF RAIL_COOL   EQU 45          ; frames before another hit can hurt again
 DEF BEND_LEAD   EQU 384         ; how far ahead of the car the drawn road looks for its bend
 DEF PUSH_K      EQU 54          ; how hard bends throw the car outward (see PushScale)
 DEF CATCH_UP    EQU 20          ; extra pace for rivals behind the player
@@ -106,8 +105,7 @@ DEF DIRT_TILE   EQU CAR_TILE + 24  ; dirt patch pieces, 8, 12 and 16 lines deep
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
-DEF BARRIER_COST EQU 5          ; health lost hitting a barrier
-DEF BARRIER_HOP EQU $0200       ; and how hard it throws the car up
+DEF BARRIER_COST EQU 6          ; health lost hitting a barrier
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
 DEF FRICTION    EQU $0004       ; lost per frame off it
 DEF BRAKE       EQU $0020
@@ -115,8 +113,8 @@ DEF HEALTH_MAX  EQU 64
 DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
-DEF PIT_START   EQU 256         ; recharge strip, in units from the finish line
-DEF PIT_END     EQU 768
+DEF HEAL_BASE   EQU 26          ; health from a recharge patch at a standstill...
+DEF HEAL_SPEED  EQU 2           ; ...less this for each unit of speed: slow down for more
 DEF LINE_END    EQU 20          ; depth of the painted finish line
 DEF MODE_RACE     EQU 0
 DEF MODE_PRACTICE EQU 1
@@ -142,7 +140,6 @@ DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
 DEF GRAVITY     EQU $28
-DEF RAIL_SCRUB  EQU $0100       ; speed lost hitting the rail
 
 ; ---------------------------------------------------------------------------------------
 SECTION "vblank vector", ROM0[$40]
@@ -958,6 +955,21 @@ BuildLines:
     call RoadFeatures           ; finish line, recharge strip, dash and jump plates
 
 .bgpReady
+    ld h, b                     ; the status bar's lines: their own palette, flashing in
+    ld l, HUD_LINE              ; negative for a moment when a new lap begins
+    ldh a, [hLapFlash]
+    or a
+    ld a, HUD_BGP
+    jr z, .hudPalette
+    ldh a, [hFrame]
+    and %00001000
+    ld a, HUD_BGP
+    jr z, .hudPalette
+    ld a, HUD_BGP ^ $FF
+.hudPalette
+    REPT 8
+        ld [hl+], a
+    ENDR
 
     ; A stray interrupt during VBlank (see VBlankISR) would load from just past line 144:
     ; keep copies of line 0's values there.
@@ -1225,68 +1237,6 @@ PlayerSprites:
     ld [hl+], a
     ld [hl], OAMF_XFLIP
 
-    ; The lap strip along the top of the sky: a small car for us and a dot for whoever is
-    ; furthest ahead, each as far across the screen as it is round the lap.  (It creeps: every
-    ; fourth frame is plenty.)
-    ldh a, [hFrame]
-    and 3
-    ret nz
-    ld hl, wOam + STRIP_OAM
-    ld a, 9
-    ld [hl+], a
-    ldh a, [hPos + 1]
-    ld e, a
-    ldh a, [hPos + 2]
-    ld d, a
-    call .stripX
-    ld [hl+], a
-    ld a, CAR8_TILE
-    ld [hl+], a
-    xor a
-    ld [hl+], a
-    ld a, [wOrder]              ; (kept sorted far to near, so the first is the furthest ahead)
-    add a
-    add a
-    add a
-    inc a
-    ld c, a
-    ld b, HIGH(wRivals)
-    ld a, [bc]
-    add e
-    ld e, a
-    inc c
-    ld a, [bc]
-    adc d
-    ld d, a
-    ld a, e
-    sub PLAYER_Z
-    ld e, a
-    jr nc, .leader
-    dec d
-.leader
-    ld a, 9
-    ld [hl+], a
-    call .stripX
-    ld [hl+], a
-    ld a, CAR4_TILE
-    ld [hl+], a
-    ld [hl], 0
-    ret
-.stripX                         ; de = position in units -> a = OAM x, 16 at the line to 158
-    ld a, d
-    and CHUNK_MASK
-    add a
-    ld b, a
-    ld a, e
-    rlca
-    and 1
-    or b
-    ld b, a
-    srl a
-    srl a
-    srl a
-    add b
-    add 16
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -1909,7 +1859,7 @@ UpdateObject:
     jp nz, .draw
     ldh a, [hObjKind]
     or a
-    jr z, .mouth
+    jp z, .mouth
     cp KIND_DIRT_L
     jr c, .barrier
     ld e, a                     ; a patch over half the road (odd kinds left, even right):
@@ -1928,6 +1878,25 @@ UpdateObject:
     jp nc, .draw
 .onPatch
     ld a, e
+    cp KIND_HEAL_L
+    jr c, .notHeal
+    ldh a, [hSpeed + 1]         ; a recharge patch: the slower we cross it, the more it gives
+    add a                       ; (HEAL_SPEED is 2)
+    ld e, a
+    ld a, HEAL_BASE
+    sub e
+    ld e, a
+    ldh a, [hHealth]
+    add e
+    cp HEALTH_MAX
+    jr c, .healed
+    ld a, HEALTH_MAX
+.healed
+    ldh [hHealth], a
+    ld a, SFX_BOOST
+    call Sfx
+    jp .draw
+.notHeal
     cp KIND_PAD_L
     jr nc, .onPad
     ld a, DIRT_TIME             ; dirt: dragged down, and somebody pounces
@@ -1955,24 +1924,20 @@ UpdateObject:
     add hl, de
     ldh a, [hX + 1]
     sub [hl]
+    ld e, a                     ; which side of it we are
     add 13
     cp 27
     jr nc, .draw
-    ld a, BARRIER_COST          ; yes: it hurts, it slows and it throws the car
+    ld a, BARRIER_COST          ; yes: it hurts and knocks the car aside (but only dirt slows it)
     call Damage
     ld a, SFX_HIT
     call Sfx
-    ldh a, [hSpeed + 1]
-    srl a
-    ldh [hSpeed + 1], a
-    xor a                       ; (it stops the car's sideways slide, so the hop cannot
-    ldh [hVX], a                ; carry it over the rail)
-    ld a, 1
-    ldh [hAir], a
-    ld a, LOW(BARRIER_HOP)
-    ldh [hVZ], a
-    ld a, HIGH(BARRIER_HOP)
-    ldh [hVZ + 1], a
+    ld a, STEER_MAX
+    bit 7, e
+    jr z, .knocked
+    ld a, -STEER_MAX
+.knocked
+    ldh [hVX], a
     push bc
     call RivalPounce
     pop bc
@@ -2043,7 +2008,16 @@ UpdateObject:
     ld a, c
     add HORIZON - 1
     ld l, a
+    ldh a, [hObjKind]           ; a boost pad flickers white; a recharge patch pulses slowly
+    cp KIND_HEAL_L              ; between white and dark
     ldh a, [hFrame]
+    jr c, .flicker
+    and %00100000
+    ld a, %00000000
+    jr z, .flash
+    ld a, %10101000
+    jr .flash
+.flicker
     and %00000100
     ld a, %00000000
     jr z, .flash
@@ -2489,9 +2463,8 @@ UpdateHud:
     ldh a, [hLapFlash]
     or a
     jr z, .noFlash
-    ldh a, [hFrame]
-    and %00001000
-    xor b
+    ld a, b
+    xor %00001000
     ld b, a
 .noFlash
     ldh a, [hHealth]
@@ -2596,14 +2569,14 @@ UpdateHud:
     ldh a, [hLapFlash]          ; just crossed the line: the lap count flashes
     or a
     jr z, .lapShown
-    ldh a, [hFrame]
-    and %00001000
-    jr z, .lapShown
-    ld a, HUD_BLANK
+    ld a, HUD_L                 ; "LAP n" for as long as the bar is flashing
     ld [hl+], a
+    ld a, HUD_A
     ld [hl+], a
+    ld a, HUD_P
     ld [hl+], a
-    ld [hl+], a
+    ldh a, [hLap]
+    call .digit
     jr .bar
 .lapShown
     ld a, HUD_L
@@ -3445,9 +3418,6 @@ Drive:
     add hl, de
     jr .speedSet
 .underLimit
-    ldh a, [hRailCool]          ; (stunned for a moment after hitting the rail: no throttle)
-    or a
-    jr nz, .coast
     bit 1, b                    ; PADF_B
     jr z, .coast
     ; the throttle: strong from rest, fading to nothing at top speed
@@ -3735,24 +3705,7 @@ Drive:
     call StartFade              ; back up to the surface
 .sameChunk
 
-    ; --- the recharge strip tops the car up
-    ldh a, [hState]
-    or a
-    jr nz, .noCharge
-    ldh a, [hPos + 2]
-    and CHUNK_MASK
-    dec a
-    cp (PIT_END - PIT_START) / 256
-    jr nc, .noCharge
-    ldh a, [hFrame]
-    rra
-    jr c, .noCharge
-    ldh a, [hHealth]
-    cp HEALTH_MAX
-    jr nc, .noCharge
-    inc a
-    ldh [hHealth], a
-.noCharge
+
 
     ; --- where should the bend be heading?
     ldh a, [hPractice]
@@ -4133,20 +4086,13 @@ Drive:
     ldh a, [hRailCool]          ; (a second touch straight after the first does not hurt again)
     or a
     jr nz, .railHurt
-    ldh a, [hSpeed + 1]         ; the faster, the worse
-    srl a
-    srl a
-    add RAIL_COST
+    ld a, RAIL_COST             ; it costs health, never speed: only dirt slows the car
     call Damage
     ld a, SFX_HIT
     call Sfx
-.railHurt
     ld a, RAIL_COOL
     ldh [hRailCool], a
-    ldh a, [hSpeed + 1]         ; and it takes three quarters of the speed
-    srl a
-    srl a
-    ldh [hSpeed + 1], a
+.railHurt
 .xOk
     ld a, l
     ldh [hX], a
@@ -4253,6 +4199,9 @@ DEF PAD_L    EQU 8
 DEF PAD_R    EQU 9
 DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
 DEF KIND_PAD_L  EQU PAD_L - 1
+DEF HEAL_L   EQU 10             ; a recharge patch over the left half
+DEF HEAL_R   EQU 11
+DEF KIND_HEAL_L EQU HEAL_L - 1
 
 FadeLevels:                     ; darkness for each eighth of a fade
     db 1, 2, 3, 3, 3, 3, 2, 1

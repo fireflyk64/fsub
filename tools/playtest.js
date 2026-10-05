@@ -59,7 +59,7 @@ async function race(kind, record) {
     // ---- the bot
     const x = s8(rd(sym.hX + 1)), bend = (rd(sym.hBend) - 32) * (rd(sym.wTight) ? 1.5 : 1), speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
     const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8, chunk = (pos >> 8) & 63, boosts = rd(sym.hBoosts), air = rd(sym.hAir);
-    let target = 0, gas = true, brake = false, boost = false;
+    let target = 0, gas = true, brake = false, boost = false, healing = false;
     const objs = [];
     for (let k = 0; k < 2; k++) { const a = sym.wObjSlots + k * 4; if (rd(a)) objs.push({ kind: rd(a + 1), dist: ((rd(a + 2) | rd(a + 3) << 8) - pos) & 0xffff }); }
     const dodge = reach => { for (const o of objs) { if (o.dist > reach) continue;
@@ -67,7 +67,8 @@ async function race(kind, record) {
       else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; const at = target || x;
         if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -38 : 38) : (lane > 0 ? lane - 30 : lane + 30); }   // a middle lane: go to the wall on our side
       else if (o.kind <= 6) target = o.kind === 5 ? 22 : -22;                                       // dirt: other half
-      else if (kind !== 'masher') target = o.kind === 7 ? -24 : 24; } };                             // boost pad: go to it
+      else if (o.kind <= 8) { if (kind !== 'masher') target = o.kind === 7 ? -24 : 24; }            // boost pad: go to it
+      else if (kind !== 'masher' && rd(sym.hHealth) < 52) { target = o.kind === 9 ? -24 : 24; healing = true; } } };   // recharge patch: go to it if hurt
     if (kind === 'casual') {
       dodge(330);
       if (Math.abs(bend) > 16 && speed > 6.2 && Math.abs(x) > 20) brake = true;
@@ -78,6 +79,7 @@ async function race(kind, record) {
       const ahead = bendAt(chunk) || bend;
       if (Math.abs(ahead) > 8) target = ahead > 0 ? 18 : -18;        // inside line
       dodge(480);
+      if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
       if (speed > want + 0.15) { gas = false; brake = speed > want + 0.5; }
       const straight = [0, 1, 2].every(k => Math.abs(bendAt(chunk + k)) < 3) && Math.abs(bend) < 3;
       if (boosts && straight && speed > 7.6) boost = true;

@@ -17,7 +17,7 @@ One lap is 64 chunks of 256 units.  usage: gen_tracks.py OUT.bin
 import math
 import sys
 
-MOUTH, B0, B1, B2, B3, DIRT_L, DIRT_R, PAD_L, PAD_R = 1, 2, 3, 4, 5, 6, 7, 8, 9
+MOUTH, B0, B1, B2, B3, DIRT_L, DIRT_R, PAD_L, PAD_R, HEAL_L, HEAL_R = range(1, 12)
 PLAIN, DASH, JUMP, DARK = 0, 1, 2, 4            # painted bands (3 is unused)
 TIGHT = 128
 FUTURE, OLDTOWN, OCEAN, PLAINS = range(4)       # skylines, in gen_gfx.py's order
@@ -25,7 +25,7 @@ FUTURE, OLDTOWN, OCEAN, PLAINS = range(4)       # skylines, in gen_gfx.py's orde
 SET_CITY = 0                                    # 0 city, 1 underpass, 2 water
 SET_FIELD = 1                                   # 0 wheat fields, 1 underpass, 2 city
 START_LINE = [(0, 24, PLAIN), (24, 48, DARK), (48, 72, PLAIN)]
-PIT = [(256, 768, PLAIN)]                       # the recharge strip (fzero.asm: PIT_START/END)
+RECHARGE = {1: HEAL_L, 2: HEAL_L}               # two recharge patches on the left, after the line
 
 
 def chunk(n, extra=0):
@@ -48,7 +48,7 @@ TRACKS = [
                 39: DIRT_L, 40: DIRT_R, 41: DIRT_L, 42: DIRT_R,   # Causeway Slalom
                 49: PAD_L, 51: B3,                      # Pad Bend
                 53: B1, 54: B2, 55: B1, 56: B2},        # the Underpass: hug a wall
-        bands=START_LINE + PIT + [(chunk(12), chunk(12, 90), DASH), (chunk(35), chunk(35, 60), JUMP),
+        bands=START_LINE + [(chunk(12), chunk(12, 90), DASH), (chunk(35), chunk(35, 60), JUMP),
                                   (chunk(45), chunk(45, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),
     dict(  # 1  BLUE DEEP: fast and flowing over the sea, boost pads on the outside of the waves
         skyline=OCEAN, palset=SET_CITY, exit=0, skip=0,
@@ -64,7 +64,7 @@ TRACKS = [
                 37: PAD_L, 41: PAD_R, 45: PAD_L, 49: PAD_R,   # the Waves: a pad outside each one
                 55: DIRT_R,                             # just past the landing
                 58: PAD_R},
-        bands=START_LINE + PIT + [(chunk(32, 40), chunk(32, 130), DASH), (chunk(53), chunk(53, 60), JUMP),
+        bands=START_LINE + [(chunk(32, 40), chunk(32, 130), DASH), (chunk(53), chunk(53, 60), JUMP),
                                   (chunk(62), chunk(62, 90), DASH)]),
     dict(  # 2  GOLD WIND: a simple fast lap, and a crosswind you have to lean into
         skyline=PLAINS, palset=SET_FIELD, exit=0, skip=0,
@@ -79,7 +79,7 @@ TRACKS = [
                 40: DIRT_R, 42: PAD_L, 44: DIRT_R,
                 49: B2, 55: B1,
                 59: DIRT_L, 61: PAD_R},
-        bands=START_LINE + PIT + [(chunk(19), chunk(19, 90), DASH), (chunk(39), chunk(39, 90), DASH),
+        bands=START_LINE + [(chunk(19), chunk(19, 90), DASH), (chunk(39), chunk(39, 90), DASH),
                                   (chunk(62), chunk(62, 90), DASH)]),
     dict(  # 3  OLD PORT: tight and technical, with one hairpin tighter than anything else
         skyline=OLDTOWN, palset=SET_CITY, exit=0, skip=0,
@@ -95,7 +95,7 @@ TRACKS = [
                 27: B3, 29: B0, 31: B3,                 # the Dock Chicane
                 39: DIRT_L, 41: DIRT_L,
                 45: PAD_R, 49: B2, 53: B1, 57: DIRT_R},
-        bands=START_LINE + PIT + [(chunk(35), chunk(35, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),
+        bands=START_LINE + [(chunk(35), chunk(35, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),
 ]
 
 
@@ -108,13 +108,14 @@ def spread(sections, what):
 
 
 def pace(bend):
-    """What the best rival can do through a chunk, less the 50 its skill adds back: about 96%
-    of what the cornering physics lets the player hold (see PushScale in fzero.asm)."""
+    """What the best rival does through a chunk, less the 50 its skill adds back.  The rivals
+    corner about 15% faster than the player can hold a clean line (see PushScale in
+    fzero.asm): keeping up through the bends means leaning on the rail, which costs health."""
     b = abs((bend & 127) - 32) * (1.5 if bend & TIGHT else 1)
     limit = 8.3 if b < 2 else min(8.3, 8 * math.sqrt(12.3 / b))
-    ace = min(7.8, 0.96 * limit)
+    ace = min(7.8, 1.15 * limit)
     if b >= 6:
-        ace = min(ace, 7.3)
+        ace = min(ace, 7.5)
     return max(60, int(round(ace * 32)) - 50)
 
 
@@ -124,7 +125,7 @@ def block(t):
     out += bytes(spread(t["tunnel"], "tunnel"))
     out += bytes(pace(b) for b in bends)
     things = [0] * 64
-    for where, what in t["things"].items():
+    for where, what in {**RECHARGE, **t["things"]}.items():
         assert things[(where - 2) % 64] == 0
         things[(where - 2) % 64] = what           # it shows up two chunks before it sits
     out += bytes(things)
