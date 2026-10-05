@@ -64,9 +64,9 @@ DEF MOUTH_TILE  EQU CAR_TILE + 6
 DEF CAR12_TILE  EQU CAR_TILE + 18  ; the car at 12, 8 and 4 pixels, for rivals up the road
 DEF CAR8_TILE   EQU CAR_TILE + 20
 DEF CAR4_TILE   EQU CAR_TILE + 22
-DEF NUM_RIVALS  EQU 7
+DEF NUM_RIVALS  EQU 6
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
-DEF RIVAL_OAM   EQU 9 * 4       ; rivals own four OAM entries each from here on
+DEF RIVAL_OAM   EQU 14 * 4      ; rivals own four OAM entries each from here on
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
 DEF BOOST_MAX   EQU $0B         ; top speed while boosting
 DEF BOOST_TIME  EQU 80          ; frames a boost lasts
@@ -112,7 +112,8 @@ DEF LINK_TIMEOUT  EQU 180       ; frames without a good packet before giving up
 DEF REMOTE        EQU %10000000 ; lane byte: placed by the other console, not moved here
 DEF FREE_X        EQU %01000000 ; lane byte: not in a lane; x is in the skill byte
 DEF HIDDEN        EQU -30000    ; a distance no car is ever seen at
-DEF OBJ_SPRITES EQU 5           ; OAM entries kept for the road object
+DEF OBJ_SPRITES EQU 5           ; OAM entries kept for each road object
+DEF OBJ_SLOTS   EQU 2           ; road objects that can be out at once
 DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
 DEF SCX_STAMP   EQU 200         ; offset in an SCX page of its (bend, shear) note
 DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
@@ -1193,7 +1194,31 @@ UpdateRivals:
 ; The road object (tunnel mouth): work out which line it is on, how big, and where the
 ; road has been slid to on that line, and stage its sprites for VBlank.
 UpdateObject:
-    ld hl, wObjOam
+    ld hl, wObjSlots
+    ld a, LOW(wObjOam)
+    call .slot
+    ld hl, wObjSlots + 4
+    ld a, LOW(wObjOam) + OBJ_SPRITES * 4
+.slot                           ; work on one slot through the hObj* variables
+    ldh [hObjOam], a
+    push hl
+    ld a, [hl+]
+    ldh [hObjOn], a
+    ld a, [hl+]
+    ldh [hObjKind], a
+    ld a, [hl+]
+    ldh [hObjZ], a
+    ld a, [hl]
+    ldh [hObjZ + 1], a
+    call .one
+    pop hl
+    ldh a, [hObjOn]
+    ld [hl], a
+    ret
+.one
+    ldh a, [hObjOam]
+    ld l, a
+    ld h, HIGH(wOam)
     ld b, OBJ_SPRITES * 4
     xor a
 .clear
@@ -1369,7 +1394,9 @@ UpdateObject:
 .sized
     ld a, [hl+]
     ld c, a                     ; sprites in this size
-    ld de, wObjOam
+    ldh a, [hObjOam]
+    ld e, a
+    ld d, HIGH(wOam)
 .sprite
     ldh a, [hObjY]
     ld [de], a
@@ -2337,7 +2364,8 @@ InitRace:
     ldh [hSpeed + 1], a
     ldh [hChunk], a
     ldh [hState], a
-    ldh [hObjOn], a
+    ld [wObjSlots], a
+    ld [wObjSlots + 4], a
     ldh [hTunnel], a
     ldh [hFadeStep], a
     ldh [hFadeLevel], a
@@ -2688,7 +2716,8 @@ Drive:
     ldh [hX], a
     ldh [hX + 1], a
     ldh [hVX], a
-    ldh [hObjOn], a
+    ld [wObjSlots], a
+    ld [wObjSlots + 4], a
     ldh a, [hFadeTunnel]
     ldh [hTunnel], a
     or a
@@ -2775,20 +2804,26 @@ Drive:
     or a
     jr z, .notMouth
     ld e, a
-    ldh a, [hObjOn]
+    ld hl, wObjSlots            ; into whichever slot is free
+    ld a, [hl]
     or a
-    jr nz, .notMouth            ; (one thing at a time)
+    jr z, .slotFree
+    ld hl, wObjSlots + 4
+    ld a, [hl]
+    or a
+    jr nz, .notMouth
+.slotFree
+    ld a, 1
+    ld [hl+], a
     ld a, e
     dec a
-    ldh [hObjKind], a           ; 0 the tunnel mouth, 1-4 a barrier in that lane
+    ld [hl+], a                 ; 0 the tunnel mouth, 1-4 a barrier in that lane, 5-6 dirt
     ldh a, [hPos + 1]
     add LOW(SPAWN_DIST)
-    ldh [hObjZ], a
+    ld [hl+], a
     ldh a, [hPos + 2]
     adc HIGH(SPAWN_DIST)
-    ldh [hObjZ + 1], a
-    ld a, 1
-    ldh [hObjOn], a
+    ld [hl], a
     jr .sameChunk
 .notMouth
     ldh a, [hChunk]
@@ -3176,14 +3211,14 @@ DEF DIRT_L   EQU 6              ; a dirt patch over the left half of the road
 DEF DIRT_R   EQU 7              ; ...or the right
 DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
 ChunkSpawn:
-    db 0, 0, 0, BARRIER + 1, 0, 0, 0, 0
-    db 0, 0, MOUTH, 0, 0, 0, 0, 0
-    db DIRT_R, 0, 0, 0, 0, 0, BARRIER + 2, 0
-    db 0, 0, 0, DIRT_L, 0, 0, 0, 0
-    db 0, BARRIER + 0, 0, 0, 0, 0, DIRT_R, 0
-    db 0, 0, 0, BARRIER + 3, 0, 0, 0, 0
-    db DIRT_L, 0, 0, 0, 0, BARRIER + 1, 0, 0
-    db 0, 0, DIRT_R, 0, 0, 0, 0, 0
+    db 0, 0, 0, BARRIER + 1, 0, 0, DIRT_R, 0
+    db 0, 0, MOUTH, 0, 0, BARRIER + 2, 0, 0
+    db DIRT_R, 0, 0, BARRIER + 0, 0, 0, DIRT_L, 0
+    db 0, BARRIER + 3, 0, 0, DIRT_R, 0, 0, 0
+    db 0, BARRIER + 0, 0, 0, 0, DIRT_L, 0, 0
+    db BARRIER + 3, 0, 0, DIRT_R, 0, 0, BARRIER + 1, 0
+    db 0, DIRT_L, 0, 0, BARRIER + 2, 0, 0, DIRT_R
+    db 0, 0, BARRIER + 0, 0, 0, 0, 0, 0
     ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
 
 TunnelBend:                     ; what the same chunks are like underground
@@ -3307,14 +3342,12 @@ RivalsMaster:
     GHOST PAINT_D, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
     GHOST PAINT_P, REMOTE
-    GHOST PAINT_P, REMOTE
 RivalsSlave:
     RIVAL PLAYER_Z + 150, 30, 1, PAINT_C
     RIVAL PLAYER_Z + 190, 20, 2, PAINT_D
     GHOST PAINT_A, REMOTE
     GHOST PAINT_B, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
-    GHOST PAINT_P, REMOTE
     GHOST PAINT_P, REMOTE
 RivalsAlone:
     REPT NUM_RIVALS
@@ -3324,11 +3357,10 @@ RivalsAlone:
 RivalStart:                     ; the grid: everyone starts ahead of the player
     RIVAL PLAYER_Z + 40, 10, 1, %11100100   ; grey, black trim
     RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
-    RIVAL PLAYER_Z + 120, 4, 0, %01101100   ; black, grey trim
-    RIVAL PLAYER_Z + 160, 34, 3, %01100000  ; white, grey trim
-    RIVAL PLAYER_Z + 200, 16, 1, %00100100  ; grey, white trim
-    RIVAL PLAYER_Z + 240, 28, 2, %11101000  ; dark, black trim
-    RIVAL PLAYER_Z + 280, 40, 0, %00101000  ; dark, white trim
+    RIVAL PLAYER_Z + 120, 34, 3, %01100000  ; white, grey trim
+    RIVAL PLAYER_Z + 160, 16, 0, %00100100  ; grey, white trim
+    RIVAL PLAYER_Z + 200, 28, 2, %11101000  ; dark, black trim
+    RIVAL PLAYER_Z + 240, 40, 1, %00101000  ; dark, white trim
 
 DmaCode:                        ; runs from HRAM: nothing else is readable during DMA
     ld a, HIGH(wOam)
@@ -3512,12 +3544,13 @@ SECTION "staged oam", WRAM0[$C700]
 wOam:                           ; copied to OAM by DMA in VBlank
     ds 16                       ; player car and shadow
 wObjOam:
-    ds OBJ_SPRITES * 4          ; road object
-    ds 160 - 16 - OBJ_SPRITES * 4   ; rivals
+    ds OBJ_SPRITES * 4 * OBJ_SLOTS  ; road objects
+    ds 160 - 16 - OBJ_SPRITES * 4 * OBJ_SLOTS   ; rivals
 
 SECTION "rivals", WRAM0[$C800]
 wRivals: ds NUM_RIVALS * 8
 wOrder:  ds NUM_RIVALS          ; rival numbers, far to near
+wObjSlots: ds 4 * OBJ_SLOTS     ; road objects: on, kind, place along the track (2 bytes)
 wHud:    ds 20                  ; the status bar's tiles
 wLinkTx: ds LINK_N              ; the packet being sent
 wLinkRx: ds LINK_N              ; the one arriving
@@ -3588,7 +3621,8 @@ hSkid:        db    ; in a skid turn this frame
 hCount:       db    ; frames until the start
 hBandEnd:     dw
 hBandOr:      db
-hObjKind:     db    ; road object: 0 tunnel mouth, 1-4 barrier in lane 0-3
+hObjKind:     db    ; road object: 0 tunnel mouth, 1-4 barrier in lane 0-3, 5-6 dirt
+hObjOam:      db    ; low byte of the slot's OAM entries in wOam
 hEngine:      db    ; engine note on
 hCarTile:     db
 hDirt:        db    ; frames of dirt drag left
