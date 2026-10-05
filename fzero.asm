@@ -40,10 +40,10 @@
 ; A wreck: the car's sprite is switched to a spare tile which is then overwritten in VRAM
 ; with noise for the explosion, and put back from ROM for the next race.
 ;
-; Controls: Left/Right steer, A accelerate, B (or Down) brake, Up boost.
+; Controls: Left/Right steer, B accelerate, A (or Down) brake, Up boost.
 ;           Select turns the engine note on and off (it borrows the music's second channel).
 ;           On the grid before a race: Left/Right set how quick the rivals are (the bar
-;           between LO and TOP on the status bar), A or Start begins the countdown.
+;           between LO and TOP on the status bar), B or Start begins the countdown.
 ;           Start after a race: go again.  Select+Start together steps through the modes:
 ;           race, practice (Select and Start bend the road by hand), two-player link.
 ;
@@ -2909,10 +2909,10 @@ Drive:
     ld hl, hFrame
     inc [hl]
     ldh a, [hCurKeys]
-    bit 1, a                    ; B brakes, as Down does
-    jr z, .noB
+    bit 0, a                    ; A brakes, as Down does
+    jr z, .noBrakeButton
     set 7, a
-.noB
+.noBrakeButton
     ld b, a
 
     ; --- Select and Start together: switch between racing and practice
@@ -3061,7 +3061,7 @@ Drive:
     or a
     jp nz, .coast               ; past the flag: roll to a halt
     ldh a, [hWait]              ; on the grid, before the countdown: Left/Right set how quick
-    or a                        ; the rivals are; A or Start begins the countdown
+    or a                        ; the rivals are; B or Start begins the countdown
     jr z, .counting
     ldh a, [hNewKeys]
     ld c, a
@@ -3083,7 +3083,7 @@ Drive:
     call SetLevel
     pop bc
     ld a, c
-    and PADF_A | PADF_START
+    and PADF_B | PADF_START
     jr z, .held
     xor a
     ldh [hWait], a
@@ -3148,7 +3148,7 @@ Drive:
     ldh a, [hRailCool]          ; (stunned for a moment after hitting the rail: no throttle)
     or a
     jr nz, .coast
-    bit 0, b                    ; PADF_A
+    bit 1, b                    ; PADF_B
     jr z, .coast
     ; the throttle: strong from rest, fading to nothing at top speed
     ld a, SPEED_MAX

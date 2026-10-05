@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
             int target = (i ? 14 : -14), want = abs(bend) > 20 ? 4 : abs(bend) > 8 ? 6 : (i ? 7 : 8);
             GB_set_key_state(gb[i], GB_KEY_SELECT, chord); GB_set_key_state(gb[i], GB_KEY_START, chord || start);
             GB_set_key_state(gb[i], GB_KEY_LEFT, x > target + 3); GB_set_key_state(gb[i], GB_KEY_RIGHT, x < target - 3);
-            GB_set_key_state(gb[i], GB_KEY_A, (linked || cable == 2) && spd < want && !st); GB_set_key_state(gb[i], GB_KEY_DOWN, spd > want);
+            GB_set_key_state(gb[i], GB_KEY_B, (linked || cable == 2) && spd < want && !st); GB_set_key_state(gb[i], GB_KEY_DOWN, spd > want);
             int fr = RD(i, hFrame); if (f > 300 && lastf[i] >= 0 && ((fr - lastf[i]) & 255) != 1) { drops[i]++; printf("drop gb%d f%d load %d\n", i, f, RD(i, hLoad)); } lastf[i] = fr;
             int l = RD(i, hLoad); l = l >= 144 ? l - 144 : l + 10; if (f > 300 && l > maxload[i]) maxload[i] = l;
             char line[200]; sprintf(line, "mode%d linked%d lap%d rank%d st%d", mode, linked, RD(i, hLap), RD(i, hRank), st);

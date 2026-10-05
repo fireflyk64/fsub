@@ -48,7 +48,7 @@ async function race(kind, record) {
     }
     if (rd(sym.hWait)) {        // on the grid: set the level, then go
       const lv = rd(sym.hLevel), want = level || lv;
-      set('left', lv > want && i % 4 < 2); set('right', lv < want && i % 4 < 2); set('A', lv === want && i % 4 < 2); out.level = lv; continue; }
+      set('left', lv > want && i % 4 < 2); set('right', lv < want && i % 4 < 2); set('B', lv === want && i % 4 < 2); out.level = lv; continue; }
     // ---- the bot
     const x = s8(rd(sym.hX + 1)), bend = rd(sym.hBend) - 32, speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
     const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8, chunk = (pos >> 8) & 63, boosts = rd(sym.hBoosts), air = rd(sym.hAir);
@@ -76,7 +76,7 @@ async function race(kind, record) {
       if (boosts && straight && speed > 7.6) boost = true;
     }
     set('left', !air && x > target + 2); set('right', !air && x < target - 2);
-    set('A', gas); set('B', brake); set('up', boost && !keys.up);
+    set('B', gas); set('A', brake); set('up', boost && !keys.up);
   }
   if (record && frames.length) fs.writeFileSync(record[2] + '.rgba', Buffer.concat(frames));
   return out;

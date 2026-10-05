@@ -12,9 +12,9 @@ p{margin:.5em} a{color:#8af}
 </style></head><body>
 <div id="wrap"><canvas id="screen" width="160" height="144"></canvas></div>
 <p class="btns"><button data-k="select">Select</button><button data-k="start">Start</button>
-<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">Boost</button><button data-k="A">Gas</button><button data-k="B">Brake</button><button id="fs">Fullscreen</button></p>
+<button data-k="left">←</button><button data-k="right">→</button><button data-k="up">Boost</button><button data-k="A">Brake</button><button data-k="B">Gas</button><button id="fs">Fullscreen</button></p>
 <p id="msg">Loading…</p>
-<p>Keys: ←→ = steer · Z / Space = accelerate (or hold a finger on the screen) · X or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · Enter = race again after the flag · Enter + Shift together steps through the modes: race, practice (Shift / Enter bend the road), two-player link (needs two consoles and a cable, so not this page) · F = fullscreen · gamepads supported</p><p>On the grid, ←→ set how quick the rivals are (the bar between LO and TOP); Z, Space or Enter starts the countdown. The top two settings are 5 laps instead of 3, and a win moves you up one. The rail and rivals cost health; the white strip after the start line recharges it. The dark ramp in the left lane is a tunnel short cut. Flashing strips are dash plates; the black strip is a jump plate. Corners throw you wide with the square of your speed, so brake for them; hitting the rail costs most of your speed. Rough dark patches are dirt, blocks are barriers, flashing white patches are boost pads. A mistake lets a rival pounce. The little car along the top of the sky shows how far round the lap you are. The lap has its own places to learn: the Fork (tunnel left or boost right), the Dirt Hairpin (no inside line), the Causeway Slalom over water, and the Underpass (hug a wall).</p>
+<p>Keys: ←→ = steer · X / Space = accelerate (or hold a finger on the screen) · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · Enter = race again after the flag · Enter + Shift together steps through the modes: race, practice (Shift / Enter bend the road), two-player link (needs two consoles and a cable, so not this page) · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p><p>On the grid, ←→ set how quick the rivals are (the bar between LO and TOP); X, Space or Enter starts the countdown. The top two settings are 5 laps instead of 3, and a win moves you up one. The rail and rivals cost health; the white strip after the start line recharges it. The dark ramp in the left lane is a tunnel short cut. Flashing strips are dash plates; the black strip is a jump plate. Corners throw you wide with the square of your speed, so brake for them; hitting the rail costs most of your speed. Rough dark patches are dirt, blocks are barriers, flashing white patches are boost pads. A mistake lets a rival pounce. The little car along the top of the sky shows how far round the lap you are. The lap has its own places to learn: the Fork (tunnel left or boost right), the Dirt Hairpin (no inside line), the Causeway Slalom over water, and the Underpass (hug a wall).</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
 <script src="binjgb.js"></script>
 <script>
@@ -24,7 +24,7 @@ const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4;
 const ac=new (window.AudioContext||window.webkitAudioContext)();
 const cv=document.getElementById('screen'), ctx=cv.getContext('2d'), img=ctx.createImageData(160,144);
 const msg=document.getElementById('msg');
-const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'A',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
+const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
 (async()=>{
   try{
     const m=await Binjgb();
@@ -48,15 +48,15 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k){src.kb[k]=0;apply();ev.preventDefault();}});
     cv.addEventListener('dblclick',toggleFS);
-    cv.addEventListener('pointerdown',ev=>{ac.resume();src.touch.A=1;apply();ev.preventDefault();});
-    addEventListener('pointerup',()=>{src.touch.A=0;apply();});
+    cv.addEventListener('pointerdown',ev=>{ac.resume();src.touch.B=1;apply();ev.preventDefault();});
+    addEventListener('pointerup',()=>{src.touch.B=0;apply();});
     document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k;
       b.addEventListener('pointerdown',ev=>{ac.resume();src.touch[k]=1;apply();ev.preventDefault();});
       const up=()=>{src.touch[k]=0;apply();}; b.addEventListener('pointerup',up); b.addEventListener('pointerleave',up);});
     const pollPad=()=>{
       const p={}, pads=navigator.getGamepads?navigator.getGamepads():[];
       for(const g of pads){ if(!g||!g.connected) continue; const B=i=>g.buttons[i]&&g.buttons[i].pressed;
-        if(B(0)||B(1)||B(2)||B(3)||B(4)||B(5)||B(6)||B(7)) p.A=1;
+        if(B(0)||B(2)||B(5)||B(7)) p.B=1; if(B(1)||B(3)||B(4)||B(6)) p.A=1;
         if(B(8)) p.select=1; if(B(9)) p.start=1;
         if(B(12)) p.up=1; if(B(13)) p.down=1; if(B(14)) p.left=1; if(B(15)) p.right=1;
         const x=g.axes[0]||0,y=g.axes[1]||0;
@@ -67,7 +67,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Hold Z or Space to accelerate, arrows to steer', NOSOUND='Sound is off: click, tap or press a key to turn it on';
+    const READY='Hold X or Space to accelerate, arrows to steer', NOSOUND='Sound is off: click, tap or press a key to turn it on';
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;
