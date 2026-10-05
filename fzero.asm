@@ -67,6 +67,7 @@ DEF CAR4_TILE   EQU CAR_TILE + 22
 DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
 DEF RIVAL_OAM   EQU 14 * 4      ; rivals own three OAM entries each from here on
+DEF STRIP_OAM   EQU RIVAL_OAM + NUM_RIVALS * 12   ; then two for the lap strip
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
 DEF BOOST_MAX   EQU $0B         ; top speed while boosting
 DEF BOOST_TIME  EQU 80          ; frames a boost lasts
@@ -76,7 +77,12 @@ DEF COUNTDOWN   EQU 180         ; frames on the grid before the start
 DEF STEER_SKID  EQU 40          ; sideways speed in a skid turn
 DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
-DEF RAIL_COST   EQU 4           ; health lost hitting it
+DEF RAIL_COST   EQU 2           ; health lost hitting it, plus half the speed
+DEF RAIL_COOL   EQU 40          ; frames of no throttle after a hit, and before another can hurt
+DEF PUSH_K      EQU 54          ; how hard bends throw the car outward (see PushScale)
+DEF CATCH_UP    EQU 20          ; extra pace for rivals behind the player
+DEF EASE_OFF    EQU 12          ; and less for ones far ahead
+DEF BEHIND_Z    EQU PLAYER_Z - 90  ; where a rival is put to pounce on a mistake
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
 DEF DIRT_TIME   EQU 30          ; frames a patch drags for once driven into
@@ -93,7 +99,7 @@ DEF HEALTH_MAX  EQU 64
 DEF KNOCK_COST  EQU 3           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
-DEF TUNNEL_SKIP EQU 8           ; chunks the tunnel cuts off the lap
+DEF TUNNEL_SKIP EQU 3           ; chunks the tunnel cuts off the lap
 DEF EXIT_CHUNK  EQU 30          ; where the tunnel comes back up
 DEF PIT_START   EQU 256         ; recharge strip, in units from the finish line
 DEF PIT_END     EQU 768
@@ -436,8 +442,8 @@ MainLoop:
     call LinkApply
     call BuildLines
     call LinkPump
-    call UpdateObject
     call UpdateRivals
+    call UpdateObject           ; (after the rivals: a boost pad's palette wins on its lines)
     call PlayerSprites
     call UpdateHud
     call LinkPump
@@ -709,6 +715,65 @@ PlayerSprites:
     ld a, c
     ld [hl+], a
     ld [hl], OAMF_XFLIP
+
+    ; The lap strip along the top of the sky: a small car for us and a dot for whoever is
+    ; furthest ahead, each as far across the screen as it is round the lap.
+    ld hl, wOam + STRIP_OAM
+    ld a, 9
+    ld [hl+], a
+    ldh a, [hPos + 1]
+    ld e, a
+    ldh a, [hPos + 2]
+    ld d, a
+    call .stripX
+    ld [hl+], a
+    ld a, CAR8_TILE
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    ld a, [wOrder]              ; (kept sorted far to near, so the first is the furthest ahead)
+    add a
+    add a
+    add a
+    inc a
+    ld c, a
+    ld b, HIGH(wRivals)
+    ld a, [bc]
+    add e
+    ld e, a
+    inc c
+    ld a, [bc]
+    adc d
+    ld d, a
+    ld a, e
+    sub PLAYER_Z
+    ld e, a
+    jr nc, .leader
+    dec d
+.leader
+    ld a, 9
+    ld [hl+], a
+    call .stripX
+    ld [hl+], a
+    ld a, CAR4_TILE
+    ld [hl+], a
+    ld [hl], 0
+    ret
+.stripX                         ; de = position in units -> a = OAM x, 16 at the line to 158
+    ld a, d
+    and CHUNK_MASK
+    add a
+    ld b, a
+    ld a, e
+    rlca
+    and 1
+    or b
+    ld b, a
+    srl a
+    srl a
+    srl a
+    add b
+    add 16
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -931,6 +996,8 @@ UpdateRivals:
     adc b
     and CHUNK_MASK
     ld e, a
+    ld a, b
+    ldh [hRivalIdx + 1], a      ; (how far ahead it is, for the catch-up below)
     ld a, [hl+]
     ld c, a                     ; skill
     ld a, [hl]                  ; stun timer
@@ -942,9 +1009,32 @@ UpdateRivals:
     ld d, 0
     ld hl, SpeedProfile
     add hl, de
+    ld a, [hl]
+    add c
+    jr nc, .skilled
+    ld a, 255
+.skilled
+    ld c, a
     ldh a, [hPace]
     add c
-    add [hl]
+    jr nc, .paced
+    ld a, 255
+.paced
+    ld c, a
+    ldh a, [hRivalIdx + 1]      ; keep the field in touch: quicker behind us,
+    bit 7, a
+    jr z, .notBehind
+    ld a, c
+    add CATCH_UP
+    jr nc, .banded
+    ld a, 255
+    jr .banded
+.notBehind
+    cp 6                        ; a little slower when well ahead
+    ld a, c
+    jr c, .banded
+    sub EASE_OFF
+.banded
     inc b
     dec b
     jr z, .fullPace
@@ -1252,38 +1342,55 @@ UpdateObject:
     ld c, a
 
     cp CAR_D                    ; reached the car: are we in its lane, and on the ground?
-    jr c, .draw
+    jp c, .draw
     ldh a, [hObjOn]
     cp 1
-    jr nz, .draw
+    jp nz, .draw
     inc a
     ldh [hObjOn], a             ; only test once
     ldh a, [hAir]
     ld b, a
     ldh a, [hFadeStep]
     or b
-    jr nz, .draw
+    jp nz, .draw
     ldh a, [hObjKind]
     or a
     jr z, .mouth
     cp KIND_DIRT_L
     jr c, .barrier
-    ldh a, [hX + 1]             ; a dirt patch over one half of the road: are we on that half?
-    jr nz, .dirtRight
+    ld e, a                     ; a patch over half the road (odd kinds left, even right):
+    rra                         ; are we on that half?
+    ldh a, [hX + 1]
+    jr nc, .patchRight
     cp $FE                      ; left half: x of -3 or less
     jp nc, .draw
     cp $80
     jp c, .draw
-    jr .inDirt
-.dirtRight
+    jr .onPatch
+.patchRight
     cp 3                        ; right half: x of 3 or more
     jp c, .draw
     cp $80
     jp nc, .draw
-.inDirt
-    ld a, DIRT_TIME
+.onPatch
+    ld a, e
+    cp KIND_PAD_L
+    jr nc, .onPad
+    ld a, DIRT_TIME             ; dirt: dragged down, and somebody pounces
     ldh [hDirt], a
     ld a, SFX_SKID
+    call Sfx
+    push bc
+    call RivalPounce
+    pop bc
+    jp .draw
+.onPad
+    ldh a, [hBoost]             ; a boost pad: a free burst
+    or a
+    jp nz, .draw
+    ld a, DASH_TIME
+    ldh [hBoost], a
+    ld a, SFX_BOOST
     call Sfx
     jp .draw
 .barrier
@@ -1310,6 +1417,9 @@ UpdateObject:
     ldh [hVZ], a
     ld a, HIGH(BARRIER_HOP)
     ldh [hVZ + 1], a
+    push bc
+    call RivalPounce
+    pop bc
     jr .draw
 .mouth
     ldh a, [hX + 1]
@@ -1328,9 +1438,10 @@ UpdateObject:
     or a
     jr z, .laneFound
     cp KIND_DIRT_L
-    jr z, .laneFound            ; dirt on the left is where the tunnel mouth goes
     jr c, .barrierLane
-    ld a, [hl]                  ; dirt on the right: the same distance the other way
+    rra
+    jr c, .laneFound            ; left-hand patches are where the tunnel mouth goes
+    ld a, [hl]                  ; right-hand ones: the same distance the other way
     cpl
     inc a
     jr .haveLane
@@ -1358,6 +1469,35 @@ UpdateObject:
     ld a, c
     add HORIZON                 ; OAM y: a 16-high object whose bottom row is on that line
     ldh [hObjY], a
+
+    ; A boost pad is the dirt's tiles in another palette: OBP1, flashing white, on its lines.
+    xor a
+    ldh [hObjAttr], a
+    ldh a, [hObjKind]
+    cp KIND_PAD_L
+    jr c, .noPaint
+    ldh a, [hFadeLevel]
+    or a
+    jr nz, .noPaint
+    ld a, OAMF_PAL1
+    ldh [hObjAttr], a
+    ldh a, [hBuiltScx]
+    inc a
+    ld h, a
+    ld a, c
+    add HORIZON - 1
+    ld l, a
+    ldh a, [hFrame]
+    and %00000100
+    ld a, %00000000
+    jr z, .flash
+    ld a, %01010100
+.flash
+    REPT 18
+        ld [hl], a
+        dec l
+    ENDR
+.noPaint
 
     ldh a, [hObjKind]
     or a
@@ -1406,8 +1546,10 @@ UpdateObject:
     ld a, [hl+]
     ld [de], a                  ; tile
     inc de
-    ld a, [hl+]
-    ld [de], a                  ; flip
+    ldh a, [hObjAttr]
+    or [hl]
+    inc hl
+    ld [de], a                  ; flip, palette
     inc de
     dec c
     jr nz, .sprite
@@ -1415,6 +1557,48 @@ UpdateObject:
 .gone
     xor a
     ldh [hObjOn], a
+    ret
+
+; The player has made a mistake (dirt, a barrier): the last of our rivals, if it is behind,
+; turns up right on the player's tail on the clear side of the road, ready to go by.
+RivalPounce:
+    ld hl, wOrder + NUM_RIVALS - 1
+    ld b, NUM_RIVALS
+.scan
+    ld a, [hl-]                 ; from the back of the field forward
+    add a
+    add a
+    add a
+    add 5
+    ld e, a
+    ld d, HIGH(wRivals)
+    ld a, [de]
+    bit 7, a                    ; (not one the other console is driving)
+    jr z, .ours
+    dec b
+    jr nz, .scan
+    ret
+.ours
+    ld h, d
+    ld a, e
+    sub 3
+    ld l, a                     ; -> high byte of its distance
+    bit 7, [hl]
+    ret z                       ; our last car is not behind: nobody to send
+    xor a
+    ld [hl-], a
+    ld [hl], BEHIND_Z
+    inc l
+    inc l
+    inc l
+    ld [hl+], a                 ; not stunned
+    ldh a, [hX + 1]
+    rla
+    ld a, 0                     ; we are on the right: it takes the left lane
+    jr nc, .lane
+    ld a, 3
+.lane
+    ld [hl], a
     ret
 
 ; a = 1 to go down into the tunnel, 0 to come back up.  Takes effect half way through.
@@ -1549,7 +1733,10 @@ RoadFeatures:
     ld l, a
     ld a, c
     cp FEATURE_JUMP
+    jr z, .black
+    cp FEATURE_DARK
     jr nz, .notBlack
+.black
     ld l, %00001100
 .notBlack
     cp FEATURE_DIRT
@@ -1579,6 +1766,7 @@ DEF FEATURE_PLAIN EQU 0
 DEF FEATURE_DASH  EQU 1
 DEF FEATURE_JUMP  EQU 2
 DEF FEATURE_DIRT  EQU 3
+DEF FEATURE_DARK  EQU 4         ; a black band that does nothing
 ; \1 start, \2 end (units from the finish line), \3 kind.  In view from 8 chunks before.
 MACRO FEATURE
     db ((\1) / 256 - 8) & CHUNK_MASK
@@ -1587,7 +1775,9 @@ MACRO FEATURE
     db \3
 ENDM
 Features:
-    FEATURE 0, LINE_END, FEATURE_PLAIN
+    FEATURE 0, 24, FEATURE_PLAIN                ; the start line: three stripes
+    FEATURE 24, 48, FEATURE_DARK
+    FEATURE 48, 72, FEATURE_PLAIN
     FEATURE PIT_START, PIT_END, FEATURE_PLAIN
     FEATURE 12 * 256, 12 * 256 + 90, FEATURE_DASH
     FEATURE 35 * 256, 35 * 256 + 60, FEATURE_JUMP
@@ -1756,6 +1946,14 @@ UpdateHud:
     rrca
     xor b
     ld b, a
+    ldh a, [hLapFlash]
+    or a
+    jr z, .noFlash
+    ldh a, [hFrame]
+    and %00001000
+    xor b
+    ld b, a
+.noFlash
     ldh a, [hHealth]
     ld c, a
     ldh a, [hBoosts]
@@ -1853,6 +2051,19 @@ UpdateHud:
     ld [hl+], a
     jr .bar
 .lapCount
+    ldh a, [hLapFlash]          ; just crossed the line: the lap count flashes
+    or a
+    jr z, .lapShown
+    ldh a, [hFrame]
+    and %00001000
+    jr z, .lapShown
+    ld a, HUD_BLANK
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    jr .bar
+.lapShown
     ld a, HUD_L
     ld [hl+], a
     ldh a, [hLap]
@@ -2398,6 +2609,8 @@ InitRace:
     ldh [hTileJob], a
     xor a
     ldh [hBoom], a
+    ldh [hRailCool], a
+    ldh [hLapFlash], a
     ldh [hDirt], a
     ldh [hBoost], a
     ldh [hSkid], a
@@ -2548,6 +2761,18 @@ Drive:
     ld l, a
     ldh a, [hSpeed + 1]
     ld h, a
+    ldh a, [hRailCool]
+    or a
+    jr z, .railCool
+    dec a
+    ldh [hRailCool], a
+.railCool
+    ldh a, [hLapFlash]
+    or a
+    jr z, .lapFlash
+    dec a
+    ldh [hLapFlash], a
+.lapFlash
     ldh a, [hDirt]              ; in the dirt: dragged down toward a crawl
     or a
     jr z, .clean
@@ -2625,6 +2850,9 @@ Drive:
     add hl, de
     jr .speedSet
 .underLimit
+    ldh a, [hRailCool]          ; (stunned for a moment after hitting the rail: no throttle)
+    or a
+    jr nz, .coast
     bit 0, b                    ; PADF_A
     jr z, .coast
     ; the throttle: strong from rest, fading to nothing at top speed
@@ -2787,6 +3015,10 @@ Drive:
 .nextLap
     inc a
     ldh [hLap], a
+    ld a, 120                   ; make something of it: the lap number flashes, with a sound
+    ldh [hLapFlash], a
+    ld a, SFX_BOOST
+    call Sfx
     ldh a, [hBoosts]            ; a boost for every lap done
     cp BOOSTS_MAX
     jr nc, .sameChunk
@@ -2928,11 +3160,59 @@ Drive:
     adc d
     ldh [hSkyX + 1], a
 
-    bit 0, b                    ; on the throttle the push on the car is twice that: flat
-    jr z, .lifted               ; out, a full bend outruns the steering.  Lift off and the
-    sla e                       ; car grips
+    ; --- the push on the car in a bend goes with the SQUARE of the speed, so a corner that
+    ; is easy at 5 is a wall at 8: brake for it, or skid-turn into it
+    ldh a, [hSpeed]
+    rlca
+    rlca
+    and 3
+    ld e, a
+    ldh a, [hSpeed + 1]
+    add a
+    add a
+    or e
+    ld e, a                     ; speed in quarter units
+    ld d, 0
+    ld hl, PushScale
+    add hl, de
+    ld c, [hl]
+    ldh a, [hBend]
+    sub BEND_LEVELS
+    ldh [hTurnSign], a
+    bit 7, a
+    jr z, .bendAbs
+    cpl
+    inc a
+.bendAbs
+    ld hl, 0                    ; hl = |bend| * scale
+    ld e, c
+    ld d, h
+    or a
+    jr z, .pushReady
+.pushMul
+    srl a
+    jr nc, .pushSkip
+    add hl, de
+.pushSkip
+    sla e
     rl d
-.lifted
+    or a
+    jr nz, .pushMul
+.pushReady
+    srl h
+    rr l
+    ldh a, [hTurnSign]
+    bit 7, a
+    jr z, .pushSigned
+    xor a
+    sub l
+    ld l, a
+    sbc a
+    sub h
+    ld h, a
+.pushSigned
+    ld d, h
+    ld e, l
 
     ; --- steering: ease sideways speed toward what the d-pad asks for
     ldh a, [hState]
@@ -3069,14 +3349,22 @@ Drive:
 .bounce
     ld a, b
     ldh [hVX], a
-    ld a, RAIL_COST
+    ldh a, [hRailCool]          ; (a second touch straight after the first does not hurt again)
+    or a
+    jr nz, .railHurt
+    ldh a, [hSpeed + 1]         ; the faster, the worse
+    srl a
+    srl a
+    add RAIL_COST
     call Damage
     ld a, SFX_HIT
     call Sfx
-    ldh a, [hSpeed + 1]
-    or a
-    jr z, .xOk
-    dec a                       ; RAIL_SCRUB is one whole unit
+.railHurt
+    ld a, RAIL_COOL
+    ldh [hRailCool], a
+    ldh a, [hSpeed + 1]         ; and it takes three quarters of the speed
+    srl a
+    srl a
     ldh [hSpeed + 1], a
 .xOk
     ld a, l
@@ -3207,16 +3495,19 @@ DEF MOUTH    EQU 1
 DEF BARRIER  EQU 2
 DEF DIRT_L   EQU 6              ; a dirt patch over the left half of the road
 DEF DIRT_R   EQU 7              ; ...or the right
+DEF PAD_L    EQU 8              ; a boost pad over the left half
+DEF PAD_R    EQU 9
 DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
-ChunkSpawn:
-    db 0, 0, 0, BARRIER + 1, 0, 0, DIRT_R, 0
-    db 0, 0, MOUTH, 0, 0, BARRIER + 2, 0, 0
-    db DIRT_R, 0, 0, BARRIER + 0, 0, 0, DIRT_L, 0
-    db 0, BARRIER + 3, 0, 0, DIRT_R, 0, 0, 0
-    db 0, BARRIER + 0, 0, 0, 0, DIRT_L, 0, 0
-    db BARRIER + 3, 0, 0, DIRT_R, 0, 0, BARRIER + 1, 0
-    db 0, DIRT_L, 0, 0, BARRIER + 2, 0, 0, DIRT_R
-    db 0, 0, BARRIER + 0, 0, 0, 0, 0, 0
+DEF KIND_PAD_L  EQU PAD_L - 1
+ChunkSpawn:                     ; (two chunks before where each thing sits)
+    db 0, 0, PAD_R, 0, 0, BARRIER + 1, 0, 0
+    db 0, 0, MOUTH, PAD_R, 0, 0, 0, DIRT_L             ; tunnel left, or the boost on the right
+    db 0, 0, BARRIER + 3, 0, 0, PAD_L, 0, 0
+    db DIRT_R, 0, 0, BARRIER + 0, 0, 0, 0, 0
+    db 0, 0, 0, BARRIER + 2, 0, 0, DIRT_L, DIRT_R      ; a slalom through the long left
+    db DIRT_L, DIRT_R, 0, 0, 0, 0, 0, PAD_L
+    db BARRIER + 3, 0, 0, DIRT_R, DIRT_L, DIRT_R, 0, 0 ; and a second
+    db BARRIER + 1, 0, 0, 0, PAD_R, 0, 0, 0
     ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
 
 TunnelBend:                     ; what the same chunks are like underground
@@ -3228,22 +3519,22 @@ TunnelBend:                     ; what the same chunks are like underground
 
 ; The pace the field runs at through each chunk, in 1/32 unit per frame.
 ; Each rival adds its own skill to this.
-SpeedProfile:
-    STRETCH 6, 185
-    STRETCH 4, 150
-    STRETCH 6, 185
-    STRETCH 6, 105
-    STRETCH 2, 150
-    STRETCH 6, 105
-    STRETCH 2, 125
-    STRETCH 2, 125
-    STRETCH 4, 185
-    STRETCH 6, 125
-    STRETCH 4, 185
-    STRETCH 4, 140
-    STRETCH 4, 130
-    STRETCH 4, 145
-    STRETCH 4, 185
+SpeedProfile:                   ; (the best rival adds 50: about the limit of the physics)
+    STRETCH 6, 200              ; straight
+    STRETCH 4, 184              ; easy right
+    STRETCH 6, 200
+    STRETCH 6, 116              ; hairpin
+    STRETCH 2, 190
+    STRETCH 6, 116              ; hairpin
+    STRETCH 2, 174              ; chicane
+    STRETCH 2, 174
+    STRETCH 4, 200
+    STRETCH 6, 184              ; long left
+    STRETCH 4, 200
+    STRETCH 4, 158              ; right
+    STRETCH 4, 162              ; left
+    STRETCH 4, 170              ; right
+    STRETCH 4, 200
     ASSERT @ - SpeedProfile == CHUNK_MASK + 1
 
 FadeLevels:                     ; darkness for each eighth of a fade
@@ -3333,16 +3624,16 @@ DEF PAINT_C EQU %00100100
 DEF PAINT_D EQU %11101000
 DEF PAINT_P EQU %00101100       ; the other player: black, white trim
 RivalsMaster:
-    RIVAL PLAYER_Z + 70, 30, 0, PAINT_A
-    RIVAL PLAYER_Z + 110, 20, 3, PAINT_B
+    RIVAL PLAYER_Z + 70, 44, 0, PAINT_A
+    RIVAL PLAYER_Z + 110, 26, 3, PAINT_B
     GHOST PAINT_C, REMOTE
     GHOST PAINT_D, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
     GHOST PAINT_P, REMOTE
     GHOST PAINT_P, REMOTE
 RivalsSlave:
-    RIVAL PLAYER_Z + 150, 30, 1, PAINT_C
-    RIVAL PLAYER_Z + 190, 20, 2, PAINT_D
+    RIVAL PLAYER_Z + 150, 44, 1, PAINT_C
+    RIVAL PLAYER_Z + 190, 26, 2, PAINT_D
     GHOST PAINT_A, REMOTE
     GHOST PAINT_B, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
@@ -3353,14 +3644,14 @@ RivalsAlone:
         GHOST PAINT_P, REMOTE
     ENDR
 
-RivalStart:                     ; the grid: everyone starts ahead of the player
-    RIVAL PLAYER_Z + 40, 10, 1, %11100100   ; grey, black trim
-    RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
-    RIVAL PLAYER_Z + 120, 4, 0, %01101100   ; black, grey trim
-    RIVAL PLAYER_Z + 160, 34, 3, %01100000  ; white, grey trim
-    RIVAL PLAYER_Z + 200, 16, 1, %00100100  ; grey, white trim
-    RIVAL PLAYER_Z + 240, 28, 2, %11101000  ; dark, black trim
-    RIVAL PLAYER_Z + 280, 40, 0, %00101000  ; dark, white trim
+RivalStart:                     ; the grid: everyone starts ahead of the player, best at the front
+    RIVAL PLAYER_Z + 40, 18, 1, %11100100   ; grey, black trim
+    RIVAL PLAYER_Z + 80, 24, 2, %00101100   ; black, white trim
+    RIVAL PLAYER_Z + 120, 30, 0, %01101100  ; black, grey trim
+    RIVAL PLAYER_Z + 160, 35, 3, %01100000  ; white, grey trim
+    RIVAL PLAYER_Z + 200, 40, 1, %00100100  ; grey, white trim
+    RIVAL PLAYER_Z + 240, 46, 2, %11101000  ; dark, black trim: the two to beat
+    RIVAL PLAYER_Z + 280, 52, 0, %00101000  ; dark, white trim
 
 DmaCode:                        ; runs from HRAM: nothing else is readable during DMA
     ld a, HIGH(wOam)
@@ -3474,6 +3765,13 @@ DEF TILE_RESTORE EQU 1
 DEF TILE_BOOM    EQU 2
 BoomTilePristine:               ; the small shadow's two tiles as they are in car.bin
     INCBIN "build/car.bin", 64, 32
+
+; How hard a bend pushes at each speed (index: speed in quarter units): PUSH_K at 8, with
+; the square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
+PushScale:
+    FOR N, 48
+        db (PUSH_K * N * N + 512) / 1024
+    ENDR
 
 SkyBgp:
     INCBIN "build/skybgp.bin"
@@ -3629,6 +3927,10 @@ hDirt:        db    ; frames of dirt drag left
 hBoom:        db    ; frames since the car was wrecked
 hTileJob:     db    ; VBlank work on the explosion tile: TILE_RESTORE, TILE_BOOM
 hRand:        db
+hTurnSign:    db
+hRailCool:    db    ; frames until the rail can hurt again
+hLapFlash:    db    ; frames the lap count flashes for after crossing the line
+hObjAttr:     db
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db

@@ -450,7 +450,7 @@ def rival_lane_tables():
 MOUTH_SIZES = ((16, 8), (32, 12), (40, 16))              # tunnel mouth, width x height
 MOUTH_FROM = (0, 48, 80)                                 # ground line d each size starts at
 LANE = -28              # centre of the left lane, world units from the centre line
-SPAWN_DIST = 1024       # how far ahead road objects appear
+SPAWN_DIST = 512        # how far ahead road objects appear
 CAR_D = 88              # ground line d where an object reaches the car
 
 
