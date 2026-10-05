@@ -42,6 +42,8 @@
 ;
 ; Controls: Left/Right steer, A accelerate, B (or Down) brake, Up boost.
 ;           Select turns the engine note on and off (it borrows the music's second channel).
+;           On the grid before a race: Left/Right set how quick the rivals are (the bar
+;           between LO and TOP on the status bar), A or Start begins the countdown.
 ;           Start after a race: go again.  Select+Start together steps through the modes:
 ;           race, practice (Select and Start bend the road by hand), two-player link.
 ;
@@ -78,6 +80,8 @@ DEF BOOST_TIME  EQU 80          ; frames a boost lasts
 DEF DASH_TIME   EQU 45          ; frames of boost from a dash plate
 DEF BOOSTS_MAX  EQU 3
 DEF COUNTDOWN   EQU 180         ; frames on the grid before the start
+DEF LEVELS      EQU 5           ; difficulty settings: how quick the rivals are
+DEF LEVEL_START EQU 3
 DEF STEER_SKID  EQU 40          ; sideways speed in a skid turn
 DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
@@ -378,11 +382,12 @@ EntryPoint:
     ldh [hLinked], a
     ldh [hLinkTry], a
     ldh [hGen], a
-    ldh [hLevel], a
     ldh [hSkyX], a
     ldh [hSkyX + 1], a
     ld a, HIGH(wLinesA)
     ldh [hFront], a
+    ld a, LEVEL_START
+    ldh [hLevel], a
     call InitRace
 
     ld de, note_table_rom       ; this driver plays from a RAM copy of the note table
@@ -1114,7 +1119,7 @@ UpdateRivals:
     ld b, a
     ld c, [hl]
     inc l                       ; hl -> high byte of the distance, as after a local move
-    jr .moved
+    jp .moved
 .local
     dec l
     dec l
@@ -1152,10 +1157,17 @@ UpdateRivals:
     ld a, 255
 .skilled
     ld c, a
-    ldh a, [hPace]
+    ldh a, [hPace]              ; the level's shift, up or down
+    bit 7, a
+    jr nz, .slower
     add c
     jr nc, .paced
     ld a, 255
+    jr .paced
+.slower
+    add c
+    jr c, .paced
+    xor a
 .paced
     ld c, a
     ldh a, [hRivalIdx + 1]      ; keep the field in touch: quicker behind us,
@@ -2115,6 +2127,17 @@ UpdateHud:
     swap a
     add c
     ld c, a
+    ldh a, [hWait]
+    or a
+    jr z, .seen
+    ldh a, [hLevel]             ; (waiting on the grid: the level bar)
+    add a
+    add a
+    add a
+    add c
+    add 128
+    ld c, a
+.seen
     ldh a, [hHudSeen]
     cp b
     jr nz, .redo
@@ -2129,6 +2152,39 @@ UpdateHud:
     ld a, 1
     ldh [hHudDirty], a
     ld hl, wHud
+    ldh a, [hWait]
+    or a
+    jr z, .notOnGrid
+    ld a, HUD_L                 ; on the grid: LO [level bar] TOP
+    ld [hl+], a
+    ld a, HUD_O
+    ld [hl+], a
+    ldh a, [hLevel]
+    ld c, a
+    ld b, LEVELS
+.levelCell
+    ld a, HUD_EMPTY
+    inc c
+    dec c
+    jr z, .levelPut
+    dec c
+    ld a, HUD_FULL
+.levelPut
+    ld [hl+], a
+    dec b
+    jr nz, .levelCell
+    ld a, HUD_BLANK
+    ld [hl+], a
+    ld a, HUD_T
+    ld [hl+], a
+    ld a, HUD_O
+    ld [hl+], a
+    ld a, HUD_P
+    ld [hl+], a
+    ld a, HUD_BLANK
+    ld [hl+], a
+    jp .health
+.notOnGrid
     ldh a, [hMode]
     cp MODE_LINK
     jr nz, .notWaiting
@@ -2703,6 +2759,26 @@ LinkApply:
     srl d
     ret
 
+; The difficulty level (1..LEVELS) sets how many laps and how the rivals' pace is shifted.
+SetLevel:
+    ldh a, [hLevel]
+    ld e, a
+    ld d, 0
+    ld hl, LevelPace - 1
+    add hl, de
+    ld a, [hl]
+    ldh [hPace], a
+    ld a, e
+    cp 4
+    ld a, 3
+    jr c, .laps
+    ld a, 5
+.laps
+    ldh [hLaps], a
+    ret
+LevelPace:                      ; added to every rival's pace (1/32 unit per frame), signed
+    db -32, -14, 0, 12, 24
+
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
     xor a
@@ -2788,17 +2864,15 @@ InitRace:
     ldh [hLap], a
     ld a, NUM_RIVALS + 1
     ldh [hRank], a
-    ldh a, [hLevel]             ; level 1: three laps.  level 2: five, and a quicker field
+    call SetLevel
+    xor a                       ; a solo race waits on the grid for the player to pick a level
+    ldh [hWait], a
+    ldh a, [hMode]
     or a
-    ld a, 3
-    ld b, 0
-    jr z, .level
-    ld a, 5
-    ld b, 16
-.level
-    ldh [hLaps], a
-    ld a, b
-    ldh [hPace], a
+    jr nz, .noWait
+    inc a
+    ldh [hWait], a
+.noWait
     ld de, RivalStart
     ldh a, [hMode]
     cp MODE_LINK
@@ -2906,8 +2980,13 @@ Drive:
     ldh a, [hState]
     cp STATE_FINISHED
     jr nz, .again
+    ldh a, [hRank]              ; won it: the next race starts a level up (it can be put back)
+    dec a
+    jr nz, .again
     ldh a, [hLevel]
-    xor 1
+    cp LEVELS
+    jr nc, .again
+    inc a
     ldh [hLevel], a
 .again
     ldh a, [hGen]               ; (linked: the other console sees this flip and restarts too)
@@ -2978,10 +3057,41 @@ Drive:
 .noBoom
     ldh a, [hState]
     cp STATE_DEAD
-    jr z, .braking              ; a wreck just stops
+    jp z, .braking              ; a wreck just stops
     or a
-    jr nz, .coast               ; past the flag: roll to a halt
-    ldh a, [hCount]             ; on the grid: wait for the start
+    jp nz, .coast               ; past the flag: roll to a halt
+    ldh a, [hWait]              ; on the grid, before the countdown: Left/Right set how quick
+    or a                        ; the rivals are; A or Start begins the countdown
+    jr z, .counting
+    ldh a, [hNewKeys]
+    ld c, a
+    ldh a, [hLevel]
+    bit 5, c                    ; PADF_LEFT
+    jr z, .notEasier
+    cp 2
+    jr c, .notEasier
+    dec a
+.notEasier
+    bit 4, c                    ; PADF_RIGHT
+    jr z, .notHarder
+    cp LEVELS
+    jr nc, .notHarder
+    inc a
+.notHarder
+    ldh [hLevel], a
+    push bc
+    call SetLevel
+    pop bc
+    ld a, c
+    and PADF_A | PADF_START
+    jr z, .held
+    xor a
+    ldh [hWait], a
+.held
+    ld hl, 0
+    jp .speedSet
+.counting
+    ldh a, [hCount]             ; the countdown
     or a
     jr z, .go
     dec a
@@ -4228,7 +4338,8 @@ hLinkStale:   db    ; frames since the last one
 hLinkWhich:   db    ; which of our rivals the next packet carries
 hGen:         db    ; flips when a linked race is restarted
 hState:       db    ; 0 racing, STATE_FINISHED, STATE_DEAD
-hLevel:       db
+hLevel:       db    ; difficulty, 1..LEVELS
+hWait:        db    ; on the grid choosing a level, before the countdown
 hLaps:        db    ; laps in this race
 hLap:         db    ; the one we are on, from 1
 hChunk:       db    ; chunk of the lap we were in last frame

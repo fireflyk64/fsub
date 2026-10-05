@@ -1,7 +1,7 @@
 // Playtest bots: drive a full race in the ROM (headless, in the web build's emulator) at
 // three levels of skill and report how each got on.  For tuning the balance.
 //
-//   node tools/playtest.js [masher|casual|expert ...] [--level2] [--gif NAME FROM TO]
+//   node tools/playtest.js [masher|casual|expert ...] [--level N] [--gif NAME FROM TO]
 //
 // masher  holds the throttle and steers for the middle of the road.  Nothing else.
 // casual  also brakes when a sharp bend is already throwing it wide, dodges what it sees,
@@ -15,7 +15,7 @@ const sym = {};
 for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { const m = l.match(/^00:([0-9a-f]{4}) (\w+)$/i); if (m) sym[m[2]] = parseInt(m[1], 16); }
 const args = process.argv.slice(2);
 const bots = args.filter(a => ['masher', 'casual', 'expert'].includes(a));
-const level2 = args.includes('--level2');
+const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : 0;
 const gifAt = args.indexOf('--gif');
 
 async function race(kind, record) {
@@ -29,7 +29,7 @@ async function race(kind, record) {
   const bendAt = chunk => rd(sym.TrackBend + (chunk & 63)) - 32;
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
-  let lastHp = 64, lastLap = 1, lastF = -1, started = false, levelDone = !level2;
+  let lastHp = 64, lastLap = 1, lastF = -1, started = false;
   for (let i = 0; i < 40000; i++) {
     step();
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
@@ -41,12 +41,14 @@ async function race(kind, record) {
     if (lap !== lastLap) { out.lapFrames.push(out.frames); lastLap = lap; }
     if (count === 0 && st === 0) { out.frames++; const r = rd(sym.hRank); if (out.frames > 600) { out.worst = Math.max(out.worst, r); out.best = Math.min(out.best, r); } }
     if (st !== 0) {
-      if (!levelDone && st === 1) { levelDone = true; set('start', 1); step(); step(); set('start', 0); out.frames = 0; out.lapFrames = []; lastLap = 1; lastHp = 64; out.hits = 0; out.minHealth = 64; continue; }
       out.place = rd(sym.hRank); out.health = hp; out.wrecked = st === 2; out.lapFrames.push(out.frames);
       // how far each rival is ahead (+) or behind (-) at the end, in units
       out.gaps = []; for (let r = 0; r < 7; r++) out.gaps.push(s16(rd(sym.wRivals + r * 8 + 1) | rd(sym.wRivals + r * 8 + 2) << 8) - 175);
       break;
     }
+    if (rd(sym.hWait)) {        // on the grid: set the level, then go
+      const lv = rd(sym.hLevel), want = level || lv;
+      set('left', lv > want && i % 4 < 2); set('right', lv < want && i % 4 < 2); set('A', lv === want && i % 4 < 2); out.level = lv; continue; }
     // ---- the bot
     const x = s8(rd(sym.hX + 1)), bend = rd(sym.hBend) - 32, speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
     const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8, chunk = (pos >> 8) & 63, boosts = rd(sym.hBoosts), air = rd(sym.hAir);
@@ -84,7 +86,7 @@ async function race(kind, record) {
   for (const kind of bots.length ? bots : ['masher', 'casual', 'expert']) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
-    console.log(`${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    console.log(`level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
     if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
   }
