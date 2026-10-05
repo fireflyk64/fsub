@@ -508,6 +508,23 @@ def tunnel_pal_tables():
     return tabs
 
 
+def water_pal_tables():
+    """A causeway over dark water: flat dark blocks with glints of light running past."""
+    a = [1 if i % 48 < 2 else (2 if i % 48 < 5 else 3) for i in range(256)]
+    b = [1 if (i + 20) % 96 < 2 else 2 for i in range(256)]
+    tabs = []
+    for name, win in (("WNear0", 1), ("WNear1", 5), ("WNear2", 11), ("WNear3", 21)):
+        sa, sb = smooth(a, win), smooth(b, win)
+        tabs.append((name, [bgp(3, 1, sa[i], sb[i]) for i in range(256)]))
+    tabs.append(("WFar", [bgp(3, 1, 3, 2)] * 256))
+    return tabs
+
+
+def sky_flash():
+    """Two brighter skies for the flash when a boost fires: white, then light grey."""
+    return [bgp(0, 3, 1, 2)] * HORIZON + [bgp(1, 3, 0, 2)] * HORIZON
+
+
 def darker(v, n):
     """A BGP value with every colour n shades darker."""
     return bgp(*[min(3, ((v >> (i * 2)) & 3) + n) for i in range(4)])
@@ -670,7 +687,8 @@ def main():
     put("rlane.bin", rival_lane_tables())
     put("dist.bin", dist_to_line())
     put("lane.bin", lane_offsets())
-    tabs = tabs + tunnel_pal_tables()
+    tabs = tabs + tunnel_pal_tables() + water_pal_tables()
+    put("skyflash.bin", sky_flash())
     put("skybgp.bin", with_fades(sky_bgp()))
     put("bend.bin", [v for row in bends for v in row])
     put("shear.bin", [v for row in shear_tables() for v in row])
@@ -694,15 +712,15 @@ def main():
         f.write("MACRO RIVAL_LANE_U\n    db " + ", ".join(map(str, RIVAL_LANES)) + "\nENDM\n")
         # The per-line fill is unrolled: each line's depth is a constant in the code.
         phase = row_phase()
-        for macro, table in (("FILL_ALL_BANDS", lambda n, far: n),
-                             ("FILL_TUNNEL_BANDS", lambda n, far: "TFar" if far else "T" + n)):
-            f.write(f"MACRO {macro}\n")
-            for lo, hi, name, coarse in BANDS:
-                f.write("    LINK_PUMP\n")
-                f.write(f"    FILL_BAND Pal{table(name, coarse)}, {1 if coarse else 0}\n")
-                for d in range(lo, min(hi, VISIBLE) + 1):
-                    f.write(f"    FILL_LINE {phase[HORIZON + d - 1]}\n")
-            f.write("ENDM\n")
+        f.write("MACRO FILL_ALL_BANDS\n")
+        for k, (lo, hi, name, coarse) in enumerate(BANDS):
+            f.write("    LINK_PUMP\n")
+            f.write(f"    FILL_BAND {k}, {1 if coarse else 0}\n")
+            for d in range(lo, min(hi, VISIBLE) + 1):
+                f.write(f"    FILL_LINE {phase[HORIZON + d - 1]}\n")
+        f.write("ENDM\n")
+        f.write("MACRO BAND_TABLES  ; \\1 = prefix of a scenery's palette tables, far band first\n    db "
+                + ", ".join(f"HIGH(Pal\\1{'Far' if coarse else name})" for _, _, name, coarse in BANDS) + "\nENDM\n")
 
 
 def preview(outdir, pixels, bends, tabs):

@@ -37,7 +37,7 @@ async function race(kind, record) {
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
     const ld = rd(sym.hLoad); out.peak = Math.max(out.peak, ld >= 144 ? ld - 144 : ld + 10);
     if (record && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
-    if (hp < lastHp) out.hits++; lastHp = hp; out.minHealth = Math.min(out.minHealth, hp);
+    if (hp < lastHp) { out.hits++; if (process.env.HITS) (out.where = out.where || []).push(((rd(sym.hPos + 2) & 63)) + ":" + (lastHp - hp)); } lastHp = hp; out.minHealth = Math.min(out.minHealth, hp);
     if (lap !== lastLap) { out.lapFrames.push(out.frames); lastLap = lap; }
     if (count === 0 && st === 0) { out.frames++; const r = rd(sym.hRank); if (out.frames > 600) { out.worst = Math.max(out.worst, r); out.best = Math.min(out.best, r); } }
     if (st !== 0) {
@@ -55,7 +55,8 @@ async function race(kind, record) {
     for (let k = 0; k < 2; k++) { const a = sym.wObjSlots + k * 4; if (rd(a)) objs.push({ kind: rd(a + 1), dist: ((rd(a + 2) | rd(a + 3) << 8) - pos) & 0xffff }); }
     const dodge = reach => { for (const o of objs) { if (o.dist > reach) continue;
       if (o.kind === 0) { if (kind === 'expert') target = -24; else if (x < 0) target = 14; }       // tunnel mouth: left lane
-      else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; if (Math.abs((target || x) - lane) < 22) target = lane > 0 ? lane - 30 : lane + 30; }
+      else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; const at = target || x;
+        if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -38 : 38) : (lane > 0 ? lane - 30 : lane + 30); }   // a middle lane: go to the wall on our side
       else if (o.kind <= 6) target = o.kind === 5 ? 22 : -22;                                       // dirt: other half
       else if (kind !== 'masher') target = o.kind === 7 ? -24 : 24; } };                             // boost pad: go to it
     if (kind === 'casual') {
@@ -84,6 +85,7 @@ async function race(kind, record) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
     console.log(`${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
   }
 })();

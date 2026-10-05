@@ -33,6 +33,10 @@
 ; Hazards, both things to steer round: dirt patches (rough dark ground over one half of the
 ; road that drags the car down) and barriers (blocks in one lane that hurt, slow and toss it).
 ;
+; Scenery: each chunk of the lap has a scenery (city, underpass, water), which is nothing but
+; a choice of palette tables.  Each distance band looks up the scenery of the chunk it is
+; over, so a change of scenery comes toward you from the horizon.
+;
 ; A wreck: the car's sprite is switched to a spare tile which is then overwritten in VRAM
 ; with noise for the explosion, and put back from ROM for the next race.
 ;
@@ -90,13 +94,13 @@ DEF DIRT_TILE   EQU CAR_TILE + 24  ; dirt patch pieces, 8, 12 and 16 lines deep
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
-DEF BARRIER_COST EQU 8          ; health lost hitting a barrier
+DEF BARRIER_COST EQU 5          ; health lost hitting a barrier
 DEF BARRIER_HOP EQU $0200       ; and how hard it throws the car up
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
 DEF FRICTION    EQU $0004       ; lost per frame off it
 DEF BRAKE       EQU $0020
 DEF HEALTH_MAX  EQU 64
-DEF KNOCK_COST  EQU 3           ; health lost bumping a rival
+DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
 DEF TUNNEL_SKIP EQU 3           ; chunks the tunnel cuts off the lap
@@ -466,15 +470,17 @@ MACRO LINK_PUMP                 ; a safe place to look at the cable: a and flags
     or a
     call nz, LinkPump
 ENDM
-MACRO FILL_BAND
+MACRO FILL_BAND                 ; \1 = band, 0 the furthest; \2 = 1 if it counts in 16s
     IF \2
         ldh a, [hPosCoarse]
     ELSE
         ldh a, [hPos + 1]
     ENDC
     ld c, a
-    ldh a, [hFadeLevel]         ; the darker copies of a table follow it
-    add HIGH(\1)
+    ldh a, [hBandBase + \1]     ; this band's palette table, for the scenery it is over
+    ld h, a
+    ldh a, [hFadeLevel]         ; (the darker copies of a table follow it)
+    add h
     ld h, a
 ENDM
 MACRO FILL_LINE
@@ -487,6 +493,7 @@ MACRO FILL_LINE
 ENDM
 
 BuildLines:
+    call UpdateScene
     ldh a, [hFront]
     xor HIGH(wLinesA) ^ HIGH(wLinesB)
     ld b, a                     ; b = the buffer not on screen
@@ -514,23 +521,32 @@ BuildLines:
 .lit
     ld d, b
     ld e, HORIZON
-    ldh a, [hTunnel]
-    or a
-    jp nz, .tunnel
     FILL_ALL_BANDS
     ldh a, [hSkyStale]
     or a
     jp z, .bgpDone
     dec a
     ldh [hSkyStale], a
+    ldh a, [hRoof]
+    or a
+    jr nz, .roofed
     ld de, SkyBgp               ; sky fades toward the horizon glow
     ldh a, [hFadeLevel]         ; (its darker copies follow it too)
     or a
-    jr z, .skyTable
+    jr z, .flashing
     ld de, SkyBgp + HORIZON
     dec a
     jr z, .skyTable
     ld de, SkyBgp + HORIZON * 2
+    jr .skyTable
+.flashing
+    ldh a, [hFlash]             ; a boost has just fired: the sky flashes white, then grey
+    or a
+    jr z, .skyTable
+    ld de, SkyFlash
+    cp 5
+    jr nc, .skyTable
+    ld de, SkyFlash + HORIZON
 .skyTable
     ld h, b
     ld l, 0
@@ -542,9 +558,8 @@ BuildLines:
     cp HORIZON
     jr nz, .sky
     jp .bgpDone
-.tunnel
-    FILL_TUNNEL_BANDS
-    ld h, b                     ; no sky down here: everything above the road is black
+.roofed
+    ld h, b                     ; underground: everything above the road is black
     ld l, 0
     ld a, $FF
 .roof
@@ -646,12 +661,94 @@ BuildLines:
     ret
 
 ; ---------------------------------------------------------------------------------------
+; Which palette tables each distance band uses.  One band is looked at per frame (the eighth
+; frame checks whether we are under a roof): pos + how far ahead the band is -> chunk ->
+; scenery -> table.  The tunnel short cut is the underpass scenery everywhere.
+UpdateScene:
+    ldh a, [hFrame]
+    and 7
+    cp 7
+    jr z, .roof
+    ld c, a
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, BandAhead
+    add hl, de
+    ldh a, [hPos + 1]
+    add [hl]
+    inc hl
+    ldh a, [hPos + 2]
+    adc [hl]
+    call .sceneAt
+    ld e, a                     ; table = ScenePages[scenery * 7 + band]
+    add a
+    add a
+    add a
+    sub e
+    add c
+    ld e, a
+    ld hl, ScenePages
+    add hl, de
+    ld a, [hl]
+    ld e, c
+    ld hl, hBandBase
+    add hl, de
+    ld [hl], a
+    ret
+.roof
+    ldh a, [hPos + 2]
+    call .sceneAt
+    dec a                       ; SCENE_UNDER is 1
+    ld a, 0
+    jr nz, .roofKnown
+    inc a
+.roofKnown
+    ld hl, hRoof
+    cp [hl]
+    ret z
+    ld [hl], a
+    ld a, 3                     ; the sky lines need redoing
+    ldh [hSkyStale], a
+    ret
+.sceneAt                        ; a = chunk -> a = its scenery (d = 0 on return)
+    and CHUNK_MASK
+    ld e, a
+    ld d, 0
+    ld hl, SceneOfChunk
+    add hl, de
+    ldh a, [hTunnel]
+    or a
+    ld a, [hl]
+    ret z
+    ld a, SCENE_UNDER
+    ret
+
+DEF SCENE_CITY  EQU 0
+DEF SCENE_UNDER EQU 1
+DEF SCENE_WATER EQU 2
+ScenePages:
+    db HIGH(PalFar2), HIGH(PalFar1), HIGH(PalFar0), HIGH(PalNear3), HIGH(PalNear2), HIGH(PalNear1), HIGH(PalNear0)
+    BAND_TABLES T
+    BAND_TABLES W
+BandAhead:                      ; how far ahead each band looks, far band first
+    dw 2040, 2040, 900, 550, 400, 280, 200
+
 ; The player's car and shadow.  Leaning is free: the two halves sit a pixel apart.
 PlayerSprites:
     ld hl, wOam
     ldh a, [hLean]
     ld c, a
+    ldh a, [hKick]              ; a boost: the car surges up the screen and settles back;
+    srl a
+    srl a
+    ld b, a
+    ldh a, [hBrake]             ; braking: it sits back a pixel
+    sub b
+    ldh [hYOff], a
+    ld b, a
     ldh a, [hCarY]
+    add b
     ld b, a
     ld a, CAR_TILE
     ldh [hCarTile], a
@@ -696,8 +793,11 @@ PlayerSprites:
     ld c, a
     ldh a, [hState]             ; (a wreck casts no shadow)
     cp STATE_DEAD
-    ld a, CAR_Y + 30
-    jr nz, .shadowY
+    ldh a, [hYOff]
+    jr z, .noShadow
+    add CAR_Y + 30
+    jr .shadowY
+.noShadow
     xor a
 .shadowY
     ld b, a
@@ -1411,6 +1511,8 @@ UpdateObject:
     ldh a, [hSpeed + 1]
     srl a
     ldh [hSpeed + 1], a
+    xor a                       ; (it stops the car's sideways slide, so the hop cannot
+    ldh [hVX], a                ; carry it over the rail)
     ld a, 1
     ldh [hAir], a
     ld a, LOW(BARRIER_HOP)
@@ -2607,7 +2709,22 @@ InitRace:
     ldh [hHudSeen + 1], a
     ld a, TILE_RESTORE          ; undo any explosion drawn over the spare tile
     ldh [hTileJob], a
+    ld hl, hBandBase            ; city everywhere until UpdateScene says otherwise
+    ld de, ScenePages
+    ld b, 7
+.bands
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    dec b
+    jr nz, .bands
     xor a
+    ldh [hRoof], a
+    ldh [hFlash], a
+    ldh [hKick], a
+    ldh [hBrake], a
+    ldh [hBoostSeen], a
+    ldh [hEngineMode], a
     ldh [hBoom], a
     ldh [hRailCool], a
     ldh [hLapFlash], a
@@ -2767,6 +2884,20 @@ Drive:
     dec a
     ldh [hRailCool], a
 .railCool
+    ldh a, [hKick]
+    or a
+    jr z, .kicked
+    dec a
+    ldh [hKick], a
+.kicked
+    ldh a, [hFlash]
+    or a
+    jr z, .flashed
+    dec a
+    ldh [hFlash], a
+    ld a, 3
+    ldh [hSkyStale], a
+.flashed
     ldh a, [hLapFlash]
     or a
     jr z, .lapFlash
@@ -2831,10 +2962,22 @@ Drive:
     call Sfx
 .noFire
     ldh a, [hBoost]
+    ld c, a
+    ldh a, [hBoostSeen]
+    cp c
+    jr nc, .noSurge
+    ld a, 8                     ; a boost has just started (fired, or from a pad): flash, surge
+    ldh [hFlash], a
+    ld a, 15
+    ldh [hKick], a
+.noSurge
+    ld a, c
+    ldh [hBoostSeen], a
     or a
     jr z, .noBoost
     dec a
     ldh [hBoost], a
+    ldh [hBoostSeen], a
     ld de, $0040                ; boosting: shove toward the higher limit
     add hl, de
     ld a, h
@@ -2903,7 +3046,78 @@ Drive:
     ld a, d
     adc HIGH(ENGINE_BASE)
     ldh [rAUD2HIGH], a
+    ldh a, [hBoost]             ; under boost the engine opens up: fuller and louder
+    or a
+    jr z, .calmNote
+    ld a, 1
+.calmNote
+    ld c, a
+    ldh a, [hEngineMode]
+    cp c
+    jr z, .noNote
+    ld a, c
+    ldh [hEngineMode], a
+    or a
+    ld a, %01000000
+    ld c, $50
+    jr z, .voice
+    ld a, %10000000
+    ld c, $90
+.voice
+    ldh [rAUD2LEN], a
+    ld a, c
+    ldh [rAUD2ENV], a
+    ld a, d
+    adc HIGH(ENGINE_BASE)
+    or $80
+    ldh [rAUD2HIGH], a
 .noNote
+    ; --- the noise channel: a boost howls upward, the brakes scrub lower as the car slows
+    xor a
+    ldh [hBrake], a
+    ldh a, [hBoost]
+    or a
+    jr z, .noHowl
+    ld c, a
+    ldh a, [hFrame]
+    and 3
+    jr nz, .quiet
+    ld a, c
+    and %01110000
+    or 3
+    ld c, a
+    ld a, $62
+    jr .noise
+.noHowl
+    bit 7, b
+    jr z, .quiet
+    ld a, h
+    cp 2
+    jr c, .quiet
+    ld a, 1
+    ldh [hBrake], a
+    ldh a, [hSkid]
+    or a
+    jr nz, .quiet
+    ldh a, [hFrame]
+    and 7
+    jr nz, .quiet
+    ld a, 9
+    sub h
+    and 7
+    swap a
+    or 5
+    ld c, a
+    ld a, $31
+.noise
+    ldh [rAUD4ENV], a
+    ld a, c
+    ldh [rAUD4POLY], a
+    xor a
+    ldh [rAUD4LEN], a
+    ld a, $80
+    ldh [rAUD4GO], a
+.quiet
 
     ; --- distance driven (24 bit: fraction, units, chunks)
     ldh a, [hPos]
@@ -3499,16 +3713,25 @@ DEF PAD_L    EQU 8              ; a boost pad over the left half
 DEF PAD_R    EQU 9
 DEF KIND_DIRT_L EQU DIRT_L - 1  ; (hObjKind is the table value less one)
 DEF KIND_PAD_L  EQU PAD_L - 1
-ChunkSpawn:                     ; (two chunks before where each thing sits)
-    db 0, 0, PAD_R, 0, 0, BARRIER + 1, 0, 0
-    db 0, 0, MOUTH, PAD_R, 0, 0, 0, DIRT_L             ; tunnel left, or the boost on the right
-    db 0, 0, BARRIER + 3, 0, 0, PAD_L, 0, 0
-    db DIRT_R, 0, 0, BARRIER + 0, 0, 0, 0, 0
-    db 0, 0, 0, BARRIER + 2, 0, 0, DIRT_L, DIRT_R      ; a slalom through the long left
-    db DIRT_L, DIRT_R, 0, 0, 0, 0, 0, PAD_L
-    db BARRIER + 3, 0, 0, DIRT_R, DIRT_L, DIRT_R, 0, 0 ; and a second
-    db BARRIER + 1, 0, 0, 0, PAD_R, 0, 0, 0
+ChunkSpawn:                     ; (each entry is two chunks before where the thing sits)
+    db 0, 0, PAD_R, 0, 0, BARRIER + 3, BARRIER + 2, 0  ; launch pad; Barrier Bend: inside blocked
+    db 0, 0, MOUTH, PAD_R, 0, 0, DIRT_L, 0             ; the Fork: tunnel left or boost right
+    db DIRT_L, 0, DIRT_L, 0, 0, PAD_L, 0, 0            ; Dirt Hairpin: no inside line; Sucker Pad
+    db 0, 0, 0, 0, 0, BARRIER + 0, 0, BARRIER + 3      ; (clean hairpin: skid it); Barrier Chicane
+    db 0, 0, 0, 0, 0, DIRT_L, DIRT_R, DIRT_L           ; the Jump; Causeway Slalom
+    db DIRT_R, 0, 0, 0, 0, 0, 0, PAD_L                 ; Speed Trap; Pad Bend: boost on the outside
+    db 0, BARRIER + 3, 0, BARRIER + 1, BARRIER + 2, BARRIER + 1, BARRIER + 2, 0   ; the Underpass: hug a wall
+    db 0, 0, 0, 0, 0, 0, 0, 0                          ; run to the line
     ASSERT @ - ChunkSpawn == CHUNK_MASK + 1
+
+; The scenery of each chunk.
+SceneOfChunk:
+    STRETCH 38, SCENE_CITY
+    STRETCH 8, SCENE_WATER      ; the causeway: slalom and speed trap
+    STRETCH 6, SCENE_CITY
+    STRETCH 6, SCENE_UNDER      ; the underpass
+    STRETCH 6, SCENE_CITY
+    ASSERT @ - SceneOfChunk == CHUNK_MASK + 1
 
 TunnelBend:                     ; what the same chunks are like underground
     STRETCH 24, 32
@@ -3645,10 +3868,10 @@ RivalsAlone:
     ENDR
 
 RivalStart:                     ; the grid: everyone starts ahead of the player, best at the front
-    RIVAL PLAYER_Z + 40, 18, 1, %11100100   ; grey, black trim
-    RIVAL PLAYER_Z + 80, 24, 2, %00101100   ; black, white trim
-    RIVAL PLAYER_Z + 120, 30, 0, %01101100  ; black, grey trim
-    RIVAL PLAYER_Z + 160, 35, 3, %01100000  ; white, grey trim
+    RIVAL PLAYER_Z + 40, 16, 1, %11100100   ; grey, black trim
+    RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
+    RIVAL PLAYER_Z + 120, 28, 0, %01101100  ; black, grey trim
+    RIVAL PLAYER_Z + 160, 34, 3, %01100000  ; white, grey trim
     RIVAL PLAYER_Z + 200, 40, 1, %00100100  ; grey, white trim
     RIVAL PLAYER_Z + 240, 46, 2, %11101000  ; dark, black trim: the two to beat
     RIVAL PLAYER_Z + 280, 52, 0, %00101000  ; dark, white trim
@@ -3768,6 +3991,9 @@ BoomTilePristine:               ; the small shadow's two tiles as they are in ca
 
 ; How hard a bend pushes at each speed (index: speed in quarter units): PUSH_K at 8, with
 ; the square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
+SkyFlash:                       ; two brighter skies, for the boost flash
+    INCBIN "build/skyflash.bin"
+
 PushScale:
     FOR N, 48
         db (PUSH_K * N * N + 512) / 1024
@@ -3807,6 +4033,11 @@ ENDM
     PAL_TABLE TNear2, tnear2
     PAL_TABLE TNear3, tnear3
     PAL_TABLE TFar, tfar
+    PAL_TABLE WNear0, wnear0
+    PAL_TABLE WNear1, wnear1
+    PAL_TABLE WNear2, wnear2
+    PAL_TABLE WNear3, wnear3
+    PAL_TABLE WFar, wfar
 
 SECTION "fzero tiles", ROMX, BANK[TILE_BANK]
 Tiles8000:
@@ -3931,6 +4162,14 @@ hTurnSign:    db
 hRailCool:    db    ; frames until the rail can hurt again
 hLapFlash:    db    ; frames the lap count flashes for after crossing the line
 hObjAttr:     db
+hBandBase:    ds 7  ; high byte of each distance band's palette table, far band first
+hRoof:        db    ; under a roof: no sky
+hFlash:       db    ; frames of sky flash left after a boost starts
+hKick:        db    ; the car's surge up the screen after a boost starts
+hBrake:       db    ; braking at speed this frame
+hYOff:        db
+hBoostSeen:   db    ; hBoost as last seen, to catch it starting
+hEngineMode:  db    ; engine voice: 0 normal, 1 boosting
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db
