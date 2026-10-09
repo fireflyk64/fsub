@@ -33,6 +33,9 @@ MAX_BEND = 80           # pixels the horizon end of the road can slide either wa
                         # one more street in the distant city
 LEVELS = 32             # bend steps each side (65 tables)
 SHEAR_MAX = 20          # pixels the bottom line can slide either way when the camera moves
+SHEAR_SPAN = 22         # ...and how far the shear tables go.  Further than the camera does:
+                        # fzero.asm also places the other player's car with them, from half
+                        # its x across the road, and that reaches half the road's X_LIMIT
 
 ROAD = 56               # road half width in world units
 BUMPER = 6              # bumper strip just inside the road edge
@@ -599,7 +602,7 @@ def with_fades(data):
 def shear_tables():
     """Camera moved sideways: lines slide in proportion to how near they are."""
     return [[int(round(s * d / GROUND)) & 255 for d in range(1, GROUND + 1)]
-            for s in range(-SHEAR_MAX, SHEAR_MAX + 1)]
+            for s in range(-SHEAR_SPAN, SHEAR_SPAN + 1)]
 
 
 # ----------------------------------------------------------------------------------------
@@ -839,6 +842,7 @@ def main():
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {SPLIT_ROW * 8}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
+        f.write(f"DEF SHEAR_SPAN EQU {SHEAR_SPAN}\n")
         f.write(f"DEF SKY_8000_FIRST EQU {sky_slots[0]}\n")
         f.write(f"DEF SKY_8800_FIRST EQU {next(s for s in sky_slots if s >= 128) - 128}\n")
         f.write(f"DEF SKY_MAP_BYTES EQU {SKY_ROWS * 32}\n")

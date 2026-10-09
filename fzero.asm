@@ -1023,7 +1023,7 @@ BuildLines:
     add a
     ld l, a
     ld h, 0
-    ld bc, ShearPointers
+    ld bc, ShearPointers + (SHEAR_SPAN - SHEAR_MAX) * 2  ; (the tables go wider than the camera)
     add hl, bc
     ld a, [hl+]
     ld b, [hl]
@@ -1662,7 +1662,8 @@ UpdateRivals:
     call .acrossRoad            ; not in a lane (the other player): scale its x by the
     ld a, e                     ; line's depth, using the camera shear tables: x/2 picks
     sra a                       ; a table, the answer is doubled
-    add SHEAR_MAX
+    ASSERT X_LIMIT / 2 <= SHEAR_SPAN    ; (there must be a table for a car right at the rail)
+    add SHEAR_SPAN
     add a
     ld e, a
     ld d, 0
@@ -4450,7 +4451,7 @@ BendPointers:
     ENDR
 
 ShearPointers:
-    FOR N, SHEAR_MAX * 2 + 1
+    FOR N, SHEAR_SPAN * 2 + 1
         dw ShearTables + N * GROUND_LINES
     ENDR
 
@@ -4573,7 +4574,7 @@ Tracks:                         ; 512 bytes each: see tools/gen_tracks.py
 SECTION "fzero line tables", ROMX, BANK[GFX_BANK]
 BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
     INCBIN "build/bend.bin"
-ShearTables:                    ; (SHEAR_MAX*2+1) x GROUND_LINES amounts to add to SCX
+ShearTables:                    ; (SHEAR_SPAN*2+1) x GROUND_LINES amounts to add to SCX
     INCBIN "build/shear.bin"
 
 ; ---------------------------------------------------------------------------------------
