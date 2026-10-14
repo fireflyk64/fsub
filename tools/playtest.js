@@ -18,6 +18,8 @@ const bots = args.filter(a => ['masher', 'casual', 'expert'].includes(a));
 const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : 0;
 const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
 const gifAt = args.indexOf('--gif');
+const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)'))[1];
+const PLAYER_Z = asmConst('PLAYER_Z'), PUSH = asmConst('PUSH_K') * 16 / 1024 / 2 / 256;
 
 async function race(kind, record) {
   const m = await Binjgb({ wasmBinary: fs.readFileSync(ROOT + '/web/binjgb.wasm') });
@@ -43,7 +45,7 @@ async function race(kind, record) {
       else if (level && lv !== level) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
       for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, tap && k === key);
       continue; }
-    if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
+    if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
     const ld = rd(sym.hLoad); out.peak = Math.max(out.peak, ld >= 144 ? ld - 144 : ld + 10);
     if (record && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
@@ -74,9 +76,19 @@ async function race(kind, record) {
       if (Math.abs(bend) > 16 && speed > 6.2 && Math.abs(x) > 20) brake = true;
       if (boosts && bend === 0 && bendAt(chunk + 1) === 0 && speed > 7.5) boost = true;
     } else if (kind === 'expert') {
-      const limit = b => Math.abs(b) < 2 ? 12 : 8 * Math.sqrt(12.3 / Math.abs(b));
-      let want = Math.min(limit(bend), limit(bendAt(chunk)), limit(bendAt((pos + 230) >> 8)));
-      const ahead = bendAt(chunk) || bend;
+      // A corner pushes the car outward by K * speed^2 * bend pixels a frame, against 1.5 of
+      // steering.  Take each corner ahead no faster than lets it drift 40 pixels before it
+      // ends, and start braking for it in time (the brake takes off 0.078 a frame).
+      const car = pos + PLAYER_Z, drift = (b, len) => { let v = 12; while (v > 2 && (PUSH * v * v * Math.abs(b) - 1.5) * len / v > 40) v -= 0.05; return v; };
+      let want = 12;
+      for (let c = car >> 8; c < (car >> 8) + 4; c++) {
+        const b = bendAt(c); if (Math.abs(b) < 2) continue;
+        let end = c + 1; while (end < c + 4 && bendAt(end) === b) end++;
+        const from = Math.max(car, c * 256), v = drift(b, end * 256 - from);
+        want = Math.min(want, Math.sqrt(v * v + 2 * 0.07 * (from - car)));
+        c = end - 1;
+      }
+      const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
       if (Math.abs(ahead) > 8) target = ahead > 0 ? 18 : -18;        // inside line
       dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more

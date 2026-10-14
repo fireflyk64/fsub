@@ -12,7 +12,7 @@ build/consts.inc: tools/gen_gfx.py
 	python3 tools/gen_gfx.py build
 
 # the tracks themselves
-build/tracks.bin: tools/gen_tracks.py
+build/tracks.bin: tools/gen_tracks.py fzero.asm
 	@mkdir -p build
 	python3 tools/gen_tracks.py $@
 

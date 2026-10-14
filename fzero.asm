@@ -7,7 +7,9 @@
 ;   BGP  recolours the line.  Which part of a building (wall/roof/street) lies under a line
 ;        depends on that line's depth plus how far we have driven, so the city flows toward
 ;        the camera at the right speed for every line: slow at the horizon, fast up close.
-;   SCX  slides the line sideways.  A different amount per line bends the road.
+;   SCX  slides the line sideways.  A different amount per line bends the road.  Up the
+;        road, past where the next corner starts, the lines take that corner's bend: it is
+;        seen as a kink on the horizon a couple of seconds early and comes down the screen.
 ;
 ; Each frame the main loop works out those two values for all 144 lines into a spare buffer
 ; and VBlank swaps it in, so the interrupt only has to copy two bytes.
@@ -16,8 +18,9 @@
 ; hardly at all.  That is one more per-line table added into SCX.
 ;
 ; Forks: a tunnel mouth (a sprite that grows as it nears) comes down the left lane.  Drive
-; into it and the screen fades out, the track switches to the tunnel branch, and it fades
-; back in.  The tunnel itself is the same tilemap under darker palette tables.
+; into it and the screen fades out and back in underground, a few chunks further on (a short
+; cut); at its exit it fades back up.  The tunnel is the same tilemap under darker palette
+; tables, and follows the same bends as the road above.
 ;
 ; Rivals: every car uses the same tiles.  A livery is a sprite palette, and OBP1 is one more
 ; register rewritten per scanline, so each rival gets its own paint on the lines it occupies.
@@ -25,10 +28,15 @@
 ; The race: one lap is 64 chunks of 256 units.  The course shape, the rivals' pace and the
 ; places things happen (finish line, recharge strip, tunnel) are all tables indexed by chunk.
 ;
+; The course is straights and short corners (tools/gen_tracks.py): a corner lasts a chunk
+; or two, half a second or so, and each lap turns exactly once round.
+;
 ; Driving feel: the throttle pulls hard at low speed and tails off toward the top; bends
-; throw the car outward, less if you lift off; braking while steering is a skid turn (much
-; more steering, at a cost in speed); the rail bounces you back and costs health (never speed: only dirt slows the car); boosts (one per
-; lap, or free from a dash plate) break the speed limit for a moment.
+; throw the car outward, less if you lift off; the brakes take the edge off but never stop
+; the car, and cut a boost short; braking while steering is a skid turn (much more
+; steering, at a cost in speed); the rail bounces you back and costs health (never speed:
+; only dirt slows the car); boosts (one per lap, or free from a dash plate) break the speed
+; limit for a moment.
 ;
 ; Hazards, both things to steer round: dirt patches (rough dark ground over one half of the
 ; road that drags the car down) and barriers (blocks in one lane that hurt, slow and toss it).
@@ -93,10 +101,9 @@ DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 2           ; health lost hitting it
 DEF RAIL_COOL   EQU 45          ; frames before another hit can hurt again
-DEF BEND_LEAD   EQU 384         ; how far ahead of the car the drawn road looks for its bend
-DEF PUSH_K      EQU 54          ; how hard bends throw the car outward (see PushScale)
-DEF CATCH_UP    EQU 20          ; extra pace for rivals behind the player
-DEF EASE_OFF    EQU 12          ; and less for ones far ahead
+DEF PUSH_K      EQU 72          ; how hard bends throw the car outward (see PushScale)
+DEF CATCH_UP    EQU 6           ; extra pace for rivals behind the player (1/16 unit)
+DEF EASE_OFF    EQU 6           ; and less for ones far ahead
 DEF BEHIND_Z    EQU PLAYER_Z - 90  ; where a rival is put to pounce on a mistake
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
@@ -108,7 +115,8 @@ DEF DIRT_SPEED  EQU 3
 DEF BARRIER_COST EQU 6          ; health lost hitting a barrier
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
 DEF FRICTION    EQU $0004       ; lost per frame off it
-DEF BRAKE       EQU $0020
+DEF BRAKE       EQU $0014
+DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
 DEF HEALTH_MAX  EQU 64
 DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
@@ -998,27 +1006,43 @@ BuildLines:
         ld [hl+], a
     ENDR
 
-    ; ground: bend (how the road curves) + shear (where the camera is across it).
+    ; ground: bend (how the road curves) + shear (where the camera is across it).  Up the
+    ; road, where the next corner (or the end of this one) starts, the road changes to that
+    ; corner's bend: a kink far off that comes down the screen as the car closes on it.  The
+    ; lines above that point are drawn with the far bend and then moved across to join on.
     ; Each buffer notes the bend and shear it was filled for (in two spare bytes of its SCX
-    ; page): on a straight with the wheel still, that is unchanged and the fill is skipped.
-    ld d, b
+    ; page): on a straight with the wheel still and no corner in sight, that is unchanged and
+    ; the fill is skipped.
+    ld a, b
+    ldh [hBuiltScx], a          ; sprites look up where the road is on each line
     ld a, GFX_BANK
     ld [rROMB0], a
-    ld h, b
+    call CornerAhead
+    ld a, c
+    ldh [hFarLines], a           ; how many lines from the horizon down show the far bend
+    ldh a, [hBuiltScx]
+    ld h, a
     ld l, SCX_STAMP
-    ldh a, [hSeen + 1]
+    ld a, c
+    or a
+    jr z, .plain
+    ld [hl], $FF                ; (a corner in sight: drawn every frame, noted as no plain fill)
+    jr .refill
+.plain
+    ldh a, [hBend]
     cp [hl]
-    jr nz, .refill
+    jr nz, .note
     inc l
     ldh a, [hShear]
     cp [hl]
-    jr z, .scxDone
+    jp z, .scxDone
     dec l
-.refill
-    ldh a, [hSeen + 1]
+.note
+    ldh a, [hBend]
     ld [hl+], a
     ldh a, [hShear]
     ld [hl], a
+.refill
     ldh a, [hShear]
     add a
     ld l, a
@@ -1027,21 +1051,213 @@ BuildLines:
     add hl, bc
     ld a, [hl+]
     ld b, [hl]
-    ld c, a
-    ldh a, [hSeen + 1]
-    add a
+    ld c, a                     ; bc -> the shear row
+    ldh a, [hBuiltScx]
+    ld d, a
+    ld e, HORIZON               ; de -> the first ground line's SCX
+    ldh a, [hFarLines]
+    or a
+    jr z, .near
+    ld hl, .near                ; the lines up to the corner, with its bend (they return to .near)
+    push hl
+    call GroundEntry
+    push hl
+    ldh a, [hFar]
+    call BendRow
+    ret
+.near
+    LINK_PUMP
+    ld hl, .joined              ; the rest, with the bend the car is in
+    push hl
+    ldh a, [hFarLines]
+    cpl
+    add HUD_LINE - HORIZON + 1  ; (all the ground lines but those)
+    call GroundEntry
+    push hl
+    ldh a, [hBend]
+    call BendRow
+    ldh a, [hFarLines]
+    add l
     ld l, a
-    ld h, 0
-    push de
-    ld de, BendPointers
-    add hl, de
-    pop de
+    adc h
+    sub l
+    ld h, a                     ; (from the line it has got to)
+    ret
+.joined
+    LINK_PUMP
+    ldh a, [hFarLines]
+    or a
+    jr z, .scxDone
+    ld c, a                     ; join the far road on where the near road reaches the corner:
+    ldh a, [hFar]               ; move it by near bend - far bend on that line
+    call BendRow
+    ld a, c
+    add l
+    ld l, a
+    adc h
+    sub l
+    ld h, a
+    ld b, [hl]
+    ldh a, [hBend]
+    call BendRow
+    ld a, c
+    add l
+    ld l, a
+    adc h
+    sub l
+    ld h, a
+    ld a, [hl]
+    sub b
+    ld b, a                     ; b = how far
+    ld a, c
+    call ShiftEntry
+    push hl
+    ldh a, [hBuiltScx]
+    ld h, a
+    ld l, HORIZON
+    ret                         ; (it returns from BuildLines)
+.scxDone
+    ret
+
+; Where the next change of bend up the road is: the first chunk past the car's whose bend
+; differs from the one the car is in.  Returns c = how many ground lines, from the horizon
+; down, lie beyond where it starts (0: none in sight), and that bend in hFar.
+CornerAhead:
+    ld c, 0
+    ldh a, [hPractice]
+    or a
+    ret nz
+    ldh a, [hPos + 1]           ; first chunk past the one the car is in
+    add PLAYER_Z
+    ldh a, [hPos + 2]
+    adc 0
+    inc a
+    ld c, a                     ; c = that chunk, counting on from the start of the race
+    ld e, a
+    ld d, 0
+    ld hl, wTrackBend
+    ldh a, [hTunnel]
+    or a
+    jr z, .aheadTable
+    ld hl, wTunnelBend
+.aheadTable
+    ld b, 8                     ; look up to 8 chunks ahead
+    ldh a, [hBend]
+    ldh [hNear], a
+.ahead
+    ld a, e
+    and CHUNK_MASK
+    push hl
+    add l
+    ld l, a
+    adc h
+    sub l
+    ld h, a
+    ld a, [hl]
+    pop hl
+    and $7F
+    ld d, a
+    ldh a, [hNear]
+    cp d
+    jr nz, .found
+    inc e
+    dec b
+    jr nz, .ahead
+.none
+    ld c, 0
+    ret                         ; the same bend all the way to the horizon
+.found
+    ld a, d
+    ldh [hFar], a
+    ld d, e                     ; how far ahead of the camera that chunk starts
+    ldh a, [hPos + 1]
+    cpl
+    inc a
+    ld l, a                     ; distance = chunk * 256 - position (low byte: -pos lo)
+    ld a, d
+    ld h, a
+    ldh a, [hPos + 1]
+    or a
+    jr z, .exact
+    dec h                       ; (borrow from the high byte)
+.exact
+    ldh a, [hPos + 2]
+    ld e, a
+    ld a, h
+    sub e
+    ld h, a                     ; hl = units from the camera to the boundary
+    cp 8
+    jr nc, .none                ; beyond the horizon
+    srl h
+    rr l
+    srl h
+    rr l
+    srl h
+    rr l
+    ld h, HIGH(DistToLine)
+    ld a, [hl]
+    cp VISIBLE_D + 1
+    jr c, .lineKnown
+    ld a, VISIBLE_D             ; (already under the car: all of the road)
+.lineKnown
+    ld c, a                     ; the corner starts on line d: the d - 1 lines above are beyond it
+    dec c
+    ret
+
+; hl -> the bend row for bend a (line d = 1 first)
+BendRow:
+    add a
+    add LOW(BendPointers)
+    ld l, a
+    adc HIGH(BendPointers)
+    sub l
+    ld h, a
     ld a, [hl+]
     ld h, [hl]
     ld l, a
-    ld e, HORIZON
-.ground
-    REPT 8
+    ret
+
+; hl -> where in GroundLines to start to draw the last a lines
+GroundEntry:
+    ld l, a
+    ld h, 0
+    add hl, hl
+    push de
+    ld d, h
+    ld e, l
+    add hl, hl
+    add hl, de                  ; 6 bytes a line
+    pop de
+    ld a, LOW(GroundLinesEnd)
+    sub l
+    ld l, a
+    ld a, HIGH(GroundLinesEnd)
+    sbc h
+    ld h, a
+    ret
+
+; hl -> where in ShiftLines to start to move the last a lines
+ShiftEntry:
+    ld l, a
+    ld h, 0
+    push de
+    ld d, h
+    ld e, l
+    add hl, hl
+    add hl, de                  ; 3 bytes a line
+    pop de
+    ld a, LOW(ShiftLinesEnd)
+    sub l
+    ld l, a
+    ld a, HIGH(ShiftLinesEnd)
+    sbc h
+    ld h, a
+    ret
+
+; SCX = shear + bend, one line after another down to the bottom of the ground: bc -> shear
+; row, hl -> bend row, de -> SCX.  Entered part way in (GroundEntry) to do the last few.
+GroundLines:
+    REPT HUD_LINE - HORIZON
         ld a, [bc]
         add [hl]
         inc bc
@@ -1049,13 +1265,17 @@ BuildLines:
         ld [de], a
         inc e
     ENDR
-    LINK_PUMP
-    ld a, e
-    cp HUD_LINE
-    jr nz, .ground
-.scxDone
-    ld a, d
-    ldh [hBuiltScx], a          ; sprites look up where the road is on each line
+GroundLinesEnd:
+    ret
+
+; SCX += b, line after line: hl -> SCX.  Entered part way in (ShiftEntry).
+ShiftLines:
+    REPT HUD_LINE - HORIZON
+        ld a, [hl]
+        add b
+        ld [hl+], a
+    ENDR
+ShiftLinesEnd:
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -1553,7 +1773,8 @@ UpdateRivals:
     ld h, 0
     add hl, hl
     add hl, hl
-    add hl, hl                  ; 8.8 units per frame
+    add hl, hl
+    add hl, hl                  ; (1/16 unit) -> 8.8 units per frame
     ldh a, [hSpeed]
     ld c, a
     ldh a, [hSpeed + 1]
@@ -3121,8 +3342,8 @@ SetLevel:
 .laps
     ldh [hLaps], a
     ret
-LevelPace:                      ; added to every rival's pace (1/32 unit per frame), signed
-    db -32, -14, 0, 12, 24
+LevelPace:                      ; added to every rival's pace (1/16 unit per frame), signed
+    db -16, -7, 0, 4, 8
 
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
@@ -3154,9 +3375,6 @@ InitRace:
     ld a, BEND_LEVELS
     ldh [hBend], a
     ldh [hTarget], a
-    ldh [hSeen + 1], a
-    xor a
-    ldh [hSeen], a
     ld a, CAR_Y + 16
     ldh [hCarY], a
     ld a, CAR_X + 8
@@ -3361,7 +3579,7 @@ Drive:
 .noBoom
     ldh a, [hState]
     cp STATE_DEAD
-    jp z, .braking              ; a wreck just stops
+    jp z, .wreck                ; a wreck just stops
     or a
     jp nz, .coast               ; past the flag: roll to a halt
 
@@ -3401,6 +3619,8 @@ Drive:
     ldh [hBoostSeen], a
     or a
     jr z, .noBoost
+    bit 7, b                    ; braking cuts a boost short
+    jr nz, .cutBoost
     dec a
     ldh [hBoost], a
     ldh [hBoostSeen], a
@@ -3411,12 +3631,18 @@ Drive:
     jr c, .speedSet
     ld hl, BOOST_MAX << 8
     jr .speedSet
+.cutBoost
+    xor a
+    ldh [hBoost], a
+    ldh [hBoostSeen], a
 .noBoost
     ld a, h                     ; over the normal limit (after a boost): bleed back down
     cp SPEED_MAX
     jr c, .underLimit
     ld de, -$0010
     add hl, de
+    bit 7, b                    ; (with the brake on top)
+    jr nz, .braking
     jr .speedSet
 .underLimit
     bit 1, b                    ; PADF_B
@@ -3436,13 +3662,23 @@ Drive:
 .throttled
     bit 7, b                    ; throttle and brake together: the brake wins a little
     jr z, .speedSet
-.braking
+.braking                        ; the brakes take the edge off: they will not stop the car
+    ld a, h
+    cp BRAKE_FLOOR
+    jr c, .speedSet
     ld de, -BRAKE
+    add hl, de
+    ld a, h
+    cp BRAKE_FLOOR
+    jr nc, .speedSet
+    ld hl, BRAKE_FLOOR << 8
+    jr .speedSet
+.wreck
+    ld de, -$0020
     jr .slow
 .coast
-    ld de, -BRAKE
     bit 7, b                    ; PADF_DOWN
-    jr nz, .slow
+    jr nz, .braking
     ld de, -FRICTION
 .slow
     add hl, de
@@ -3718,7 +3954,12 @@ Drive:
     jr z, .surface
     ld hl, wTunnelBend
 .surface
-    ld e, c
+    ldh a, [hPos + 1]           ; the chunk under the car (it is PLAYER_Z ahead of the camera)
+    add PLAYER_Z
+    ldh a, [hPos + 2]
+    adc 0
+    and CHUNK_MASK
+    ld e, a
     ld d, 0
     add hl, de
     ld a, [hl]
@@ -3747,73 +3988,9 @@ Drive:
     ldh [hTarget], a
 .haveTarget
 
-    ; --- ease the bend toward it, one step a frame
+    ; --- corners are short and seen coming: the car feels each one the moment it is in it
     ldh a, [hTarget]
-    ld c, a
-    ldh a, [hBend]
-    cp c
-    jr z, .bendDone
-    jr c, .bendUp
-    dec a
-    dec a
-.bendUp
-    inc a
     ldh [hBend], a
-.bendDone
-
-    ; --- The road is DRAWN bending before the car FEELS it, so a corner can be seen coming.
-    ; What is drawn heads for the bend a way up the road, quickly at first then settling
-    ; (each frame it closes part of the gap, more the faster we go), so the far end of the
-    ; road swings over about a second before the forces arrive.
-    ldh a, [hTarget]
-    ld c, a
-    ldh a, [hPractice]
-    or a
-    jr nz, .seenTarget          ; (bending it by hand: no looking ahead)
-    ldh a, [hPos + 1]
-    add LOW(PLAYER_Z + BEND_LEAD)
-    ldh a, [hPos + 2]
-    adc HIGH(PLAYER_Z + BEND_LEAD)
-    and CHUNK_MASK
-    ld e, a
-    ld d, 0
-    ld hl, wTrackBend
-    ldh a, [hTunnel]
-    or a
-    jr z, .leadTable
-    ld hl, wTunnelBend
-.leadTable
-    add hl, de
-    ld a, [hl]
-    and $7F
-    ld c, a
-.seenTarget
-    ldh a, [hSeen + 1]
-    ld e, a
-    ld a, c
-    sub e                       ; gap, in bend steps
-    jr z, .seenDone
-    ld e, a
-    add a
-    sbc a
-    ld d, a                     ; de = gap, signed
-    ld hl, 0
-    ldh a, [hSpeed + 1]
-    or a
-    jr z, .seenDone             ; (standing still: nothing changes)
-    ld c, a
-.seenMul
-    add hl, de
-    dec c
-    jr nz, .seenMul
-    add hl, hl                  ; gap * speed / 128 of a step this frame
-    ldh a, [hSeen]
-    add l
-    ldh [hSeen], a
-    ldh a, [hSeen + 1]
-    adc h
-    ldh [hSeen + 1], a
-.seenDone
 
     ; --- de = bend * speed: how hard this bend is turning us this frame
     ld hl, 0
@@ -3835,7 +4012,13 @@ Drive:
     ld d, h
     ld e, l
 
-    ; the skyline swings round by that much
+    ; the skyline swings round by that much: a quarter of its width for every 90 degrees
+    push hl
+    add hl, hl
+    add hl, hl
+    ld d, h
+    ld e, l
+    pop hl
     ldh a, [hSkyX]
     add e
     ldh [hSkyX], a
@@ -4291,16 +4474,16 @@ DEF PAINT_C EQU %00100100
 DEF PAINT_D EQU %11101000
 DEF PAINT_P EQU %00101100       ; the other player: black, white trim
 RivalsMaster:
-    RIVAL PLAYER_Z + 70, 44, 0, PAINT_A
-    RIVAL PLAYER_Z + 110, 26, 3, PAINT_B
+    RIVAL PLAYER_Z + 70, 22, 0, PAINT_A
+    RIVAL PLAYER_Z + 110, 13, 3, PAINT_B
     GHOST PAINT_C, REMOTE
     GHOST PAINT_D, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
     GHOST PAINT_P, REMOTE
     GHOST PAINT_P, REMOTE
 RivalsSlave:
-    RIVAL PLAYER_Z + 150, 44, 1, PAINT_C
-    RIVAL PLAYER_Z + 190, 26, 2, PAINT_D
+    RIVAL PLAYER_Z + 150, 22, 1, PAINT_C
+    RIVAL PLAYER_Z + 190, 13, 2, PAINT_D
     GHOST PAINT_A, REMOTE
     GHOST PAINT_B, REMOTE
     GHOST PAINT_P, REMOTE | FREE_X
@@ -4312,13 +4495,13 @@ RivalsAlone:
     ENDR
 
 RivalStart:                     ; the grid: everyone starts ahead of the player, best at the front
-    RIVAL PLAYER_Z + 40, 16, 1, %11100100   ; grey, black trim
-    RIVAL PLAYER_Z + 80, 22, 2, %00101100   ; black, white trim
-    RIVAL PLAYER_Z + 120, 28, 0, %01101100  ; black, grey trim
-    RIVAL PLAYER_Z + 160, 34, 3, %01100000  ; white, grey trim
-    RIVAL PLAYER_Z + 200, 40, 1, %00100100  ; grey, white trim
-    RIVAL PLAYER_Z + 240, 46, 2, %11101000  ; dark, black trim: the two to beat
-    RIVAL PLAYER_Z + 280, 52, 0, %00101000  ; dark, white trim
+    RIVAL PLAYER_Z + 40, 8, 1, %11100100   ; grey, black trim
+    RIVAL PLAYER_Z + 80, 11, 2, %00101100   ; black, white trim
+    RIVAL PLAYER_Z + 120, 14, 0, %01101100  ; black, grey trim
+    RIVAL PLAYER_Z + 160, 17, 3, %01100000  ; white, grey trim
+    RIVAL PLAYER_Z + 200, 20, 1, %00100100  ; grey, white trim
+    RIVAL PLAYER_Z + 240, 23, 2, %11101000  ; dark, black trim: the two to beat
+    RIVAL PLAYER_Z + 280, 26, 0, %00101000  ; dark, white trim
 
 DmaCode:                        ; runs from HRAM: nothing else is readable during DMA
     ld a, HIGH(wOam)
@@ -4635,7 +4818,6 @@ hPos:         ds 3  ; distance driven: fraction, units, 256s
 hPosCoarse:   db    ; the same in steps of 16 units
 hSpeed:       dw
 hBend:        db    ; the bend the car feels: 0 hard left .. 32 straight .. 64 hard right
-hSeen:        dw    ; the bend the road is drawn with (8.8), which leads it
 hTarget:      db
 hSkyX:        dw
 hX:           dw    ; car's place across the road, 8.8 pixels, 0 = centre line
@@ -4700,6 +4882,9 @@ hBoom:        db    ; frames since the car was wrecked
 hTileJob:     db    ; VBlank work on the explosion tile: TILE_RESTORE, TILE_BOOM
 hRand:        db
 hTurnSign:    db
+hNear:        db    ; the bend the car is in, and the next one up the road
+hFar:         db
+hFarLines:    db    ; how many ground lines, from the horizon down, show the far one
 hRailCool:    db    ; frames until the rail can hurt again
 hLapFlash:    db    ; frames the lap count flashes for after crossing the line
 hObjAttr:     db
