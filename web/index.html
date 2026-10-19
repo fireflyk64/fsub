@@ -19,6 +19,7 @@ canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(
 button{font:bold 15px sans-serif;border-radius:14px;border:2px solid #666;background:#222;color:#ddd;touch-action:none;padding:0;margin:0}
 button.on{background:#555;border-color:#aaa}
 #top button{padding:8px 12px;font-size:12px;border-radius:9px}
+#more{flex:none;font:bold 12px sans-serif;padding:9px 12px;border-radius:9px;border:2px solid #666;background:#222;color:#8af;text-decoration:none;white-space:nowrap}
 #boost{grid-column:1/3}
 #gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
 #brake{background:#422;border-color:#a55} #brake.on{background:#a44}
@@ -36,7 +37,7 @@ button.on{background:#555;border-color:#aaa}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
 <div id="wrap">
-  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="fs">FULL</button></div>
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy">How it works</a></div>
   <canvas id="screen" width="160" height="144"></canvas>
   <div id="pads">
     <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
@@ -83,7 +84,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k){src.kb[k]=0;apply();ev.preventDefault();}});
     // Touch.  Nothing here may select text, open a menu, scroll or zoom.
     for(const t of ['contextmenu','selectstart','dragstart','gesturestart']) wrap.addEventListener(t,ev=>ev.preventDefault());
-    for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>ev.preventDefault(),{passive:false});
+    for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>{if(!ev.target.closest('a')) ev.preventDefault();},{passive:false});   // (links still follow a tap)
     // A button is down for as long as a finger that started on it stays on the glass.
     document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k; const ids=new Set();
       const set=()=>{src.touch[k]=ids.size?1:0; b.classList.toggle('on',ids.size>0); apply();};
