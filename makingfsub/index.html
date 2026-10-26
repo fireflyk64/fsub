@@ -64,12 +64,25 @@
   }
   main { max-width: 680px; margin: 0 auto; padding: 0 16px 64px; }
   a { color: var(--link); text-underline-offset: 2px; }
-  header.post { padding: 56px 0 8px; }
+  header.post { padding: 40px 0 8px; }
   .kicker { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
   h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.1; margin: 0 0 16px; letter-spacing: -.01em; }
   .dek { font-size: 20px; line-height: 1.5; margin: 0 0 16px; }
   .byline { color: var(--muted); font-size: 15px; margin: 0; }
   .links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 0; font-size: 15px; }
+  /* the related-article plug: kept small and above the hero, so it is seen with the first picture */
+  a.related {
+    display: flex; gap: 14px; align-items: center; margin: 20px 0 0; padding: 10px 14px 10px 10px;
+    border: 1px solid var(--rule); border-radius: 10px; background: var(--card);
+    color: var(--text); text-decoration: none; transition: border-color .15s ease;
+  }
+  a.related:hover, a.related:focus-visible { border-color: var(--link); }
+  a.related img { flex: none; width: 128px; height: 80px; border-radius: 6px; object-fit: cover; }
+  .related-kicker { display: block; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .related-title { display: block; font-weight: 600; line-height: 1.3; margin: 2px 0; }
+  a.related:hover .related-title { color: var(--link); }
+  .related-dek { display: block; font-size: 14px; line-height: 1.4; color: var(--muted); }
+  @media (max-width: 480px) { a.related img { width: 96px; height: 60px; } .related-dek { display: none; } }
   h2 { font-size: 26px; line-height: 1.25; margin: 56px 0 16px; letter-spacing: -.005em; scroll-margin-top: 16px; }
   ul, ol { padding-left: 1.25em; }
   li { margin: .45em 0; }
@@ -142,6 +155,14 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
   <p class="dek">fsub is an F-Zero-style racer for the original Game Boy that draws a bending perspective road, a moving city and seven rivals by rewriting three hardware registers on every scanline over a picture that never changes.</p>
   <p class="byline">By <a class="author" rel="author" href="https://graphics.stanford.edu/~danielh">danielrh</a> · <time datetime="2026-10-19">October 2026</time></p>
   <p class="links"><a href="https://fireflyk64.github.io/fsub/">Play it in your browser</a><a href="https://github.com/fireflyk64/fsub">Source on GitHub</a></p>
+  <a class="related" href="https://fireflyk64.github.io/wcmulti/">
+    <img src="img/wcmulti-thumb.webp" width="128" height="80" alt="">
+    <span>
+      <span class="related-kicker">Related: the making of Wing Commander Multiplayer</span>
+      <span class="related-title">An 11 year journey to play DOS Wing Commander together</span>
+      <span class="related-dek">From memory dumps in 2015 to a browser and a room code in 2026.</span>
+    </span>
+  </a>
 </header>
 
 <figure class="wide">
