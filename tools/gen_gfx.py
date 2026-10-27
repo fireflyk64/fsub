@@ -475,20 +475,55 @@ def car_tiles():
     return bytes(out)
 
 
-DIRT_HEIGHTS = (8, 12, 16)      # dirt patch pieces: one 8-wide object each, tiled side by side
+DIRT_HEIGHTS = (8, 12, 16)      # ground patch pieces: one 8-wide object each, tiled side by side
+ARROW_ROWS = {16: (4, 10), 12: (4, 10), 8: (10,)}   # top row of each hidden arrow, per depth
+BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+
+
+def mix(*values):
+    """A fixed hash of some integers -> 0..1, for repeatable texture."""
+    n = 0x9E3779B1
+    for v in values:
+        n = ((n ^ (v & 0xFFFFFFFF)) * 0x85EBCA6B) & 0xFFFFFFFF
+        n ^= n >> 13
+    return n / 2 ** 32
+
+
+def arrow_half(r):
+    """The left half of a flat ^ two pixels thick, from column 1 up to its point at column 7.
+    A piece and its mirror image make one arrow; column 0 stays clear so that where two pieces
+    meet back to back the arrows stay apart."""
+    return [(x, y) for x in range(1, 8) for y in (r + (7 - x) // 2, r + (7 - x) // 2 + 1)]
 
 
 def dirt_objects():
-    """Rough dark grey blocks with a ragged far edge and a few holes, bottom-aligned."""
+    """Ground patches: dirt, boost pads and recharge patches all draw these three pieces
+    (8, 12 and 16 lines deep, bottom-aligned).  The colour numbers are roles, and the OBP1
+    value painted on a patch's lines decides what shows:
+        1  arrows       dirt: dark grey, lost in it    pads: white or black
+        2  dirt         dirt: dark grey                pads: the road's grey, so gone
+        3  specks       dirt: black                    pads: the road's grey
+    The dirt is spilled: grains scattered at the far edge, thickening to a mottled core, in
+    an ordered dither so it reads as a texture lying on the road rather than a lump on it."""
     objs = []
-    for h in DIRT_HEIGHTS:
+    for h, seed in zip(DIRT_HEIGHTS, (213, 112, 11)):
         obj = [[0] * 8 for _ in range(16)]
-        for y in range(16 - h, 16):
-            for x in range(8):
-                top = y == 16 - h
-                hole = (x * 5 + y * 3) % 11 == 0
-                if not (top and x % 2) and not hole:
-                    obj[y][x] = 2
+        top = 16 - h
+        for x in range(8):
+            near = 15 - int(1.7 * mix(seed + 9, x))             # a ragged near edge
+            for y in range(top, 16):
+                t = (y - top + 0.5) / h                         # 0 at the far edge, 1 near
+                clump = mix(seed, x // 2, (y - top) // 2)
+                density = min(0.94, 0.18 + 0.95 * t ** 0.8) * (0.7 + 0.45 * clump)
+                if y > near:
+                    density *= 0.45
+                if (BAYER[y % 4][(x + seed) % 4] + 0.5) / 16 < density:
+                    speck = mix(seed + 3, x, y) < 0.05 + 0.25 * clump * t
+                    obj[y][x] = 3 if speck else 2
+        for r in ARROW_ROWS[h]:
+            for x, y in arrow_half(r):
+                if y >= top:
+                    obj[y][x] = 1
         objs.append(obj)
     return objs
 

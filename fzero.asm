@@ -38,8 +38,10 @@
 ; only dirt slows the car); boosts (one per lap, or free from a dash plate) break the speed
 ; limit for a moment.
 ;
-; Hazards, both things to steer round: dirt patches (rough dark ground over one half of the
-; road that drags the car down) and barriers (blocks in one lane that hurt, slow and toss it).
+; Hazards, both things to steer round: dirt patches (dirt spilled over one half of the road,
+; which drags the car down) and barriers (blocks in one lane that hurt, slow and toss it).
+; Dirt, boost pads and recharge patches are the same three tiles: the OBP1 value painted on
+; their lines decides whether the dirt shows or the arrows hidden in it do.
 ;
 ; Scenery: each chunk of the lap has a scenery (city, underpass, water), which is nothing but
 ; a choice of palette tables.  Each distance band looks up the scenery of the chunk it is
@@ -108,7 +110,14 @@ DEF BEHIND_Z    EQU PLAYER_Z - 90  ; where a rival is put to pounce on a mistake
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
 DEF DIRT_TIME   EQU 30          ; frames a patch drags for once driven into
-DEF DIRT_TILE   EQU CAR_TILE + 24  ; dirt patch pieces, 8, 12 and 16 lines deep
+DEF DIRT_TILE   EQU CAR_TILE + 24  ; ground patch pieces (dirt, pads), 8, 12 and 16 lines deep
+; Their colour numbers are roles (dirt_objects in tools/gen_gfx.py): 1 the arrows, 2 dirt,
+; 3 darker specks.  These OBP1 values pick which show (shades: 0 white .. 3 black):
+DEF DIRT_OBP    EQU %11101000   ; dirt: arrows the same dark grey as the dirt, specks black
+DEF PAD_OBP_A   EQU %01010000   ; boost pad: dirt in the road's grey, arrows white...
+DEF PAD_OBP_B   EQU %01011100   ; ...then black
+DEF HEAL_OBP_A  EQU %10100000   ; recharge patch: dark, with white arrows...
+DEF HEAL_OBP_B  EQU %00001000   ; ...then light, with dark ones
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
@@ -2213,11 +2222,35 @@ UpdateObject:
     add HORIZON                 ; OAM y: a 16-high object whose bottom row is on that line
     ldh [hObjY], a
 
-    ; A boost pad is the dirt's tiles in another palette: OBP1, flashing white, on its lines.
+    ; A patch lies on the road, so the player's car should be drawn over it.  But where two
+    ; sprites overlap, the DMG shows the one with the smaller x, whatever their order.  So
+    ; once a patch reaches the car's top row, its pieces are kept from winning (see .sprite).
+    xor a
+    ldh [hUnder], a
+    ldh a, [hObjKind]
+    cp KIND_DIRT_L
+    jr c, .over
+    ldh a, [hKick]              ; (a boost surges the car up the screen by kick / 4)
+    srl a
+    srl a
+    ld e, a
+    ldh a, [hObjY]
+    add 16
+    add e
+    ld e, a
+    ldh a, [hCarY]
+    cp e
+    jr nc, .over                ; the car's top row is still below the patch's bottom row
+    ld a, 1
+    ldh [hUnder], a
+.over
+
+    ; Dirt, boost pads and recharge patches are the same tiles: the OBP1 value on their lines
+    ; decides whether the dirt shows or the arrows hidden in it do.
     xor a
     ldh [hObjAttr], a
     ldh a, [hObjKind]
-    cp KIND_PAD_L
+    cp KIND_DIRT_L
     jr c, .noPaint
     ldh a, [hFadeLevel]
     or a
@@ -2230,20 +2263,24 @@ UpdateObject:
     ld a, c
     add HORIZON - 1
     ld l, a
-    ldh a, [hObjKind]           ; a boost pad flickers white; a recharge patch pulses slowly
-    cp KIND_HEAL_L              ; between white and dark
+    ldh a, [hObjKind]
+    cp KIND_PAD_L
+    ld a, DIRT_OBP              ; dirt: the arrows hidden in it
+    jr c, .flash
+    ldh a, [hObjKind]           ; a boost pad's arrows flicker white and black; a recharge
+    cp KIND_HEAL_L              ; patch pulses slowly between dark and light
     ldh a, [hFrame]
     jr c, .flicker
     and %00100000
-    ld a, %00000000
+    ld a, HEAL_OBP_A
     jr z, .flash
-    ld a, %10101000
+    ld a, HEAL_OBP_B
     jr .flash
 .flicker
     and %00000100
-    ld a, %00000000
+    ld a, PAD_OBP_A
     jr z, .flash
-    ld a, %01010100
+    ld a, PAD_OBP_B
 .flash
     REPT 18
         ld [hl], a
@@ -2264,6 +2301,10 @@ UpdateObject:
     cp MOUTH_D3
     jr c, .sized
     ld hl, DirtSize3
+    ldh a, [hObjKind]           ; (a pad's nearest size has four pieces: whole arrows only)
+    cp KIND_PAD_L
+    jr c, .sized
+    ld hl, PadSize3
     jr .sized
 .barrierSizes
     ld hl, BarrierFar           ; a barrier: a dot far off, then a block
@@ -2293,6 +2334,28 @@ UpdateObject:
     inc de
     ld a, [hl+]
     add b
+    push bc
+    ld b, a                     ; b = x
+    ldh a, [hUnder]             ; Under the car, the whole patch moves onto the car's 8-pixel
+    or a                        ; grid, by at most 4 pixels either way: each piece then has the
+    jr z, .placed               ; same x as a half of the car (and the car, earlier in OAM,
+    ldh a, [hCarX]              ; wins) or is clear of it.  All the pieces move alike, so the
+    ld c, a                     ; patch, and a pad's arrows, stay whole.
+    ld a, b
+    sub c
+    and 7                       ; how far the pieces are off the car's grid
+    jr z, .placed
+    cp 5
+    jr c, .back                 ; 1-4: move them left by that much
+    sub 8                       ; 5-7: move them right, to the next column of the grid
+.back
+    ld c, a
+    ld a, b
+    sub c
+    ld b, a
+.placed
+    ld a, b
+    pop bc
     ld [de], a                  ; x
     inc de
     ld a, [hl+]
@@ -4407,13 +4470,19 @@ DirtSize2:
     db 0, DIRT_TILE + 2, OAMF_XFLIP
     db 8, DIRT_TILE + 2, 0
     db 16, DIRT_TILE + 2, OAMF_XFLIP
-DirtSize3:
+DirtSize3:                      ; (the ends one size smaller, so the patch tapers)
     db 5
-    db -12, DIRT_TILE + 4, 0
+    db -12, DIRT_TILE + 2, 0
     db -4, DIRT_TILE + 4, OAMF_XFLIP
     db 4, DIRT_TILE + 4, 0
     db 12, DIRT_TILE + 4, OAMF_XFLIP
-    db 20, DIRT_TILE + 4, 0
+    db 20, DIRT_TILE + 2, 0
+PadSize3:                       ; a piece and its mirror image make each arrow
+    db 4
+    db -8, DIRT_TILE + 4, 0
+    db 0, DIRT_TILE + 4, OAMF_XFLIP
+    db 8, DIRT_TILE + 4, 0
+    db 16, DIRT_TILE + 4, OAMF_XFLIP
 MouthSize1:
     db 2
     db 0, MOUTH_TILE, 0
@@ -4888,6 +4957,7 @@ hFarLines:    db    ; how many ground lines, from the horizon down, show the far
 hRailCool:    db    ; frames until the rail can hurt again
 hLapFlash:    db    ; frames the lap count flashes for after crossing the line
 hObjAttr:     db
+hUnder:       db    ; the road object being placed is a patch under the player's car
 hSortAt:      db    ; which pair of wOrder gets compared this frame
 hBandBase:    ds 7  ; high byte of each distance band's palette table, far band first
 hRoof:        db    ; under a roof: no sky
