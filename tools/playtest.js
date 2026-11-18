@@ -86,7 +86,8 @@ async function race(kind, record) {
       else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; const at = target || x;
         if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -38 : 38) : (lane > 0 ? lane - 30 : lane + 30); }   // a middle lane: go to the wall on our side
       else if (o.kind <= 6) target = o.kind === 5 ? 22 : -22;                                       // dirt: other half
-      else if (o.kind <= 8) { if (kind !== 'masher') target = o.kind === 7 ? -24 : 24; }            // boost pad: go to it
+      else if (o.kind <= 8) { if (kind !== 'masher') target = o.kind === 7 ? -28 : 28; }            // boost pad: go to its middle
+      else if (o.kind >= 11) { if (kind !== 'masher' && (o.kind === 11 ? x < 10 : x > -10)) target = o.kind === 11 ? 22 : -22; }   // a ramp: keep off it
       else if (kind !== 'masher' && rd(sym.hHealth) < 52) { target = o.kind === 9 ? -24 : 24; healing = true; } } };   // recharge patch: go to it if hurt
     if (kind === 'casual') {
       dodge(330);

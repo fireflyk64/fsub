@@ -119,6 +119,7 @@ DEF PAD_OBP_A   EQU %01010000   ; boost pad: dirt in the road's grey, arrows whi
 DEF PAD_OBP_B   EQU %01011100   ; ...then black
 DEF HEAL_OBP_A  EQU %10100000   ; recharge patch: dark, with white arrows...
 DEF HEAL_OBP_B  EQU %00001000   ; ...then light, with dark ones
+DEF RAMP_OBP    EQU %11110000   ; jump ramp: black, with white arrows up it
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
@@ -158,6 +159,8 @@ DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may g
 DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
+DEF JUMP_RAMP   EQU $0300       ; take-off speed from a ramp: about 38 frames in the air
+DEF LAND_SLIDE  EQU 24          ; frames after landing that steering takes hold slowly
 DEF GRAVITY     EQU $28
 
 ; ---------------------------------------------------------------------------------------
@@ -2112,7 +2115,7 @@ UpdateObject:
     or a
     jp z, .mouth
     cp KIND_DIRT_L
-    jr c, .barrier
+    jp c, .barrier
     ld e, a                     ; a patch over half the road (odd kinds left, even right):
     rra                         ; are we on that half?
     ldh a, [hX + 1]
@@ -2129,6 +2132,8 @@ UpdateObject:
     jp nc, .draw
 .onPatch
     ld a, e
+    cp KIND_JUMP_L
+    jp nc, .onRamp
     cp KIND_HEAL_L
     jr c, .notHeal
     ldh a, [hSpeed + 1]         ; a recharge patch: the slower we cross it, the more it gives
@@ -2159,10 +2164,42 @@ UpdateObject:
     pop bc
     jp .draw
 .onPad
-    ldh a, [hBoost]             ; a boost pad: a free burst
+    ldh a, [hBoost]             ; a boost pad: a free burst, all of it within 12 pixels of
+    or a                        ; the pad's middle, two thirds of it for its edge
+    jp nz, .draw
+    ld a, e
+    rra
+    ld a, 28                    ; (the middle of a pad: 28 pixels either side of the line)
+    jr nc, .padRight
+    ld a, -28
+.padRight
+    ld d, a
+    ldh a, [hX + 1]
+    sub d
+    add 12
+    cp 25
+    ld a, DASH_TIME
+    jr c, .padFull
+    ld a, DASH_TIME * 2 / 3
+.padFull
+    ldh [hBoost], a
+    ld a, SFX_BOOST
+    call Sfx
+    jp .draw
+.onRamp                         ; a ramp: up into the air, with a push for the take-off.  Half
+    ldh a, [hVX]                ; the slide the car had carries on, with no grip up there to
+    sra a                       ; stop it: come down off the edge and the car is gone, so go
+    ldh [hVX], a                ; over it straight (or near its inner side)
+    ld a, 1
+    ldh [hAir], a
+    ld a, LOW(JUMP_RAMP)
+    ldh [hVZ], a
+    ld a, HIGH(JUMP_RAMP)
+    ldh [hVZ + 1], a
+    ldh a, [hBoost]
     or a
     jp nz, .draw
-    ld a, DASH_TIME
+    ld a, DASH_TIME / 2
     ldh [hBoost], a
     ld a, SFX_BOOST
     call Sfx
@@ -2287,6 +2324,10 @@ UpdateObject:
     cp KIND_PAD_L
     ld a, DIRT_OBP              ; dirt: the arrows hidden in it
     jr c, .flash
+    ldh a, [hObjKind]           ; a ramp: black, white arrows
+    cp KIND_JUMP_L
+    ld a, RAMP_OBP
+    jr nc, .flash
     ldh a, [hObjKind]           ; a boost pad's arrows flicker white and black; a recharge
     cp KIND_HEAL_L              ; patch pulses slowly between dark and light
     ldh a, [hFrame]
@@ -4343,7 +4384,7 @@ Drive:
     ld b, a
     ld d, a
     ld e, a
-    jr .vxDone
+    jp .vxDone
 .notWreck
     ldh a, [hAir]
     ld c, a
@@ -4352,7 +4393,7 @@ Drive:
     jr z, .grounded
     ldh a, [hVX]                ; no grip in the air: keep drifting the way we were
     ld b, a
-    jr .vxDone
+    jp .vxDone
 .grounded
     ; braking while steering at speed is a skid turn: far more steering, less speed
     xor a
@@ -4405,6 +4446,21 @@ Drive:
     ld a, c
     sub b                       ; wanted - current
     jr z, .vxDone
+    ld l, a                     ; (de is the bend's push: kept for below)
+    ld a, [wSlide]              ; just landed from a ramp: a quarter of the grip
+    or a
+    jr z, .grip
+    dec a
+    ld [wSlide], a
+    bit 7, l
+    jr z, .slideUp
+    dec b
+    jr .vxSet
+.slideUp
+    inc b
+    jr .vxSet
+.grip
+    ld a, l
     bit 7, a
     jr z, .vxUp
     dec b
@@ -4543,6 +4599,8 @@ Drive:
     ldh [hAir], a
     ld h, a
     ld l, a
+    ld a, LAND_SLIDE            ; still sliding the way it was: steering takes hold slowly
+    ld [wSlide], a
     ldh a, [hX + 1]             ; ...on the road?
     add X_LIMIT
     cp X_LIMIT * 2 + 1
@@ -4588,6 +4646,9 @@ DEF KIND_PAD_L  EQU PAD_L - 1
 DEF HEAL_L   EQU 10             ; a recharge patch over the left half
 DEF HEAL_R   EQU 11
 DEF KIND_HEAL_L EQU HEAL_L - 1
+DEF JUMP_L   EQU 12             ; a jump ramp over the left half
+DEF JUMP_R   EQU 13
+DEF KIND_JUMP_L EQU JUMP_L - 1
 
 FadeLevels:                     ; darkness for each eighth of a fade
     db 1, 2, 3, 3, 3, 3, 2, 1
@@ -5025,6 +5086,7 @@ wTight:     db                  ; the chunk we are in is a "special tight" corne
 wTurn:      ds 2                ; last frame's bend * speed (signed): how hard we were turning
 wAdvance:   ds 2                ; how far the car went along the course this frame (8.8)
 wShake:     db                  ; frames left of the jolt after a hit
+wSlide:     db                  ; frames left of the slide after landing from a ramp
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash

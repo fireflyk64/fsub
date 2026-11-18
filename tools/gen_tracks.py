@@ -19,7 +19,7 @@ import os
 import re
 import sys
 
-MOUTH, B0, B1, B2, B3, DIRT_L, DIRT_R, PAD_L, PAD_R, HEAL_L, HEAL_R = range(1, 12)
+MOUTH, B0, B1, B2, B3, DIRT_L, DIRT_R, PAD_L, PAD_R, HEAL_L, HEAL_R, JUMP_L, JUMP_R = range(1, 14)
 PLAIN, DASH, JUMP, DARK = 0, 1, 2, 4            # painted bands (3 is unused)
 TIGHT = 128
 FUTURE, OLDTOWN, OCEAN, PLAINS = range(4)       # skylines, in gen_gfx.py's order
@@ -87,11 +87,12 @@ TRACKS = [
                 20: PAD_L, 24: B1,
                 31: B0, 33: B3,                         # Barrier Straight
                 41: DIRT_L, 43: DIRT_R, 45: DIRT_L,     # Causeway Slalom
+                36: JUMP_R,                             # a ramp out of the sweeper: straight, or off
+                40: PAD_R,
                 48: PAD_R,
                 52: B1, 53: B2,                         # the Underpass: hug a wall
-                60: PAD_L},
-        bands=START_LINE + [(chunk(7), chunk(7, 90), DASH), (chunk(36), chunk(36, 60), JUMP),
-                            (chunk(40), chunk(40, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),
+                60: PAD_L, 61: PAD_R},                  # a pad on either side: pick one
+        bands=START_LINE),
     dict(  # 1  BLUE DEEP: long sweepers over the sea, boost pads on the outside of the waves
         skyline=OCEAN, palset=SET_CITY, exit=0, skip=0,
         course=[("S", 6), ("R", 8, 2), ("S", 3), ("L", 8, 2), ("S", 3), ("R", 16, 2), ("S", 4),
@@ -103,10 +104,11 @@ TRACKS = [
                 19: DIRT_L, 21: DIRT_R, 23: DIRT_L,     # the Sandbars
                 25: PAD_R,
                 29: PAD_L, 33: PAD_R, 37: PAD_L, 41: PAD_R,   # the Waves: a pad outside each one
+                18: PAD_R,
                 48: B1, 49: B2,                         # pick a side
-                55: DIRT_R, 59: PAD_R},
-        bands=START_LINE + [(chunk(18), chunk(18, 90), DASH), (chunk(52), chunk(52, 60), JUMP),
-                            (chunk(61), chunk(61, 90), DASH)]),
+                52: JUMP_L,                             # a ramp over the sea
+                55: DIRT_R, 59: PAD_R, 61: PAD_L},
+        bands=START_LINE),
     dict(  # 2  GOLD WIND: long straights, a few big corners, and a crosswind to lean into
         skyline=PLAINS, palset=SET_FIELD, exit=0, skip=0,
         course=[("S", 10), ("R", 16, 2), ("S", 10), ("L", 8, 2), ("S", 4), ("R", 8, 2), ("S", 10),
@@ -118,9 +120,9 @@ TRACKS = [
                 27: B0, 31: B3,
                 34: DIRT_R, 36: PAD_L, 38: DIRT_R,
                 45: B2, 47: DIRT_L, 49: PAD_R,
-                55: B1, 60: DIRT_L},
-        bands=START_LINE + [(chunk(24), chunk(24, 90), DASH), (chunk(42), chunk(42, 90), DASH),
-                            (chunk(62), chunk(62, 90), DASH)]),
+                24: PAD_R, 42: PAD_L,                   # (the wind blows you off a pad's middle)
+                55: B1, 60: DIRT_L, 62: PAD_R},
+        bands=START_LINE),
     dict(  # 3  OLD PORT: sharp corners close together, and one tighter than anything else
         skyline=OLDTOWN, palset=SET_CITY, exit=0, skip=0,
         course=[("S", 4), ("R", 24, 1), ("S", 2), ("L", 24, 1), ("S", 3), ("RT", 32, 1), ("S", 4),
@@ -134,8 +136,9 @@ TRACKS = [
                                                         # (spent before the left at 16)
                 18: B3, 21: B0, 24: B3,                 # the Dock Chicane: a chunk past each exit
                 28: DIRT_R,                             # inside of the hairpin at 30
-                41: B2, 45: DIRT_L, 50: B1, 52: PAD_R, 56: PAD_L},   # (pads on the home straight)
-        bands=START_LINE + [(chunk(49), chunk(49, 90), DASH), (chunk(59), chunk(59, 90), DASH)]),
+                41: B2, 45: DIRT_L, 49: PAD_R, 50: B1, 52: PAD_R, 56: PAD_L,   # (pads on the
+                59: PAD_L},                                                     #  home straight)
+        bands=START_LINE),
 ]
 
 

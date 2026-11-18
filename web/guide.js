@@ -109,10 +109,13 @@ export function advise(rd, sym, lead = LEAD) {
       held.target = SPOTS.filter((p) => clear(p) && !beyond(p)).sort((p, q) => Math.abs(p - x) - Math.abs(q - x))[0];
       held.switched = true;
     }
+    // (A sharp corner on the way there throws the car to its outside, whatever it does: then
+    // the clear spot furthest out that way, where the car is going to be anyway.)
+    const bendOnWay = [0, 1, 2].map((k) => bendAt((car >> 8) + k)).find((b) => Math.abs(b) >= 16);
     if (held.target === null && !(clear(x) && clear(at))) {
       const across = (p) => lanes.some((l) => (at < l && l < p) || (p < l && l < at));
       const ok = SPOTS.filter(clear), near = (list) => list.slice().sort((p, q) => Math.abs(p - at) - Math.abs(q - at))[0];
-      held.target = near(ok.filter((p) => !across(p))) ?? near(ok);
+      held.target = bendOnWay !== undefined ? (bendOnWay > 0 ? ok[0] : ok[ok.length - 1]) : near(ok.filter((p) => !across(p))) ?? near(ok);
     }
     danger = true;
     if (held.target !== null) { target = held.target; why = "a barrier ahead"; }
@@ -121,12 +124,14 @@ export function advise(rd, sym, lead = LEAD) {
   let wish = null;                                                             // a nice-to-have: pad, recharge, tunnel
   for (const o of objs) {
     if (o.kind >= 1 && o.kind <= 4) continue;
-    if (o.kind === 5 || o.kind === 6) {
-      const left = o.kind === 5, onIt = left ? x < 10 : x > -10;
-      if (!danger && onIt) { target = left ? 22 : -22; why = `dirt on the ${left ? "left" : "right"}`; danger = true; }
+    if (o.kind === 5 || o.kind === 6 || o.kind === 11 || o.kind === 12) {
+      // dirt, or a ramp: a ramp throws a sliding car off the edge, so keep off it
+      // (or take it dead straight, near its inner side, for its push)
+      const left = o.kind === 5 || o.kind === 11, onIt = left ? x < 10 : x > -10, what = o.kind <= 6 ? "dirt" : "a ramp (take it straight or not at all)";
+      if (!danger && onIt) { target = left ? 22 : -22; why = `${what} on the ${left ? "left" : "right"}`; danger = true; }
       else if (!danger) { target = x; danger = true; }
     } else if ((o.kind === 9 || o.kind === 10) && health < 48) wish = wish || { target: o.kind === 9 ? -24 : 24, why: "a recharge patch: slow over it for more", dist: o.dist };
-    else if (o.kind === 7 || o.kind === 8) wish = wish || { target: o.kind === 7 ? -24 : 24, why: "a boost pad", dist: o.dist };
+    else if (o.kind === 7 || o.kind === 8) wish = wish || { target: o.kind === 7 ? -28 : 28, why: "a boost pad: its middle", dist: o.dist };
     else if (o.kind === 0) wish = wish || { target: -24, why: "the tunnel: a short cut", dist: o.dist };
   }
   // (out of a corner, or close enough that it is now or never: a pad just past a corner)
