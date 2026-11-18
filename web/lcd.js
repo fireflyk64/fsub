@@ -16,10 +16,11 @@
 // The ghosting runs once per emulated frame (a 160 x 144 pass, ping-ponged between two
 // textures); the rest once per displayed frame, at the canvas's own resolution.
 //
-// "Sharp" draws the plain grey pixels, as before.  Without WebGL the page still works: the
-// shades are coloured and ghosted on a 160 x 144 canvas (no dots, no shadows).
+// The skins: "lcd" all of that; "smooth" the same without the gaps between the dots (no
+// one-pixel lines); "classic" the plain grey pixels, as before.  Without WebGL the page still
+// works: the shades are coloured and ghosted on a 160 x 144 canvas (no dots, no shadows).
 //
-//   const screen = createScreen(canvas, { look })   look: "lcd" | "pocket" | "sharp"
+//   const screen = createScreen(canvas, { look })   look: "lcd" | "smooth" | "classic"
 //   screen.frame(rgba)    a new frame from the emulator (160 x 144 x 4 bytes)
 //   screen.draw()         show it (once per animation frame; nothing to do without a new frame)
 //   screen.look = "..."   another look
@@ -27,10 +28,12 @@
 const W = 160, H = 144;
 const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
 export const LOOKS = {
-  lcd:    { name: "LCD",    paper: rgb("#b4bd7b"), ink: rgb("#222f1c"), grid: 1, shadow: 1, glass: 1, ghost: [0.55, 0.4] },
-  pocket: { name: "Pocket", paper: rgb("#c3c4b6"), ink: rgb("#1b1c1a"), grid: 1, shadow: 1, glass: 1, ghost: [0.6, 0.45] },
-  sharp:  { name: "Sharp",  paper: [1, 1, 1],      ink: [0, 0, 0],      grid: 0, shadow: 0, glass: 0, ghost: [1, 1] },
+  lcd:     { name: "LCD",     paper: rgb("#b4bd7b"), ink: rgb("#222f1c"), grid: 1, shadow: 1, glass: 1, ghost: [0.55, 0.4] },
+  smooth:  { name: "Smooth",  paper: rgb("#b4bd7b"), ink: rgb("#222f1c"), grid: 0, shadow: 1, glass: 1, ghost: [0.55, 0.4] },
+  classic: { name: "Classic", paper: [1, 1, 1],      ink: [0, 0, 0],      grid: 0, shadow: 0, glass: 0, ghost: [1, 1] },
 };
+// (Skins that were offered before.)
+export const OLD_LOOKS = { pocket: "lcd", sharp: "classic" };
 
 const VERT = `
 attribute vec2 pos;

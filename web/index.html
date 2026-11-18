@@ -17,6 +17,8 @@ canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#3e414c;width:m
 #top{display:flex;gap:8px;align-items:center;justify-content:center;width:100%;padding:6px;flex:none}
 #msg{flex:1;font-size:12px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #msg.act{color:#111;background:#fc6;font-weight:bold;border-radius:6px;padding:3px 7px}
+#more .short{display:none}
+body.classic canvas{box-shadow:none;border-radius:0;background:#000}
 #pads{flex:1;display:flex;width:100%;min-height:0;gap:10px;padding:6px 10px 12px}
 #stick{flex:1;position:relative;border:2px dashed #555;border-radius:18px;color:#777;display:flex;align-items:center;justify-content:center;font-size:13px;min-height:90px}
 #knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:#8af;opacity:.0;pointer-events:none;left:50%;top:50%}
@@ -29,7 +31,8 @@ button.on{background:#555;border-color:#aaa}
 /* A narrow screen: the buttons on one row, the message on its own below them. */
 @media (max-width:520px){
   #top{flex-wrap:wrap;gap:6px;padding:5px 6px 2px}
-  #top button,#more{padding:7px 9px}
+  #top button,#more{padding:7px 8px}
+  #more .long{display:none} #more .short{display:inline}
   #msg{order:9;flex:1 1 100%;white-space:normal}
 }
 #gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
@@ -88,7 +91,7 @@ body.lobby #lobby{transform:none}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
 <div id="wrap">
-  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy">How it works</a></div>
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="skinBtn" title="The screen's skin: LCD, Smooth (no lines between the dots) or Classic (the plain pixels). Key: L">SKIN</button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy"><span class="long">How it works</span><span class="short">How?</span></a></div>
   <canvas id="screen" width="160" height="144"></canvas>
   <div id="pads">
     <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
@@ -109,28 +112,35 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 <details id="help"><summary>How to play</summary>
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
-<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's look · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
+<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's skin · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
 <p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
 <p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
-<p><b>Screen:</b> <button data-look="lcd">LCD</button><button data-look="pocket">Pocket</button><button data-look="sharp">Sharp</button> (or press L). LCD is the original Game Boy's green screen, its dots, their shadows and its slow liquid crystal, which smears what moves and half-lights what flickers; Pocket the same in grey; Sharp the plain pixels.</p>
+<p><b>Skin:</b> <button data-look="lcd">LCD</button><button data-look="smooth">Smooth</button><button data-look="classic">Classic</button> (or SKIN, or the L key). LCD is the original Game Boy's green screen: its dots, their shadows and its slow liquid crystal, which smears what moves and half-lights what flickers. Smooth is the same without the lines between the dots; Classic the plain grey pixels.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT), with link-cable hooks · lobby: lobbylink</p>
 </details>
 <script src="binjgb.js"></script>
 <script type="module">
 import { Cable, EV_SERIAL, INFO_MENU, INFO_ALONE } from "./link.js";
 import { initLobby, LOBBY_SERVER } from "./lobby.js";
-import { createScreen, LOOKS } from "./lcd.js";
+import { createScreen, LOOKS, OLD_LOOKS } from "./lcd.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
 const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
 const ac=new (window.AudioContext||window.webkitAudioContext)();
 const cv=document.getElementById('screen');
 // The screen's look (web/lcd.js), remembered in this browser: the LCD unless the player picked another.
-let look='lcd'; try{const v=localStorage.getItem('fsub:look'); if(LOOKS[v]) look=v;}catch(err){}
+let look='lcd'; try{const v=localStorage.getItem('fsub:look'); if(LOOKS[v]) look=v; else if(OLD_LOOKS[v]) look=OLD_LOOKS[v];}catch(err){}
 const screen=createScreen(cv,{look});
 const lookButtons=document.querySelectorAll('[data-look]');
-const setLook=v=>{screen.look=v; for(const b of lookButtons) b.classList.toggle('on',b.dataset.look===v); try{localStorage.setItem('fsub:look',v);}catch(err){}};
+const setLook=v=>{screen.look=v; document.body.classList.toggle('classic',v==='classic'); for(const b of lookButtons) b.classList.toggle('on',b.dataset.look===v); try{localStorage.setItem('fsub:look',v);}catch(err){}};
+const nextLook=()=>{const ks=Object.keys(LOOKS); setLook(ks[(ks.indexOf(screen.look)+1)%ks.length]); say('Skin: '+LOOKS[screen.look].name);};
 for(const b of lookButtons) b.addEventListener('click',()=>setLook(b.dataset.look));
+document.getElementById('skinBtn').addEventListener('click',nextLook);
 setLook(screen.look);
+// The line in the top bar: a passing note (say), else what a race asks of the player (amber),
+// else the keys for where the game is, the menu or a race (or the touch controls on a touch
+// screen); kept up to date every frame (showMsg).
+let note='', noteUntil=0, raceLine='', where=()=>null;
+const say=(t,ms=2500)=>{note=t; noteUntil=performance.now()+ms;};
 const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
 (async()=>{
@@ -154,7 +164,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const apply=()=>{for(const k of KEYS){const v=!!(src.kb[k]||src.touch[k]||src.pad[k]||src.auto[k]); if(cur[k]!==v){cur[k]=v;m['_set_joyp_'+k](e,v?1:0);}}};
     const wrap=document.getElementById('wrap');
     const toggleFS=()=>{ try{ if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
-      else{const f=wrap.requestFullscreen||wrap.webkitRequestFullscreen; if(f) f.call(wrap); else msg.textContent='No fullscreen here: add the page to your home screen instead';} }catch(err){} };
+      else{const f=wrap.requestFullscreen||wrap.webkitRequestFullscreen; if(f) f.call(wrap); else say('No fullscreen here: add the page to your home screen instead',4000);} }catch(err){} };
     document.getElementById('fs').addEventListener('click',toggleFS);
     const typing=ev=>ev.target&&ev.target.closest&&ev.target.closest('input,textarea');   // (keys typed in the lobby are not the game's)
     // A click or tap on the game, or Esc, gives the keys back to the game after typing in the lobby.
@@ -162,12 +172,14 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     wrap.addEventListener('pointerdown',unfocus,true);
     addEventListener('keydown',ev=>{if(ev.key==='Escape'&&typing(ev)) unfocus();},true);
     addEventListener('keydown',ev=>{ac.resume(); if(typing(ev)) return; if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
-      if(ev.code==='KeyL'&&!ev.repeat){const ks=Object.keys(LOOKS); setLook(ks[(ks.indexOf(screen.look)+1)%ks.length]); msg.textContent='Screen: '+LOOKS[screen.look].name; ev.preventDefault(); return;}
+      if(ev.code==='KeyL'&&!ev.repeat){nextLook(); ev.preventDefault(); return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k&&src.kb[k]){src.kb[k]=0;apply();ev.preventDefault();}});
     // Touch.  Nothing here may select text, open a menu, scroll or zoom.
     for(const t of ['contextmenu','selectstart','dragstart','gesturestart']) wrap.addEventListener(t,ev=>ev.preventDefault());
-    for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>{if(!ev.target.closest('a')) ev.preventDefault();},{passive:false});   // (links still follow a tap)
+    // (Links and the buttons that act on a click, LOBBY, SKIN, FULL, still take a tap: cancelling
+    // the touch would cancel the click.  The game's own buttons work from the pointer events.)
+    for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>{if(!ev.target.closest('a,button:not([data-k])')) ev.preventDefault();},{passive:false});
     // A button is down for as long as a finger that started on it stays on the glass.
     // (Held for at least 60 ms: a quick click or tap shorter than a frame would not be seen.)
     document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k; const ids=new Set(); let downAt=0;
@@ -200,15 +212,21 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       src.pad=p; apply();
       if(Object.keys(p).length){unlock(); if(!played){played=true;soundHint();}}
     };
-    addEventListener('gamepadconnected',ev=>{msg.textContent='Controller connected: '+ev.gamepad.id.slice(0,40);});
+    addEventListener('gamepadconnected',ev=>say('Controller connected: '+ev.gamepad.id.slice(0,40),3000));
     // Browsers keep audio suspended until a real gesture. Touch only counts on release, and a
     // gamepad may not count at all, so retry on every kind of input and say so while it is off.
-    const READY='Menu: drag or arrows to choose; GAS or Enter starts', NOSOUND='Sound is off: tap or press a key';
+    const NOSOUND='Sound is off: tap or press a key';
+    const HINTS=matchMedia('(pointer: coarse)').matches
+      ? {menu:'Menu: drag up or down to pick a line, left or right to change it; GAS starts', race:'Drag left or right to steer; hold GAS; BRAKE slows you; BOOST once a lap'}
+      : {menu:'Menu: ↑↓ pick a line · ←→ change it · X or Enter starts', race:'←→ steer · X or Space: gas · Z or ↓: brake · ↑ boost · Enter+Shift: menu'};
+    const showMsg=()=>{const now=performance.now(); let t, act=false;
+      if(now<noteUntil) t=note; else if(raceLine){t=raceLine; act=true;} else if(played&&ac.state!=='running') t=NOSOUND;
+      else {const g=where(); t=g&&!g.menu?HINTS.race:HINTS.menu;}
+      if(msg.textContent!==t) msg.textContent=t; msg.classList.toggle('act',act);};
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
     let played=false;
-    const soundHint=()=>{ if(ac.state==='running'){ if(msg.textContent===NOSOUND) msg.textContent=READY; } else if(played) msg.textContent=NOSOUND; };
-    ac.addEventListener('statechange',soundHint);
+    const soundHint=()=>{};   // (showMsg says so while the sound is off)
     let audioT=0, last=0, left=0;
     const pushAudio=()=>{
       if(ac.state!=='running') return;
@@ -248,7 +266,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       const alone=!lobby.race&&cable.listening();
       if(alone&&!aloneWas) openLobby(true);
       aloneWas=alone;};
-    const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms));
+    const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms)); showMsg();
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
@@ -266,11 +284,11 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const query=new URLSearchParams(location.search);
     const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),game,log:l=>console.log(l),
       onNews:()=>{if(!document.body.classList.contains('lobby')){news++;dot.textContent=news>9?'9+':news;dot.hidden=false;}},
-      onStatus:t=>{msg.textContent=t||READY; msg.classList.toggle('act',!!t);}});
+      onStatus:t=>{raceLine=t||'';}});
     if(lobby.race) openLobby(true);
     requestAnimationFrame(raf);
     window.__gb={m,e,ac,cable,lobby};
-    if(!lobby.race) msg.textContent=READY;
+    where=game;
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();
 </script></body></html>
