@@ -855,6 +855,68 @@ def slot_blobs(tiles, sky_slots):
     return b"".join(tiles[:n8000]), b"".join(tiles[n8000:])
 
 
+# The end of a race: your place painted onto the road ahead, in perspective, as road markings
+# are (fzero.asm Finale).  A patch of the ground's tilemap is pointed at the 32 tiles the
+# skyline lends from the shared $8800 block (the sky goes plain meanwhile): each is the ground
+# tile that was there, with the letters in colour 0, which is black on every ground line.
+RESULT_ROW, RESULT_COL, RESULT_W, RESULT_H = 10, 12, 8, 4      # tile rows 10-13 (lines 80-111)
+RESULT_TEXTS = ["1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "OUT"]
+FONT4 = {     # 4x5, chunky: the letters are only 30-odd lines tall and 60 pixels across
+    "1": ".##. ###. .##. .##. ####", "2": "###. ...# .##. #... ####", "3": "###. ...# .##. ...# ###.",
+    "4": "#..# #..# #### ...# ...#", "5": "#### #... ###. ...# ###.", "6": ".##. #... ###. #..# .##.",
+    "7": "#### ...# ..#. .#.. .#..", "8": ".##. #..# .##. #..# .##.", "S": ".### #... .##. ...# ###.",
+    "T": "#### .##. .##. .##. .##.", "N": "#..# ##.# #.## #..# #..#", "D": "###. #..# #..# #..# ###.",
+    "R": "###. #..# ###. #.#. #..#", "H": "#..# #..# #### #..# #..#", "O": ".##. #..# #..# #..# .##.",
+    "U": "#..# #..# #..# #..# .##.",
+}
+
+
+def result_tiles(art):
+    """The place painted on the road: like real road markings, stretched along the road so that
+    each row of the letters gets the same share of the screen's lines; across, in perspective,
+    as wide as the patch of tiles allows at its near edge."""
+    blk8000, blk9000, blk8800 = art["blocks"]
+    tm = art["tilemap"]
+
+    def ground_tile(row, col):
+        tid = tm[(row - SKY_ROWS) * 32 + col]
+        t = (blk9000[tid] if tid < 128 else blk8800[tid - 128]) if row >= SPLIT_ROW else \
+            (blk8000[tid] if tid < 128 else blk8800[tid - 128])
+        return [[((t[2 * y] >> (7 - x)) & 1) | (((t[2 * y + 1] >> (7 - x)) & 1) << 1) for x in range(8)] for y in range(8)]
+
+    top, lines = RESULT_ROW * 8 + 1, RESULT_H * 8 - 2          # a line clear above and below
+    d_near = top + lines - 1 - HORIZON + 1
+    room = min(CX - RESULT_COL * 8, (RESULT_COL + RESULT_W) * 8 - CX) - 1
+    half = room * GROUND / d_near                               # world units either side
+    out = bytearray()
+    for text in RESULT_TEXTS:
+        cols = 5 * len(text) - 1
+        mark = [[False] * cols for _ in range(5)]
+        for k, ch in enumerate(text):
+            for r, row in enumerate(FONT4[ch].split()):
+                for c, v in enumerate(row):
+                    mark[r][k * 5 + c] = v == "#"
+        for tr in range(RESULT_H):
+            for tc in range(RESULT_W):
+                pix = ground_tile(RESULT_ROW + tr, RESULT_COL + tc)
+                for y in range(8):
+                    line = (RESULT_ROW + tr) * 8 + y
+                    d = line - HORIZON + 1
+                    gr = (line - top) * 5 // lines if top <= line < top + lines else -1
+                    for x in range(8):
+                        u = ((RESULT_COL + tc) * 8 + x + 0.5 - CX) * GROUND / d
+                        gc = int((u + half) / (2 * half) * cols) if -half <= u < half else -1
+                        if gr >= 0 and 0 <= gc < cols and mark[gr][gc]:
+                            pix[y][x] = 0
+                for row in pix:
+                    lo = hi = 0
+                    for v in row:
+                        lo = (lo << 1) | (v & 1)
+                        hi = (hi << 1) | (v >> 1)
+                    out += bytes((lo, hi))
+    return bytes(out)
+
+
 def main():
     out = sys.argv[1]
     os.makedirs(out, exist_ok=True)
@@ -868,6 +930,7 @@ def main():
     for name, blk in zip(("tiles8000.bin", "tiles9000.bin", "tiles8800.bin"), blocks):
         put(name, b"".join(blk))
     put("map.bin", art["tilemap"])                # tile rows 5..17: the ground
+    put("result.bin", result_tiles(art))          # the places painted on the road (Finale)
     for name in SKYLINE_NAMES:
         tiles, skymap = art["skies"][name]
         lo, hi = slot_blobs(tiles, sky_slots)
@@ -902,6 +965,8 @@ def main():
         f.write(f"DEF SKY_8000_FIRST EQU {sky_slots[0]}\n")
         f.write(f"DEF SKY_8800_FIRST EQU {next(s for s in sky_slots if s >= 128) - 128}\n")
         f.write(f"DEF SKY_MAP_BYTES EQU {SKY_ROWS * 32}\n")
+        f.write(f"DEF RESULT_ROW EQU {RESULT_ROW}\nDEF RESULT_COL EQU {RESULT_COL}\n")
+        f.write(f"DEF RESULT_W EQU {RESULT_W}\nDEF RESULT_H EQU {RESULT_H}\nDEF RESULT_TEXTS EQU {len(RESULT_TEXTS)}\n")
         for name in HUD_ORDER:
             f.write(f"DEF HUD_{name} EQU {hud[name]}\n")
         for i, ch in enumerate(MENU_CHARS):       # so that  db "TEXT"  gives menu tiles

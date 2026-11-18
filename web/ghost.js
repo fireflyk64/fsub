@@ -12,7 +12,8 @@
 // Game Boy would have sent, frame for frame of your race: the ghost's place and x in the
 // ROM's own packet (fzero.asm, "Link cable"), with no rivals of its own (level 0 in the last
 // byte) and your Game Boy's own restart bit, so that it never restarts your race.  Your
-// Game Boy shows it as the other player's car.
+// Game Boy shows it as the other player's car.  Past its finish it speeds on up the road,
+// as a Game Boy's own car does past the flag, so that it is not left parked on the line.
 //
 // Only races against the rivals or against a ghost count (not practice, not a race with
 // somebody in another browser).
@@ -93,7 +94,7 @@ export class GhostPartner {
   constructor({ rd, sym, cable, data }) {
     Object.assign(this, { rd, sym, cable, data });
     this.frames = data ? data.length / 3 : 0;
-    this.i = 0; this.seq = 0; this.tick = 0; this.which = 0;
+    this.i = 0; this.over = 0; this.seq = 0; this.tick = 0; this.which = 0;
   }
   // From our cable: take a call at once.
   receive(bytes) {
@@ -109,12 +110,17 @@ export class GhostPartner {
       this.i = 0;
       return;
     }
-    if (rd(sym.hCount)) this.i = 0;                // the countdown: on the line
-    else if (rd(sym.hState) === 0 && this.i < this.frames - 1) this.i++;
+    const end = this.frames - 1;
+    if (rd(sym.hCount)) this.i = this.over = 0;    // the countdown: on the line
+    else if (this.i < end) this.i++;
+    else this.over++;
     if (this.tick++ % 2) return;
-    const at = Math.min(this.i + 3, this.frames - 1);   // (a few frames on: the packet takes that long to arrive)
-    const k = at * 3, pos = this.data[k] | this.data[k + 1] << 8, x = this.data[k + 2];
-    const done = this.i >= this.frames - 1 ? FINISHED : 0;
+    const ahead = this.i + 3 + this.over, at = Math.min(ahead, end);   // (a few frames on: the packet takes that long to arrive)
+    const P = (f) => this.data[f * 3] | this.data[f * 3 + 1] << 8;
+    let pos = P(at);
+    const x = this.data[at * 3 + 2];
+    if (ahead > end) pos = (pos + (ahead - end) * Math.max(8, (P(end) - P(Math.max(0, end - 1))) & 0xffff)) & 0xffff;   // past its line: on at its last speed
+    const done = this.i >= end ? FINISHED : 0;
     const p = new Uint8Array(9);
     p[0] = 0x80 | (rd(sym.hTrackNo) & 3) << 2 | (rd(sym.hGen) & 1) << 1 | (this.which ^= 1);
     p[1] = pos & 0x7f;

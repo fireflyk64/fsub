@@ -74,6 +74,12 @@ DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every fra
 DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
 DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades:
 DEF PAL_BANK2   EQU 6           ; one bank per set of sceneries (a track uses one set)
+DEF RESULT_BANK EQU 12          ; the places painted on the road at the end (Finale)
+DEF RESULT_TILE EQU 128 + SKY_8800_FIRST   ; ...into the tiles the skyline lends
+DEF SKY_BLANK   EQU SKY_8000_FIRST         ; the sky's one tile while they are lent: blank
+DEF PAINT_DONE  EQU 27          ; Finale's steps: 1 the blank tile, 2-6 the sky, 7-22 the
+                                ; words' tiles, 23-26 the road's tilemap
+DEF FINISH_BRAKE EQU $0020      ; past the flag the camera comes to a stop (a second or so)
 DEF NUM_TRACKS  EQU 4
 DEF SKY_FONT    EQU 4           ; the menu's lettering, loaded where a skyline goes
 DEF MENU_LCDC   EQU LCDCF_ON | LCDCF_BGON | LCDCF_BG8000 | LCDCF_BG9C00
@@ -249,7 +255,7 @@ VBlankISR:
     push hl
     ldh a, [hReady]             ; a finished frame waiting?  make it the live one
     or a
-    jr z, .keep
+    jp z, .keep
     ldh [hFront], a
     xor a
     ldh [hReady], a
@@ -312,7 +318,7 @@ VBlankISR:
 .noJob
     ldh a, [hHudDirty]
     or a
-    jr z, .keep
+    jr z, .noHud
     xor a
     ldh [hHudDirty], a
     push bc
@@ -326,6 +332,28 @@ VBlankISR:
     inc e
     dec b
     jr nz, .hud
+    pop de
+    pop bc
+.noHud
+    ld a, [wPaintCount]         ; a piece of the painted place, staged by Finale?
+    or a
+    jr z, .keep
+    push bc
+    push de
+    ld b, a
+    ld a, [wPaintDst]
+    ld e, a
+    ld a, [wPaintDst + 1]
+    ld d, a
+    ld hl, wPaintBuf
+.paint
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .paint
+    xor a
+    ld [wPaintCount], a
     pop de
     pop bc
 .keep
@@ -421,6 +449,9 @@ EntryPoint:
     ldh [hSkyX + 1], a
     ldh [hTrackNo], a
     ld [wMenuRow], a
+    ld [wPainted], a            ; (nothing painted on the road to put back)
+    ld [wPaintStep], a
+    ld [wPaintCount], a
     dec a
     ld [wSongNow], a            ; (no song yet)
     ld a, 1                     ; the engine note on: half of how fast it feels (Select: off)
@@ -455,6 +486,7 @@ EntryPoint:
 Menu:
     ld sp, $E000                ; (we get here from deep inside the game too)
     call LcdOff
+    call Unpaint
     ld a, 1
     ldh [hMenu], a
     xor a
@@ -860,6 +892,7 @@ MainLoop:
     call Drive
     call LinkPump
     call LinkApply
+    call Finale
     call BuildLines
     call LinkPump
     call UpdateRivals
@@ -1402,6 +1435,15 @@ BandAhead:                      ; how far ahead each band looks, far band first
 
 ; The player's car and shadow.  Leaning is free: the two halves sit a pixel apart.
 PlayerSprites:
+    ldh a, [hState]             ; over the line: the car speeds off up the road (Finale)
+    cp STATE_FINISHED
+    jr nz, .here
+    ld a, [wGone + 1]
+    ld b, a
+    ld a, [wGone]
+    or b
+    jp nz, Departing
+.here
     ld hl, wOam
     ldh a, [hLean]
     ld c, a
@@ -1500,6 +1542,7 @@ PlayerSprites:
 
     ; --- the speedometer: a little car sliding along the status bar, further right the
     ; faster (2.25 pixels a unit of speed: standing still at the left, a boost at the right)
+.speedo
     ld hl, wOam + SPEEDO_OAM
     ld a, HUD_LINE + 16 - 8     ; (an 8x16 sprite whose drawn rows are the bottom eight)
     ld [hl+], a
@@ -2107,6 +2150,9 @@ UpdateObject:
     ldh a, [hObjOn]
     or a
     ret z
+    ld a, [wPaintStep]          ; the place being painted on the road: nothing in front of it
+    or a
+    ret nz
 
     ldh a, [hPos + 1]           ; distance ahead = where it is - where we are
     ld c, a
@@ -3310,6 +3356,12 @@ BuildPacket:
     ld e, a
     ldh a, [hPos + 2]
     ld d, a
+    ld a, [wGone]               ; (past the flag: where our car has sped on to, so that the
+    add e                       ; other screen sees it go too, and not the camera stopping)
+    ld e, a
+    ld a, [wGone + 1]
+    adc d
+    ld d, a
     rlca
     rlca
     and 3
@@ -3586,7 +3638,27 @@ LevelPace:                      ; added to every rival's pace (1/16 unit per fra
 
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
+    ld a, [wPainted]            ; the last race's place still painted on the road: the sky and
+    or a                        ; the road put back first (the screen off a moment)
+    jr z, .unpainted
+    ldh a, [rLCDC]
+    add a
+    jr nc, .screenOff
+    call LcdOff
+    call Unpaint
+    ld a, LCDC_UPPER
+    ldh [rLCDC], a
+    ei
+    jr .unpainted
+.screenOff
+    call Unpaint
+.unpainted
     xor a
+    ld [wGone], a
+    ld [wGone + 1], a
+    ld [wGoneV], a
+    ld [wPaintStep], a
+    ld [wPaintCount], a
     ldh [hPos], a
     ldh [hPos + 1], a
     ldh [hPos + 2], a
@@ -3948,6 +4020,12 @@ Drive:
     ldh a, [hAir]               ; in the air: no drag, no brakes
     or a
     jr nz, .speedSet
+    ldh a, [hState]             ; past the flag (or out): the camera comes to a stop, while
+    or a                        ; your car speeds on (Finale)
+    jr z, .rolling
+    ld de, -FINISH_BRAKE
+    jr .slow
+.rolling
     bit 7, b                    ; PADF_DOWN
     jr nz, .braking
     ld de, -FRICTION
@@ -5013,6 +5091,371 @@ InitLines:
     ret
 
 ; de = source, hl = destination, bc = length
+; ---------------------------------------------------------------------------------------
+; Past the flag.  Your car speeds off up the road (Departing draws it) while the camera comes
+; to a stop and the rivals cruise past; then your place (or OUT) is painted onto the road
+; ahead, in perspective, for them to drive through: a patch of the ground's tilemap pointed
+; at the 32 tiles the skyline lends from the shared block (gen_gfx.py result_tiles), the sky
+; plain meanwhile.  A piece a frame: staged here into wPaintBuf, copied by VBlank.  Unpaint
+; puts it all back for the next race.
+Finale:
+    ldh a, [hState]
+    cp STATE_FINISHED
+    jr z, .finished
+    cp STATE_OUT
+    ret nz
+    jr .paintOnceStopped
+.finished
+    ld a, [wGoneV]              ; your car: off at its speed at the flag (6 at least) ...
+    or a
+    jr nz, .going
+    ldh a, [hSpeed + 1]
+    cp 6
+    jr nc, .setOff
+    ld a, 6
+.setOff
+    ld [wGoneV], a
+.going
+    ld a, [wGone + 1]           ; (out of sight past 2048)
+    cp 8
+    jr nc, .paintOnceStopped
+    ldh a, [hFrame]             ; ... and quicker every 8 frames, up to 12
+    and 7
+    jr nz, .pace
+    ld a, [wGoneV]
+    cp 12
+    jr nc, .pace
+    inc a
+    ld [wGoneV], a
+.pace
+    ldh a, [hSpeed + 1]         ; on up the road, from the camera that is coming to a stop
+    ld b, a
+    ld a, [wGoneV]
+    sub b
+    jr c, .paintOnceStopped
+    ld b, a
+    ld a, [wGone]
+    add b
+    ld [wGone], a
+    ld a, [wGone + 1]
+    adc 0
+    ld [wGone + 1], a
+.paintOnceStopped
+    ld a, [wPaintStep]
+    cp PAINT_DONE
+    ret z
+    or a
+    jr nz, .painting
+    ldh a, [hSpeed + 1]         ; the camera still rolling: the road is not still yet
+    ld b, a
+    ldh a, [hSpeed]
+    or b
+    ret nz
+    ldh a, [hState]             ; the words: the place, or OUT
+    cp STATE_OUT
+    ld a, RESULT_TEXTS - 1
+    jr z, .words
+    ldh a, [hRank]
+    dec a
+.words
+    ld [wPaintText], a
+    ld a, 1
+    ld [wPaintStep], a
+    ld [wPainted], a
+.painting
+    ld a, [wPaintCount]         ; (VBlank has not taken the last piece yet)
+    or a
+    ret nz
+    ld a, [wPaintStep]
+    ld c, a
+    inc a
+    ld [wPaintStep], a
+    ld a, c
+    cp 1
+    jr nz, .notBlank
+    ld hl, _VRAM8000 + SKY_BLANK * 16   ; 1: the sky's blank tile
+    ld bc, 16 << 8                      ; (16 zeros)
+    jr .fill
+.notBlank
+    cp 7
+    jr nc, .notSky
+    sub 2                               ; 2-6: a row of the sky's tilemap, all blank
+    swap a
+    add a
+    ld l, a
+    ld h, HIGH(_SCRN0)
+    ld bc, (32 << 8) | SKY_BLANK
+    jr .fill
+.notSky
+    cp 23
+    jr nc, .tilemap
+    sub 7                               ; 7-22: 32 bytes of the words' tiles
+    ld c, a
+    swap a
+    add a
+    ld e, a                             ; piece * 32 (ResultTiles is page-aligned) ...
+    ld a, c
+    srl a
+    srl a
+    srl a
+    ld c, a                             ; ... with 256s, plus 512 each of the words
+    ld a, [wPaintText]
+    add a
+    add c
+    add HIGH(ResultTiles)
+    ld d, a
+    ASSERT LOW(_VRAM8800 + SKY_8800_FIRST * 16) == 0
+    ld a, [wPaintStep]
+    sub 8
+    swap a
+    add a
+    ld l, a
+    ld h, HIGH(_VRAM8800 + SKY_8800_FIRST * 16)
+    ld a, [wPaintStep]                  ; (pieces 8 on are past the first 256 bytes)
+    cp 16
+    jr c, .lowHalf
+    inc h
+.lowHalf
+    ld a, RESULT_BANK
+    ld [rROMB0], a
+    ld b, 32
+    push hl
+    ld hl, wPaintBuf
+.copy
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    dec b
+    jr nz, .copy
+    pop hl
+    call SongBank
+    ld b, 32
+    jr .stage
+.tilemap
+    sub 23                              ; 23-26: a row of the road's tilemap, pointed at them
+    ld e, a
+    swap a
+    add a
+    add LOW(_SCRN0 + RESULT_ROW * 32 + RESULT_COL)
+    ld l, a
+    ld h, HIGH(_SCRN0 + RESULT_ROW * 32 + RESULT_COL)
+    jr nc, .rowSet
+    inc h
+.rowSet
+    ld a, e
+    add a
+    add a
+    add a
+    add RESULT_TILE
+    ld c, a
+    push hl
+    ld hl, wPaintBuf
+    ld b, RESULT_W
+.ids
+    ld a, c
+    ld [hl+], a
+    inc c
+    dec b
+    jr nz, .ids
+    pop hl
+    ld b, RESULT_W
+    jr .stage
+.fill                                   ; b bytes of c
+    push hl
+    ld hl, wPaintBuf
+    ld a, b
+    ld e, c
+.fillByte
+    ld [hl], e
+    inc hl
+    dec a
+    jr nz, .fillByte
+    pop hl
+.stage                                  ; b bytes in wPaintBuf, for hl: VBlank copies them
+    ld a, l
+    ld [wPaintDst], a
+    ld a, h
+    ld [wPaintDst + 1], a
+    ld a, b
+    ld [wPaintCount], a
+    ret
+
+; Put the road and the sky back after a painted place (the screen must be off).
+Unpaint:
+    ld a, [wPainted]
+    or a
+    ret z
+    xor a
+    ld [wPainted], a
+    ld [wPaintStep], a
+    ld [wPaintCount], a
+    ld a, TILE_BANK
+    ld [rROMB0], a
+    ld de, Tilemap + (RESULT_ROW - SKY_MAP_BYTES / 32) * 32 + RESULT_COL
+    ld hl, _SCRN0 + RESULT_ROW * 32 + RESULT_COL
+    ld c, RESULT_H
+.row
+    ld b, RESULT_W
+.col
+    ld a, [de]
+    ld [hl+], a
+    inc de
+    dec b
+    jr nz, .col
+    ld a, e
+    add 32 - RESULT_W
+    ld e, a
+    jr nc, .de
+    inc d
+.de
+    ld a, l
+    add 32 - RESULT_W
+    ld l, a
+    jr nc, .hl
+    inc h
+.hl
+    dec c
+    jr nz, .row
+    ld a, [wTrkSkyline]
+    jp LoadSky
+
+; The car past the flag, wGone units on up the road: drawn as the rivals are at that distance
+; (their smaller cars), in its own palette, until it is out of sight.  Then the speedometer.
+Departing:
+    ld hl, wOam
+    ld a, [wGone]
+    add PLAYER_Z
+    ld e, a
+    ld a, [wGone + 1]
+    adc 0
+    ld d, a
+    cp 8
+    jr nc, .gone
+    srl d
+    rr e
+    srl d
+    rr e
+    srl d
+    rr e
+    ld d, HIGH(DistToLine)
+    ld a, [de]
+    cp RIVAL_D4
+    jr c, .gone
+    ld c, a                     ; c = its ground line
+    push hl                     ; its x across the road, scaled down to that line as the
+    ldh a, [hX + 1]             ; other player's car is (UpdateRivals)
+    sra a
+    add SHEAR_SPAN
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, ShearPointers
+    add hl, de
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    ld e, c
+    dec e
+    add hl, de
+    ld a, [hl]
+    add a
+    add 128
+    ld b, a
+    ldh a, [hBuiltScx]          ; and where the road has been slid to on that line
+    ld h, a
+    ld a, c
+    add HORIZON - 1
+    ld l, a
+    ld a, b
+    sub [hl]
+    ld b, a                     ; b = screen x of its middle
+    pop hl
+    ld a, c
+    add HORIZON
+    ld d, a                     ; d = OAM y with its bottom row on that line
+    ld a, c
+    cp RIVAL_D16
+    jr c, .size12
+    ld a, d                     ; close: the car's two halves and its shadow
+    sub 2
+    ld e, CAR_TILE
+    call .pair
+    ld a, d
+    add 13
+    ld [hl+], a
+    ld a, b
+    add 4
+    ld [hl+], a
+    ld a, SHADOW_TILE
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    jr .hide1
+.size12
+    cp RIVAL_D12
+    jr c, .size8
+    ld a, d
+    dec a
+    ld e, CAR12_TILE
+    call .pair
+    jr .hide2
+.size8
+    cp RIVAL_D8
+    ld e, CAR8_TILE
+    jr nc, .one
+    ld e, CAR4_TILE
+.one
+    ld a, d
+    dec a
+    ld [hl+], a
+    ld a, b
+    add 4
+    ld [hl+], a
+    ld a, e
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    jr .hide3
+.gone
+    xor a
+    ld [hl], a
+    ld l, LOW(wOam) + 4
+.hide3
+    xor a
+    ld [hl], a
+    ld a, l
+    add 4
+    ld l, a
+.hide2
+    xor a
+    ld [hl], a
+    ld a, l
+    add 4
+    ld l, a
+.hide1
+    xor a
+    ld [hl], a
+    jp PlayerSprites.speedo
+.pair                           ; two halves at y a, tile e, x b and b + 8
+    ld [hl+], a
+    push af
+    ld a, b
+    ld [hl+], a
+    ld a, e
+    ld [hl+], a
+    xor a
+    ld [hl+], a
+    pop af
+    ld [hl+], a
+    ld a, b
+    add 8
+    ld [hl+], a
+    ld a, e
+    ld [hl+], a
+    ld a, OAMF_XFLIP
+    ld [hl+], a
+    ret
+
 ; a = the place needed by the end of the lap being raced, F-Zero's rank requirement: in a
 ; race against rivals (not practice, not linked, not without rivals), 7th then 5th over
 ; three laps, 7th, 6th, 5th, 4th over five; none on the last lap (8).  Uses bc, hl.
@@ -5240,6 +5683,10 @@ FontHigh:
 Tracks:                         ; 512 bytes each: see tools/gen_tracks.py
     INCBIN "build/tracks.bin"
 
+SECTION "result tiles", ROMX, BANK[RESULT_BANK], ALIGN[8]
+ResultTiles:                    ; 512 bytes for each of RESULT_TEXTS (gen_gfx.py result_tiles)
+    INCBIN "build/result.bin"
+
 SECTION "fzero line tables", ROMX, BANK[GFX_BANK]
 BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
     INCBIN "build/bend.bin"
@@ -5276,6 +5723,14 @@ wAdvance:   ds 2                ; how far the car went along the course this fra
 wShake:     db                  ; frames left of the jolt after a hit
 wSlide:     db                  ; frames left of the slide after landing from a ramp
 wRev:       db                  ; the engine note's rev above (or below) the speed's, signed
+wGone:      ds 2                ; past the flag: how far your car has sped on up the road
+wGoneV:     db                  ; ...and how fast (units a frame)
+wPainted:   db                  ; the place is painted on the road (the sky lent its tiles)
+wPaintStep: db                  ; Finale's painting: the next step, PAINT_DONE when done
+wPaintText: db                  ; which words: 0-7 the place, 8 OUT
+wPaintCount: db                 ; bytes in wPaintBuf for VBlank to copy (0: none waiting)
+wPaintDst:  ds 2                ; ...to where
+wPaintBuf:  ds 32
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash

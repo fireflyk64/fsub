@@ -3,6 +3,9 @@
 //
 //   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--gif NAME FROM TO]
 //
+// AFTER=N runs on N frames past the end of the race, hands off (the finale), and with --gif
+// records those frames instead.
+//
 // masher  holds the throttle and steers for the middle of the road.  Nothing else.
 // casual  also brakes when a sharp bend is already throwing it wide, dodges what it sees,
 //         and fires boosts on straights.
@@ -45,11 +48,19 @@ async function race(kind, record) {
   const bendAt = chunk => felt(rd(sym.wTrackBend + (chunk & 63)));
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
-  let lastHp = 64, lastLap = 1, lastF = -1, started = false;
+  let lastHp = 64, lastLap = 1, lastF = -1, started = false, endAt = -1;
+  const AFTER = +(process.env.AFTER || 0);
   const seen = [];                                // human, lifter: what they saw, frame by frame
   const told = [];                                // guided: what the guide said, frame by frame
   for (let i = 0; i < 40000; i++) {
     step();
+    if (endAt >= 0) {                     // past the end: watch the finale
+      if (i - endAt >= AFTER) break;
+      for (const k in keys) set(k, 0);
+      const f = rd(sym.hFrame); if (((f - lastF) & 255) !== 1) out.dropped++; lastF = f;
+      if (record && (i - endAt) % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
+      continue;
+    }
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
     if (i > 20 && rd(sym.hMenu)) {        // the menu: pick the track and the level, then Start
       const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), tap = i % 6 < 3;
@@ -61,7 +72,7 @@ async function race(kind, record) {
     if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
     const ld = rd(sym.hLoad); out.peak = Math.max(out.peak, ld >= 144 ? ld - 144 : ld + 10);
-    if (record && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
+    if (record && !AFTER && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
     if (hp < lastHp) { out.hits++; if (process.env.HITS) (out.where = out.where || []).push(((rd(sym.hPos + 2) & 63)) + ":" + (lastHp - hp)); } lastHp = hp; out.minHealth = Math.min(out.minHealth, hp);
     if (lap !== lastLap) { out.lapFrames.push(out.frames); lastLap = lap; }
     if (count === 0 && st === 0) { out.frames++; const r = rd(sym.hRank); if (out.frames > 600) { out.worst = Math.max(out.worst, r); out.best = Math.min(out.best, r); } }
@@ -69,7 +80,8 @@ async function race(kind, record) {
       out.place = rd(sym.hRank); out.health = hp; out.wrecked = st === 2; out.rankedOut = st === 3; out.lapFrames.push(out.frames);
       // how far each rival is ahead (+) or behind (-) at the end, in units
       out.gaps = []; for (let r = 0; r < 7; r++) out.gaps.push(s16(rd(sym.wRivals + r * 8 + 1) | rd(sym.wRivals + r * 8 + 2) << 8) - 175);
-      break;
+      if (!AFTER) break;
+      endAt = i; continue;
     }
     // ---- the bot
     const x = s8(rd(sym.hX + 1)), bend = (rd(sym.hBend) - 32) * (rd(sym.wTight) ? 1.5 : 1), speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
