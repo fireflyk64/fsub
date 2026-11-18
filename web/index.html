@@ -33,11 +33,6 @@ body.classic canvas{box-shadow:none;border-radius:0;background:#000}
 #guide .steer{background:rgba(45,90,190,.92)}
 #guide .why{font-size:.66em;font-weight:normal;color:#fff;text-shadow:0 1px 3px #000,0 0 2px #000}
 #guideBtn.on{border-color:#fc6;color:#fc6}
-/* The speed, over the top right of the picture (the status bar has no room for it). */
-#speedo{position:absolute;z-index:4;pointer-events:none;font:bold 1em/1 "Courier New",monospace;color:#fff;text-align:right;
-  text-shadow:0 0 2px #000,0 0 2px #000,1px 1px 0 #000;letter-spacing:.02em}
-#speedo small{font-size:.55em;margin-left:.15em}
-#speedo[hidden]{display:none}
 #brake.cue,#gas.cue,#boost.cue{box-shadow:0 0 0 3px #fff,0 0 22px 6px rgba(255,255,255,.45)}
 #gas.cue-off{opacity:.35}
 #stick.cue-left::after,#stick.cue-right::after{position:absolute;top:50%;transform:translateY(-50%);font-size:44px;color:#8af}
@@ -165,7 +160,7 @@ setLook(screen.look);
 // The line in the top bar: a passing note (say), else what a race asks of the player (amber),
 // else the keys for where the game is, the menu or a race (or the touch controls on a touch
 // screen); kept up to date every frame (showMsg).
-let note='', noteUntil=0, raceLine='', where=()=>null, toggleGuide=()=>{}, showSpeed=()=>{};
+let note='', noteUntil=0, raceLine='', where=()=>null, toggleGuide=()=>{};
 const say=(t,ms=2500)=>{note=t; noteUntil=performance.now()+ms;};
 const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
@@ -295,7 +290,6 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       aloneWas=alone;};
     const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms)); showMsg();
       if(guide.on) linkStep(()=>guide.show(known?advise(rd,sym):null,ms));
-      showSpeed();
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
@@ -327,15 +321,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     guideBtn.addEventListener('click',()=>toggleGuide());
     try{ if(localStorage.getItem('fsub:guide')==='1') toggleGuide(true);}catch(err){}
     window.__gb.guide=guide;
-    // The speed in km/h (top speed 8 units a frame is 440, a boost tops 600), during a race.
-    const speedo=document.createElement('div'); speedo.id='speedo'; speedo.hidden=true; document.body.appendChild(speedo);
-    let shownKmh=-1;
-    showSpeed=()=>{ if(!known||rd(sym.hMenu)){ if(!speedo.hidden) speedo.hidden=true; return; }
-      const kmh=Math.round((rd(sym.hSpeed)|rd(sym.hSpeed+1)<<8)/256*55), r=cv.getBoundingClientRect();
-      speedo.style.left=r.left+scrollX+'px'; speedo.style.top=r.top+scrollY+r.height*0.015+'px'; speedo.style.width=r.width*0.97+'px';
-      speedo.style.fontSize=Math.max(12,Math.min(26,r.width/18))+'px';
-      if(kmh!==shownKmh){ shownKmh=kmh; speedo.innerHTML=kmh+'<small>km/h</small>'; }
-      speedo.hidden=false; };
+
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();
 </script></body></html>

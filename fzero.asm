@@ -91,6 +91,8 @@ DEF CAR4_TILE   EQU CAR_TILE + 22
 DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
 DEF RIVAL_OAM   EQU 14 * 4      ; rivals own three OAM entries each from here on
+DEF SPEEDO_OAM  EQU 39 * 4      ; the speedometer's car (after the rivals' 21)
+DEF SPEEDO_X    EQU 12 * 8      ; where its track starts on the status bar (tile 12)
 DEF PLAYER_D    EQU 95          ; ground line the player's car sits on
 DEF BOOST_MAX   EQU $0B         ; top speed while boosting
 DEF BOOST_TIME  EQU 80          ; frames a boost lasts
@@ -1489,6 +1491,23 @@ PlayerSprites:
     ld [hl+], a
     ld [hl], OAMF_XFLIP
 
+    ; --- the speedometer: a little car sliding along the status bar, further right the
+    ; faster (2.25 pixels a unit of speed: standing still at the left, a boost at the right)
+    ld hl, wOam + SPEEDO_OAM
+    ld a, HUD_LINE + 16 - 8     ; (an 8x16 sprite whose drawn rows are the bottom eight)
+    ld [hl+], a
+    ldh a, [hSpeed + 1]
+    ld b, a
+    add a
+    srl b
+    srl b
+    add b
+    add SPEEDO_X + 8
+    ld [hl+], a
+    ld a, CAR8_TILE
+    ld [hl+], a
+    xor a
+    ld [hl], a
     ret
 
 ; ---------------------------------------------------------------------------------------
@@ -2955,7 +2974,7 @@ UpdateHud:
     ld [hl+], a
     ld [hl+], a
     ld [hl+], a
-    jr .health
+    jr .speedTrack
 .boosts
     ldh a, [hBoosts]            ; otherwise, a pip for each boost in hand
     ld c, a
@@ -2973,6 +2992,12 @@ UpdateHud:
     jr nz, .pip
     ld a, HUD_BLANK
     ld [hl+], a
+.speedTrack                     ; four tiles where the speedometer's car slides (PlayerSprites)
+    ld a, HUD_BLANK
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
+    ld [hl+], a
 .health
     ldh a, [hHealth]
     ld c, a                     ; health left to show
@@ -2986,17 +3011,17 @@ UpdateHud:
     jr z, .shown
     ld c, 0
 .shown
-    ld b, 8
+    ld b, 4                     ; four cells of 16: full, half (8 or more) or empty
 .cell
     ld a, c
-    cp 8
+    cp 16
     jr c, .partial
-    sub 8
+    sub 16
     ld c, a
     ld a, HUD_FULL
     jr .put
 .partial
-    cp 4
+    cp 8
     ld c, 0
     ld a, HUD_HALF
     jr nc, .put
