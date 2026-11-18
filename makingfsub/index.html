@@ -96,7 +96,7 @@
   pre code { background: none; padding: 0; font-size: inherit; }
   pre .c { color: var(--muted); }
   figure { margin: 28px 0; }
-  figure img { display: block; width: 100%; height: auto; border-radius: 6px; }
+  figure img, figure video { display: block; width: 100%; height: auto; border-radius: 6px; }
   figure.wide { width: min(1000px, calc(100vw - 32px)); margin-left: 50%; transform: translateX(-50%); }
   figure.pixel img { image-rendering: pixelated; width: min(480px, 100%); margin: 0 auto; }
   figure.diagram { width: min(760px, calc(100vw - 32px)); margin-left: 50%; transform: translateX(-50%);
@@ -189,8 +189,8 @@ EDIT: HOW TO USE THIS FILE
 </header>
 
 <figure class="wide">
-  <img src="img/splash.jpg" alt="A Miyoo Mini handheld running fsub: the start of a race on Neo City with the rivals ahead, and the menu showing TRACK NEO CITY, CAR COMET, RIVALS NORMAL, MODE RACE" width="1296" height="800">
-  <figcaption>The ROM on a Miyoo Mini handheld: the start of a race on Neo City, and the menu.</figcaption>
+  <video src="img/splash.mp4" poster="img/splash-poster.jpg" width="1296" height="800" autoplay muted loop playsinline aria-label="A Miyoo Mini handheld running fsub: a race on Neo City, passing a rival, and the menu showing TRACK NEO CITY, CAR COMET, RIVALS NORMAL, MODE RACE"></video>
+  <figcaption>The ROM on a Miyoo Mini handheld: a race on Neo City, and the menu.</figcaption>
 </figure>
 
 <nav class="toc" aria-label="Contents">
