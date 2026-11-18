@@ -128,6 +128,7 @@ DEF FRICTION    EQU $000A       ; lost per frame off it: lifting scrubs speed of
 DEF BRAKE       EQU $0014
 DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
 DEF HEALTH_MAX  EQU 64
+DEF LOW_HEALTH  EQU 16          ; below this: an alarm ticks and the health bar blinks
 DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
@@ -410,6 +411,8 @@ EntryPoint:
     ld [wMenuRow], a
     dec a
     ld [wSongNow], a            ; (no song yet)
+    ld a, 1                     ; the engine note on: half of how fast it feels (Select: off)
+    ldh [hEngine], a
     ld a, HIGH(wLinesA)
     ldh [hFront], a
     ld a, LEVEL_START
@@ -1419,7 +1422,23 @@ PlayerSprites:
     inc a
 .leftY
     ld [hl+], a
+    ld a, [wShake]              ; hit: the car jolts from side to side for a few frames
+    or a
+    jr z, .steady
+    dec a
+    ld [wShake], a
+    and 2
+    ld a, 2
+    jr z, .jolt
+    ld a, -2
+.jolt
+    ld d, a
     ldh a, [hCarX]
+    add d
+    jr .shaken
+.steady
+    ldh a, [hCarX]
+.shaken
     ld e, a
     ld [hl+], a
     ldh a, [hCarTile]
@@ -2433,6 +2452,8 @@ Damage:
     ldh a, [hState]
     or c
     jr nz, .done
+    ld a, 8                     ; it jolts the car (PlayerSprites)
+    ld [wShake], a
     ldh a, [hHealth]
     sub b
     jr z, .dead
@@ -2590,6 +2611,7 @@ DEF SFX_SKID  EQU 0
 DEF SFX_HIT   EQU 2
 DEF SFX_BOOST EQU 4
 DEF SFX_BOOM  EQU 6
+DEF SFX_ALARM EQU 8
 Sfx:
     push hl
     push de
@@ -2613,6 +2635,7 @@ Sfx:
     db $F2, $65                 ; hit: thud
     db $A5, $14                 ; boost: rush
     db $F7, $73                 ; wreck: long low roar
+    db $B1, $01                 ; low energy: a sharp tick
 
 ; Paint a stretch of the road.  de = where it starts, hl = where it ends, in units from
 ; the finish line.  b = BGP page being built, hBandOr = the road colour's bits there.
@@ -2912,6 +2935,16 @@ UpdateHud:
 .health
     ldh a, [hHealth]
     ld c, a                     ; health left to show
+    cp LOW_HEALTH               ; low: the bar blinks (on and off every 16 frames)
+    jr nc, .shown
+    ldh a, [hState]
+    or a
+    jr nz, .shown
+    ldh a, [hFrame]
+    and %00010000
+    jr z, .shown
+    ld c, 0
+.shown
     ld b, 8
 .cell
     ld a, c
@@ -3702,6 +3735,15 @@ Drive:
     ld hl, 0
     jp .speedSet
 .go
+    ldh a, [hHealth]            ; low on health: an alarm ticks, twice a second
+    cp LOW_HEALTH
+    jr nc, .noAlarm
+    ldh a, [hFrame]
+    and 31
+    jr nz, .noAlarm
+    ld a, SFX_ALARM
+    call Sfx
+.noAlarm
     ; Up fires a boost if there is one
     ldh a, [hNewKeys]
     and PADF_UP
@@ -4982,6 +5024,7 @@ wPalBank:   db                  ; bank of the track's palette tables
 wTight:     db                  ; the chunk we are in is a "special tight" corner
 wTurn:      ds 2                ; last frame's bend * speed (signed): how hard we were turning
 wAdvance:   ds 2                ; how far the car went along the course this frame (8.8)
+wShake:     db                  ; frames left of the jolt after a hit
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash
