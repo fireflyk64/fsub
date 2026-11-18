@@ -98,6 +98,7 @@
   figure { margin: 28px 0; }
   figure img, figure video { display: block; width: 100%; height: auto; border-radius: 6px; }
   figure.wide { width: min(1000px, calc(100vw - 32px)); margin-left: 50%; transform: translateX(-50%); }
+  figure.splash { max-width: 650px; }
   figure.pixel img { image-rendering: pixelated; width: min(480px, 100%); margin: 0 auto; }
   figure.diagram { width: min(760px, calc(100vw - 32px)); margin-left: 50%; transform: translateX(-50%);
     background: var(--card); border-radius: 10px; padding: 8px 4px; }
@@ -188,8 +189,8 @@ EDIT: HOW TO USE THIS FILE
   </a>
 </header>
 
-<figure class="wide">
-  <video src="img/splash.mp4" poster="img/splash-poster.jpg" width="1296" height="800" autoplay muted loop playsinline aria-label="A Miyoo Mini handheld running fsub: a race on Neo City, passing a rival, and the menu showing TRACK NEO CITY, CAR COMET, RIVALS NORMAL, MODE RACE"></video>
+<figure class="splash">
+  <video src="img/splash.mp4" poster="img/splash-poster.jpg" width="650" height="400" autoplay muted loop playsinline aria-label="A Miyoo Mini handheld running fsub: a race on Neo City, passing a rival, and the menu showing TRACK NEO CITY, CAR COMET, RIVALS NORMAL, MODE RACE"></video>
   <figcaption>The ROM on a Miyoo Mini handheld: a race on Neo City, and the menu.</figcaption>
 </figure>
 
