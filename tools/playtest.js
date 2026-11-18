@@ -22,7 +22,8 @@ const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new
 const PLAYER_Z = asmConst('PLAYER_Z'), PUSH = asmConst('PUSH_K') * 16 / 1024 / 2 / 256;
 
 async function race(kind, record) {
-  const m = await Binjgb({ wasmBinary: fs.readFileSync(ROOT + '/web/binjgb.wasm') });
+  const wasm = fs.readFileSync(ROOT + '/web/binjgb.wasm');   // (instantiateWasm: newer Emscripten builds ignore wasmBinary)
+  const m = await Binjgb({ instantiateWasm: (info, done) => { WebAssembly.instantiate(wasm, info).then((r) => done(r.instance)); return {}; } });
   const rom = fs.readFileSync(ROOT + '/fzero.gb'); const size = (rom.length + 0x7fff) & ~0x7fff;
   const ptr = m._malloc(size); new Uint8Array(m.HEAP8.buffer, ptr, size).fill(0).set(rom);
   const e = m._emulator_new_simple(ptr, size, 44100, 4096, 2); m._emulator_set_default_joypad_callback(e, m._joypad_new());

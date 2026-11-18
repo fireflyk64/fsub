@@ -9,7 +9,7 @@
 html,body{margin:0;background:#111;color:#ddd;font:14px sans-serif;text-align:center;overscroll-behavior:none}
 #wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;align-items:center;touch-action:none;background:#111;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(100vw,calc(52dvh*160/144));flex:none;touch-action:none}
+canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(var(--gw),calc(52dvh*160/144));flex:none;touch-action:none}
 #top{display:flex;gap:8px;align-items:center;justify-content:center;width:100%;padding:6px;flex:none}
 #msg{flex:1;font-size:12px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #pads{flex:1;display:flex;width:100%;min-height:0;gap:10px;padding:6px 10px 12px}
@@ -21,41 +21,98 @@ button.on{background:#555;border-color:#aaa}
 #top button{padding:8px 12px;font-size:12px;border-radius:9px}
 #more{flex:none;font:bold 12px sans-serif;padding:9px 12px;border-radius:9px;border:2px solid #666;background:#222;color:#8af;text-decoration:none;white-space:nowrap}
 #boost{grid-column:1/3}
+/* A narrow screen: the buttons on one row, the message on its own below them. */
+@media (max-width:520px){
+  #top{flex-wrap:wrap;gap:6px;padding:5px 6px 2px}
+  #top button,#more{padding:7px 9px}
+  #msg{order:9;flex:1 1 100%}
+}
 #gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
 #brake{background:#422;border-color:#a55} #brake.on{background:#a44}
 /* Wide screens (a phone on its side, a desktop): pads either side of the picture. */
 @media (min-aspect-ratio: 11/10){
   #wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;align-content:flex-start}
   #top{order:0;height:44px}
-  canvas{order:2;width:auto;height:calc(100dvh - 56px);max-width:56vw}
+  canvas{order:2;width:auto;height:calc(100dvh - 56px);max-width:calc(var(--gw)*.56)}
   #pads{display:contents}
-  #stick{order:1;height:calc(100dvh - 68px);margin:6px;max-width:22vw}
-  #acts{order:3;height:calc(100dvh - 68px);margin:6px;max-width:22vw}
+  #stick{order:1;height:calc(100dvh - 68px);margin:6px;max-width:calc(var(--gw)*.22)}
+  #acts{order:3;height:calc(100dvh - 68px);margin:6px;max-width:calc(var(--gw)*.22)}
+}
+/* The lobby: a panel at the right, over the game on a narrow screen (LOBBY opens and shuts
+   it) and beside it on a wide one, where the game gets the rest of the width (--gw). */
+:root{--panel:320px;--gw:100vw}
+#lobbyBtn{position:relative}
+#lobbyBtn .dot{position:absolute;top:-5px;right:-5px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#e64;color:#fff;font-size:10px;line-height:16px}
+#lobby{position:fixed;top:0;right:0;bottom:0;width:min(var(--panel),100vw);z-index:5;display:flex;flex-direction:column;gap:6px;padding:8px;
+  background:#181818;border-left:1px solid #333;text-align:left;font-size:13px;transform:translateX(105%);transition:transform .18s;
+  padding-top:max(8px,env(safe-area-inset-top));padding-bottom:max(8px,env(safe-area-inset-bottom))}
+body.lobby #lobby{transform:none}
+#lobby input{-webkit-user-select:text;user-select:text;font:13px sans-serif;background:#0d0d0d;color:#ddd;border:1px solid #444;border-radius:6px;padding:6px 7px;min-width:0}
+#lobby button{font:bold 12px sans-serif;padding:6px 10px;border-radius:7px}
+#lobby button:disabled{opacity:.45}
+#lobbyHead{display:flex;align-items:center;gap:8px}
+#lobbyHead b{font-size:14px;color:#8af}
+#lobbyState{flex:1;color:#999;font-size:12px}
+#lobbyName{width:100%}
+#race,#ask{border:1px solid #5a8;border-radius:8px;padding:7px;background:#142018;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+#ask{border-color:#c94;background:#221a10}
+#race[hidden],#ask[hidden]{display:none}
+#raceText,#askText{flex:1 1 100%}
+#raceLink{flex:1 1 100%;overflow-wrap:anywhere;font-size:12px}
+#roster{list-style:none;margin:0;padding:0;max-height:34%;overflow:auto}
+#roster li{display:flex;align-items:center;gap:6px;padding:3px 0;border-bottom:1px solid #262626}
+#roster .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#roster .me .name{color:#8af}
+#roster .busy{color:#9b7;font-size:11px}
+#chatLog{flex:1;min-height:60px;overflow:auto;border:1px solid #333;border-radius:6px;padding:5px 7px;background:#101010;overflow-wrap:anywhere}
+#chatLog .sys{color:#888;font-size:12px}
+#chatLog .name{color:#fc6;font-weight:bold} #chatLog .name.me{color:#8af}
+#chatForm{display:flex;gap:5px} #chatInput{flex:1}
+#chatHint{min-height:1em;color:#c96;font-size:11px}
+#lobbyFoot{display:flex;gap:6px;flex-wrap:wrap}
+#lobbyFoot .grow{flex:1}
+@media (min-width:1000px) and (min-aspect-ratio:3/2){
+  body.lobby{--gw:calc(100vw - var(--panel))}
+  body.lobby #wrap{margin-right:var(--panel)}
+  body.lobby #lobbyClose{display:none}
 }
 #help{padding:10px 14px;text-align:left;max-width:640px;margin:auto;-webkit-user-select:text;user-select:text}
 #help *{-webkit-user-select:text;user-select:text}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
 <div id="wrap">
-  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy">How it works</a></div>
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy">How it works</a></div>
   <canvas id="screen" width="160" height="144"></canvas>
   <div id="pads">
     <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
     <div id="acts"><button id="boost" data-k="up">BOOST</button><button id="brake" data-k="A">BRAKE</button><button id="gas" data-k="B">GAS</button></div>
   </div>
 </div>
+<aside id="lobby" aria-label="Lobby">
+  <div id="lobbyHead"><b>Lobby</b><span id="lobbyState">offline</span><button id="lobbyClose" title="Shut the lobby (it stays connected)">&times;</button></div>
+  <input id="lobbyName" type="text" autocomplete="off" title="Your name in the lobby and in a race">
+  <div id="ask" hidden><span id="askText"></span><button id="askYes">Race</button><button id="askNo">No thanks</button></div>
+  <div id="race" hidden><span id="raceText"></span><a id="raceLink" hidden target="_blank" rel="noopener"></a><button id="raceEnd">Leave the race</button></div>
+  <ul id="roster"></ul>
+  <div id="chatLog"></div>
+  <form id="chatForm"><input id="chatInput" type="text" autocomplete="off" maxlength="60" placeholder="Say something…"><button type="submit">Send</button></form>
+  <div id="chatHint"></div>
+  <div id="lobbyFoot"><button id="invite" title="Opens a race of your own and copies its link: whoever opens the link races you">Invite a friend</button><span class="grow"></span><button id="lobbyLeave" title="Leave the lobby; you stay out until you enter again">Leave lobby</button><button id="lobbyEnter" hidden>Enter the lobby</button></div>
+</aside>
 <details id="help"><summary>How to play</summary>
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival; race, practice or two-player link.</p>
 <p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
-<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce. Two-player link needs two consoles and a cable, so not this page.</p>
-<p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT)</p>
+<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
+<p><b>Two players, two browsers:</b> open the LOBBY, press <b>Race</b> next to somebody's name (or <b>Invite a friend</b> and send them the link). When you are connected, both pick <b>LINK</b> in the menu and press GAS; when both screens show 2P, either of you presses Start. Each Game Boy runs its own car and two rivals and shows the other's, a few frames late, as a link cable between two consoles would. Keep the page in front: a tab in the background stops, and the link drops.</p>
+<p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT), with link-cable hooks · lobby: lobbylink</p>
 </details>
 <script src="binjgb.js"></script>
-<script>
-"use strict";
+<script type="module">
+import { Cable, EV_SERIAL } from "./link.js";
+import { initLobby, LOBBY_SERVER } from "./lobby.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
-const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4;
+const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
 const ac=new (window.AudioContext||window.webkitAudioContext)();
 const cv=document.getElementById('screen'), ctx=cv.getContext('2d'), img=ctx.createImageData(160,144);
 const msg=document.getElementById('msg');
@@ -79,9 +136,10 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const toggleFS=()=>{ try{ if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document);}
       else{const f=wrap.requestFullscreen||wrap.webkitRequestFullscreen; if(f) f.call(wrap); else msg.textContent='No fullscreen here: add the page to your home screen instead';} }catch(err){} };
     document.getElementById('fs').addEventListener('click',toggleFS);
-    addEventListener('keydown',ev=>{ac.resume(); if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
+    const typing=ev=>ev.target&&ev.target.closest&&ev.target.closest('input,textarea');   // (keys typed in the lobby are not the game's)
+    addEventListener('keydown',ev=>{ac.resume(); if(typing(ev)) return; if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
-    addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k){src.kb[k]=0;apply();ev.preventDefault();}});
+    addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k&&src.kb[k]){src.kb[k]=0;apply();ev.preventDefault();}});
     // Touch.  Nothing here may select text, open a menu, scroll or zoom.
     for(const t of ['contextmenu','selectstart','dragstart','gesturestart']) wrap.addEventListener(t,ev=>ev.preventDefault());
     for(const t of ['touchstart','touchmove','touchend']) wrap.addEventListener(t,ev=>{if(!ev.target.closest('a')) ev.preventDefault();},{passive:false});   // (links still follow a tap)
@@ -134,18 +192,33 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       for(let i=0;i<AUDIO_FRAMES;i++){l[i]=ab[2*i]*0.5/255;r[i]=ab[2*i+1]*0.5/255;}
       const s=ac.createBufferSource(); s.buffer=b; s.connect(ac.destination); s.start(audioT); audioT+=AUDIO_FRAMES/ac.sampleRate;
     };
-    const runUntil=t=>{for(;;){const ev=m._emulator_run_until_f64(e,t);
+    const ticks=()=>m._emulator_get_ticks_f64(e);
+    const runUntil=t=>{for(;;){const until=cable.plugged?Math.min(t,ticks()+SLICE):t, ev=m._emulator_run_until_f64(e,until);
+      if(ev&EV_SERIAL) cable.serial();
       if(ev&EV_FRAME) img.data.set(fb);
       if(ev&EV_AUDIO) pushAudio();
-      if(ev&EV_TICKS) break;}};
+      if(ev&EV_TICKS){cable.tick(); if(until>=t) break;}}};
     const raf=ms=>{requestAnimationFrame(raf); pollPad();
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
       ctx.putImageData(img,0,0);};
+    // The link cable to another browser, and the lobby where the other browser is found.
+    const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l)});
+    const lobbyBtn=document.getElementById('lobbyBtn'), dot=lobbyBtn.querySelector('.dot');
+    let news=0;
+    const openLobby=on=>{document.body.classList.toggle('lobby',on); if(on){news=0;dot.hidden=true;} try{localStorage.setItem('fsub:panel',on?'1':'0');}catch(err){}};
+    lobbyBtn.addEventListener('click',()=>openLobby(!document.body.classList.contains('lobby')));
+    document.getElementById('lobbyClose').addEventListener('click',()=>openLobby(false));
+    const query=new URLSearchParams(location.search);
+    const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),log:l=>console.log(l),
+      onNews:()=>{if(!document.body.classList.contains('lobby')){news++;dot.textContent=news>9?'9+':news;dot.hidden=false;}},
+      onStatus:t=>{msg.textContent=t||READY;}});
+    let wantPanel=null; try{wantPanel=localStorage.getItem('fsub:panel');}catch(err){}
+    if(query.get('race')||wantPanel==='1'||(wantPanel===null&&matchMedia('(min-width:1000px) and (min-aspect-ratio:3/2)').matches)) openLobby(true);
     requestAnimationFrame(raf);
-    window.__gb={m,e,ac};
-    msg.textContent=READY;
+    window.__gb={m,e,ac,cable,lobby};
+    if(!lobby.race) msg.textContent=READY;
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();
 </script></body></html>
