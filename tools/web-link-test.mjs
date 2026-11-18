@@ -42,7 +42,7 @@ async function press(page, key, ms = 120) { await page.keyboard.down(key); await
 // MODE to LINK with the arrows, then GAS (or a click on the START button, as a player might).
 async function toLinkRace(page, { click = false } = {}) {
   await page.locator("canvas").click({ position: { x: 5, y: 5 } });   // (the keyboard to the game, not the name box)
-  for (const k of ["ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight"]) await press(page, k);
+  for (const k of ["ArrowDown", "ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight"]) await press(page, k);   // (TRACK, CAR, RIVALS, MODE: LINK)
   if (click) await page.click("#top [data-k=start]"); else await press(page, "KeyX");   // the race screen, 2P
 }
 

@@ -1,10 +1,12 @@
 // Playtest bots: drive a full race in the ROM (headless, in the web build's emulator) at
 // three levels of skill and report how each got on.  For tuning the balance.
 //
-//   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--gif NAME FROM TO]
+//   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--car N] [--gif NAME FROM TO]
 //
 // AFTER=N runs on N frames past the end of the race, hands off (the finale), and with --gif
-// records those frames instead.
+// records those frames instead.  --car N picks the car (0 ARROW .. 3 COMET).
+// PEAK=1 prints the frames that set a new worst load (PEAK=all: some fixed frames);
+// LOADAVG=1 the mean load as well.
 //
 // masher  holds the throttle and steers for the middle of the road.  Nothing else.
 // casual  also brakes when a sharp bend is already throwing it wide, dodges what it sees,
@@ -30,6 +32,7 @@ const bots = args.filter(a => KINDS.includes(a));
 const REACT = +(process.env.REACT || 18);       // frames between seeing and acting, for human and lifter
 const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : -1;   // (-1: the menu's own; 0: no rivals)
 const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
+const carAt = args.indexOf('--car'), car = carAt >= 0 ? +args[carAt + 1] : 0;   // (0 ARROW, 1 HORNET, 2 BISON, 3 COMET)
 const gifAt = args.indexOf('--gif');
 const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)'))[1];
 const PLAYER_Z = asmConst('PLAYER_Z'), PUSH = asmConst('PUSH_K') * 16 / 1024 / 2 / 256;
@@ -41,6 +44,7 @@ async function race(kind, record) {
   const ptr = m._malloc(size); new Uint8Array(m.HEAP8.buffer, ptr, size).fill(0).set(rom);
   const e = m._emulator_new_simple(ptr, size, 44100, 4096, 2); m._emulator_set_default_joypad_callback(e, m._joypad_new());
   const rd = a => m._emulator_read_mem(e, a), s8 = v => (v << 24) >> 24, s16 = v => (v << 16) >> 16;
+  const carK = () => rd((rd(sym.wPush) | rd(sym.wPush + 1) << 8) + 32);   // (its PushScale at speed 8: its K)
   const keys = {}; const set = (k, v) => { if (!!keys[k] !== !!v) { keys[k] = !!v; m['_set_joyp_' + k](e, v ? 1 : 0); } };
   let ticks = 0; const step = () => { ticks += 70224; for (;;) { if (m._emulator_run_until_f64(e, ticks) & 4) break; } };
   // a chunk's bend as the car feels it: the top bit marks a corner half as tight again
@@ -63,15 +67,18 @@ async function race(kind, record) {
     }
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
     if (i > 20 && rd(sym.hMenu)) {        // the menu: pick the track and the level, then Start
-      const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), tap = i % 6 < 3;
+      const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), cr = rd(sym.wCar), tap = i % 6 < 3;
       let key = 'start';
       if (trk !== track) key = row !== 0 ? 'up' : (trk < track ? 'right' : 'left');
-      else if (level >= 0 && lv !== level) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
+      else if (cr !== car) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (cr < car ? 'right' : 'left');
+      else if (level >= 0 && lv !== level) key = row !== 2 ? (row < 2 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
       for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, tap && k === key);
       continue; }
     if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
-    const ld = rd(sym.hLoad); out.peak = Math.max(out.peak, ld >= 144 ? ld - 144 : ld + 10);
+    const ld = rd(sym.hLoad), lv = ld >= 144 ? ld - 144 : ld + 10;
+    if (process.env.PEAK && (process.env.PEAK === 'all' ? [136, 396, 1000, 2000, 3000, 4000].includes(out.frames) : lv >= out.peak - 1)) console.log('peak', lv, 'frame', out.frames, 'chunk', ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + PLAYER_Z) >> 8 & 63, 'state', st, 'count', count, 'hp', hp, 'air', rd(sym.hAir), 'objs', [0, 1].map(k => rd(sym.wObjSlots + k * 4) + ':' + rd(sym.wObjSlots + k * 4 + 1)).join(' '), 'flying', sym.wFlying === undefined ? '-' : rd(sym.wFlying), 'shown', [0,1,2,3,4,5,6].filter(r => rd(sym.wRivals + r * 8 + 7)).length);
+    out.peak = Math.max(out.peak, lv); out.sum = (out.sum || 0) + lv; out.n = (out.n || 0) + 1;
     if (record && !AFTER && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
     if (hp < lastHp) { out.hits++; if (process.env.HITS) (out.where = out.where || []).push(((rd(sym.hPos + 2) & 63)) + ":" + (lastHp - hp)); } lastHp = hp; out.minHealth = Math.min(out.minHealth, hp);
     if (lap !== lastLap) { out.lapFrames.push(out.frames); lastLap = lap; }
@@ -120,14 +127,15 @@ async function race(kind, record) {
       const lc = late ? ((late.pos + PLAYER_Z) >> 8) : chunk;
       // (off the gas from a little before the corner to its end: lc is where it was REACT ago)
       const near = [0, 1].map(k => bendAt(lc + k)).find(b => Math.abs(b) >= 16);
-      if (near !== undefined || Math.abs(bendAt(lc)) >= 16) gas = false;
+      if ((near !== undefined || Math.abs(bendAt(lc)) >= 16) && speed > 4) gas = false;   // (lifting, not stopping)
       if (Math.abs(bend) > 2) target = bend > 0 ? 30 : -30;
       dodge(480, lateObjs);
     } else if (kind === 'expert' || kind === 'human') {
       // A corner pushes the car outward by K * speed^2 * bend pixels a frame, against 1.5 of
       // steering.  Take each corner ahead no faster than lets it drift 40 pixels before it
       // ends, and start braking for it in time (the brake takes off 0.078 a frame).
-      const car = pos + PLAYER_Z, drift = (b, len) => { let v = 12; while (v > 2 && (PUSH * v * v * Math.abs(b) - 1.5) * len / v > 40) v -= 0.05; return v; };
+      const carPush = PUSH * carK() / 72, steer = 1.5 * rd(sym.wSteer) / 24;
+      const car = pos + PLAYER_Z, drift = (b, len) => { let v = 12; while (v > 2 && (carPush * v * v * Math.abs(b) - steer) * len / v > 40) v -= 0.05; return v; };
       let want = 12;
       // (human: plans from where it was REACT frames ago, and leaves itself a margin)
       const plan = kind === 'human' && late ? late.pos + PLAYER_Z : car, margin = kind === 'human' ? 0.35 : 0;
@@ -159,6 +167,7 @@ async function race(kind, record) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
     console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : r.rankedOut ? `RANKED OUT in place ${r.place} after lap ${r.lapFrames.length}` : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    if (process.env.LOADAVG) console.log(`        mean load ${(r.sum / r.n / 1.54).toFixed(1)}%`);
     if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
   }

@@ -60,7 +60,7 @@ const drive = (lift) => () => {
 };
 
 run(120);
-tap("right"); tap("right"); tap("down"); for (let k = 0; k < 4; k++) tap("left");   // Gold Wind, RIVALS NONE
+tap("right"); tap("right"); tap("down"); tap("down"); for (let k = 0; k < 4; k++) tap("left");   // Gold Wind, RIVALS NONE (past CAR)
 check("menu: Gold Wind, no rivals", rd(sym.hTrackNo) === 2 && rd(sym.hLevel) === 0, [rd(sym.hTrackNo), rd(sym.hLevel)]);
 tap("start");
 for (let k = 0; k < 9000 && rd(sym.hState) === 0; k++) run(1, drive(0));

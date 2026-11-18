@@ -422,12 +422,81 @@ def pack_object(rows):
     return bytes(out)
 
 
-def car_image():
+def car_image(art=None):
     """The 16x16 car.  It is symmetrical, so only the left half is stored; the right half is
-    the same object mirrored.  Every car on the track uses these tiles: liveries are palettes."""
-    rows = CAR.strip().split("\n")
+    the same object mirrored.  The rivals all use these tiles (liveries are palettes); the
+    player's car is the one picked in the menu (CARS), in tiles of its own."""
+    rows = (art or CAR).strip().split("\n")
+    if all(len(r) == 8 for r in rows):            # a left half: mirror it
+        rows = [r + r[::-1] for r in rows]
     assert len(rows) == 16 and all(len(r) == 16 and r == r[::-1] for r in rows)
     return [[0 if c == "." else int(c) for c in r] for r in rows]
+
+
+# The cars in the menu (fzero.asm CarStats has what each does).  Left halves, mirrored.
+CAR_NAMES = ["ARROW", "HORNET", "BISON", "COMET"]
+# HORNET: a slim dart.  BISON: twin hulls, a cockpit in each, leaning in to the nose.
+# COMET: a finned rocket.
+HORNET = """
+........
+.......3
+......31
+......31
+......32
+......32
+.....312
+.....311
+....3111
+...31113
+..311133
+.3111313
+31113.31
+3113..31
+.33...3.
+........
+"""
+BISON = """
+........
+.....3..
+....313.
+....313.
+...3123.
+...3123.
+..31113.
+..31113.
+.311113.
+.3111133
+.3111111
+.3111333
+.31113..
+.3223...
+..33....
+........
+"""
+COMET = """
+.......3
+.......3
+......31
+......31
+......31
+......32
+......32
+.....312
+.3...312
+.31.3111
+.3113111
+.3111111
+31111111
+31133311
+3223.322
+.33...3.
+"""
+CARS = [CAR, HORNET, BISON, COMET]
+
+
+def hero_tiles():
+    """The left half of each car in the menu, an 8x16 object each (the player's car)."""
+    return b"".join(pack_object([r[:8] for r in car_image(a)]) for a in CARS)
 
 
 RIVAL_SIZES = (12, 8, 4)        # smaller copies of the car for rivals further up the road
@@ -662,7 +731,7 @@ def shear_tables():
 
 
 # ----------------------------------------------------------------------------------------
-OBJ_RESERVE = 30        # tiles kept free for sprites at the end of the $8000 block
+OBJ_RESERVE = 32        # tiles kept free for sprites at the end of the $8000 block
 
 
 # Status bar glyphs: colour 2 is white, 1 dark grey, 0 black under HUD_BGP.
@@ -840,6 +909,22 @@ def build():
         slots = cut_tiles(sky_pixels(name), 0, SKY_ROWS, bends)
         reach = set(blk8000) | set(blk8800)
         new = sorted(set(slots) - reach)
+        merged = 0
+        while len(new) > len(sky_slots):          # over budget: the two most alike become one
+            px = {t: [((t[2 * y] >> (7 - x)) & 1) | (((t[2 * y + 1] >> (7 - x)) & 1) << 1)
+                      for y in range(8) for x in range(8)] for t in new}
+            uses = {t: slots.count(t) for t in new}
+            d, keep, drop = min((sum(a != b for a, b in zip(px[t], px[u])), t, u)
+                                for i, t in enumerate(new) for u in new[i + 1:])
+            if uses[drop] > uses[keep]:
+                keep, drop = drop, keep
+            if d > 2:
+                break
+            slots = [keep if t == drop else t for t in slots]
+            new.remove(drop)
+            merged += 1
+        if merged:
+            print(f"gen_gfx: skyline {name}: {merged} tile(s) merged into a near twin")
         if len(new) > len(sky_slots):
             sys.exit(f"skyline {name}: {len(new)} tiles, only {len(sky_slots)} slots")
         ids = {t: sky_slots[i] for i, t in enumerate(new)}
@@ -856,11 +941,13 @@ def slot_blobs(tiles, sky_slots):
 
 
 # The end of a race: your place painted onto the road ahead, in perspective, as road markings
-# are (fzero.asm Finale).  A patch of the ground's tilemap is pointed at the 32 tiles the
-# skyline lends from the shared $8800 block (the sky goes plain meanwhile): each is the ground
-# tile that was there, with the letters in colour 0, which is black on every ground line.
-RESULT_ROW, RESULT_COL, RESULT_W, RESULT_H = 10, 12, 8, 4      # tile rows 10-13 (lines 80-111)
+# are (fzero.asm Finale), the skyline left as it is.  The tiles for it are the status bar's
+# letters, digits and health cells (the bar is blank meanwhile), and the ground tiles of the
+# patch that are seen nowhere else, painted where they are.
+RESULT_ROW, RESULT_COL, RESULT_W, RESULT_H = 11, 12, 8, 3      # tile rows 11-13 (lines 88-111)
 RESULT_TEXTS = ["1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "OUT"]
+SCRN0, SCRN1 = 0x9800, 0x9C00
+RESULT_MARGIN = 1                                              # pixels clear at the near edge
 FONT4 = {     # 4x5, chunky: the letters are only 30-odd lines tall and 60 pixels across
     "1": ".##. ###. .##. .##. ####", "2": "###. ...# .##. #... ####", "3": "###. ...# .##. ...# ###.",
     "4": "#..# #..# #### ...# ...#", "5": "#### #... ###. ...# ###.", "6": ".##. #... ###. #..# .##.",
@@ -871,10 +958,10 @@ FONT4 = {     # 4x5, chunky: the letters are only 30-odd lines tall and 60 pixel
 }
 
 
-def result_tiles(art):
+def result_patch(art, text):
     """The place painted on the road: like real road markings, stretched along the road so that
     each row of the letters gets the same share of the screen's lines; across, in perspective,
-    as wide as the patch of tiles allows at its near edge."""
+    as wide as the patch of tiles allows at its near edge.  -> 32 tiles, row by row."""
     blk8000, blk9000, blk8800 = art["blocks"]
     tm = art["tilemap"]
 
@@ -884,12 +971,12 @@ def result_tiles(art):
             (blk8000[tid] if tid < 128 else blk8800[tid - 128])
         return [[((t[2 * y] >> (7 - x)) & 1) | (((t[2 * y + 1] >> (7 - x)) & 1) << 1) for x in range(8)] for y in range(8)]
 
-    top, lines = RESULT_ROW * 8 + 1, RESULT_H * 8 - 2          # a line clear above and below
+    top, lines = RESULT_ROW * 8, RESULT_H * 8 - 1               # (a line clear below)
     d_near = top + lines - 1 - HORIZON + 1
-    room = min(CX - RESULT_COL * 8, (RESULT_COL + RESULT_W) * 8 - CX) - 1
+    room = min(CX - RESULT_COL * 8, (RESULT_COL + RESULT_W) * 8 - CX) - RESULT_MARGIN
     half = room * GROUND / d_near                               # world units either side
-    out = bytearray()
-    for text in RESULT_TEXTS:
+    out = []
+    if True:
         cols = 5 * len(text) - 1
         mark = [[False] * cols for _ in range(5)]
         for k, ch in enumerate(text):
@@ -908,13 +995,86 @@ def result_tiles(art):
                         gc = int((u + half) / (2 * half) * cols) if -half <= u < half else -1
                         if gr >= 0 and 0 <= gc < cols and mark[gr][gc]:
                             pix[y][x] = 0
+                data = bytearray()
                 for row in pix:
                     lo = hi = 0
                     for v in row:
                         lo = (lo << 1) | (v & 1)
                         hi = (hi << 1) | (v >> 1)
-                    out += bytes((lo, hi))
-    return bytes(out)
+                    data += bytes((lo, hi))
+                out.append(bytes(data))
+    return out
+
+
+def result_scripts(art):
+    """For each of RESULT_TEXTS, what Finale writes to VRAM, a piece a frame: records of
+    (address, length, bytes), a zero length to end.  First the status bar goes blank, then
+    the letters go into the bar's tiles, the patch of the road's tilemap is pointed at them,
+    and last the patch's own unshared tiles are painted where they are.  Unpaint copies the
+    tiles back from ROM.  -> a table of offsets (dw, one per text), then the scripts."""
+    blk8000, blk9000, blk8800 = art["blocks"]
+    tm, hud = art["tilemap"], art["hud"]
+    lower_rows = range((SPLIT_ROW - SKY_ROWS) * 32, len(tm))
+    use_low = {}                                  # ids < 128 in the lower rows ($9000 block)
+    use_shared = {}                               # ids >= 128 anywhere: ground, any skyline
+    for i, t in enumerate(tm):
+        if t >= 128:
+            use_shared[t] = use_shared.get(t, 0) + 1
+        elif i in lower_rows:
+            use_low[t] = use_low.get(t, 0) + 1
+    for _, skymap in art["skies"].values():
+        for t in skymap:
+            if t >= 128:
+                use_shared[t] = use_shared.get(t, 0) + 1
+    spare = [hud[n] for n in HUD_ORDER if n != "BLANK"]
+    assert all(t < 128 and t not in use_low for t in spare), "a status bar tile is ground too"
+    lone = lambda t: (use_shared.get(t, 0) if t >= 128 else use_low.get(t, 0)) == 1 and t not in spare
+
+    def vram(t):
+        return 0x8800 + (t - 128) * 16 if t >= 128 else 0x9000 + t * 16
+
+    def record(addr, data):
+        assert 0 < len(data) <= 32
+        return bytes((addr & 255, addr >> 8, len(data))) + bytes(data)
+
+    scripts = []
+    for text in RESULT_TEXTS:
+        tiles = result_patch(art, text)
+        free = list(spare)
+        ids, borrowed, in_place = [], [], []
+        where = [tm[(RESULT_ROW + k // RESULT_W - SKY_ROWS) * 32 + RESULT_COL + k % RESULT_W] for k in range(len(tiles))]
+        painted = {t for k, t in enumerate(where) if lone(t) and tiles[k] != (blk9000[t] if t < 128 else blk8800[t - 128])}
+        # a tile the ground already has, untouched by the painting, serves as it is (all black,
+        # say, inside a stroke); so does one already made for this word
+        have = {}
+        for t, data in list(enumerate(blk9000)) + [(128 + i, d) for i, d in enumerate(blk8800)]:
+            if t not in painted and t not in spare:
+                have.setdefault(data, t)
+        for k, new in enumerate(tiles):
+            t = where[k]
+            old = blk9000[t] if t < 128 else blk8800[t - 128]
+            if new == old:
+                ids.append(t)
+            elif t in painted:
+                ids.append(t)
+                in_place.append(record(vram(t), new))
+            elif new in have:
+                ids.append(have[new])
+            else:
+                assert free, f"{text}: not enough of the status bar's tiles"
+                s_ = free.pop(0)
+                ids.append(s_)
+                have[new] = s_
+                borrowed.append(record(vram(s_), new))
+        out = record(SCRN1, [hud["BLANK"]] * 20) + b"".join(borrowed)
+        for r in range(RESULT_H):
+            out += record(SCRN0 + (RESULT_ROW + r) * 32 + RESULT_COL, ids[r * RESULT_W:(r + 1) * RESULT_W])
+        scripts.append(out + b"".join(in_place) + bytes((0, 0, 0)))
+    table, at = bytearray(), 2 * len(scripts)
+    for sc in scripts:
+        table += bytes((at & 255, at >> 8))
+        at += len(sc)
+    return bytes(table) + b"".join(scripts)
 
 
 def main():
@@ -930,7 +1090,7 @@ def main():
     for name, blk in zip(("tiles8000.bin", "tiles9000.bin", "tiles8800.bin"), blocks):
         put(name, b"".join(blk))
     put("map.bin", art["tilemap"])                # tile rows 5..17: the ground
-    put("result.bin", result_tiles(art))          # the places painted on the road (Finale)
+    put("result.bin", result_scripts(art))        # the places painted on the road (Finale)
     for name in SKYLINE_NAMES:
         tiles, skymap = art["skies"][name]
         lo, hi = slot_blobs(tiles, sky_slots)
@@ -941,9 +1101,11 @@ def main():
     lo, hi = slot_blobs([menu_glyph(c) for c in MENU_CHARS], sky_slots)
     put("font_8000.bin", lo)
     put("font_8800.bin", hi)
-    put("car.bin", car_tiles() + mouth_tiles()
-        + b"".join(pack_object(o) for o in small_car_objects())
-        + b"".join(pack_object(o) for o in dirt_objects()))
+    objs = (car_tiles() + mouth_tiles() + b"".join(pack_object(o) for o in small_car_objects())
+            + b"".join(pack_object(o) for o in dirt_objects()) + hero_tiles()[:32])
+    assert len(objs) == OBJ_RESERVE * 16, len(objs) // 16    # (the last two: the player's car)
+    put("car.bin", objs)
+    put("heroes.bin", hero_tiles())
     put("rlane.bin", rival_lane_tables())
     put("dist.bin", dist_to_line())
     put("lane.bin", lane_offsets())
@@ -967,6 +1129,7 @@ def main():
         f.write(f"DEF SKY_MAP_BYTES EQU {SKY_ROWS * 32}\n")
         f.write(f"DEF RESULT_ROW EQU {RESULT_ROW}\nDEF RESULT_COL EQU {RESULT_COL}\n")
         f.write(f"DEF RESULT_W EQU {RESULT_W}\nDEF RESULT_H EQU {RESULT_H}\nDEF RESULT_TEXTS EQU {len(RESULT_TEXTS)}\n")
+        f.write(f"DEF NUM_CARS EQU {len(CARS)}\n")
         for name in HUD_ORDER:
             f.write(f"DEF HUD_{name} EQU {hud[name]}\n")
         for i, ch in enumerate(MENU_CHARS):       # so that  db "TEXT"  gives menu tiles

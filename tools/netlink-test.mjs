@@ -71,11 +71,15 @@ function run(frames, each) {
       }
     }
     clockMs = (frame + 1) * FRAME / MS;
+    if (driving) for (const gb of [A, B]) if (!H(gb, "hMenu")) {   // (on the gas, keep off the rail; and since this
+      const x = (gb.rd(sym.hX + 1) << 24) >> 24; gb.key("left", x > 4); gb.key("right", x < -4);   // driver dodges
+      gb.m._emulator_write_mem(gb.e, sym.hHealth, 64); }             // nothing, no wreck: this is about the link)
     const due = wire.filter((w) => w.at <= clockMs).sort((a, b) => a.at - b.at);
     for (const w of due) { wire.splice(wire.indexOf(w), 1); gbs[w.to].cable.receive(w.data); }
     if (each) each();
   }
 }
+let driving = false;
 const tap = (gb, k, n = 3) => { gb.key(k, 1); run(n); gb.key(k, 0); run(n); };
 const H = (gb, s) => gb.rd(sym[s]);
 const linked = () => [H(A, "hLinked"), H(B, "hLinked")];
@@ -87,8 +91,8 @@ const carsShown = (gb) => { let n = 0; for (let i = 0; i < 7; i++) { const d = g
 
 run(240);
 // Both pick LINK (and A the third track); then GAS brings up the race screen ("2P").
-for (const gb of [A, B]) { tap(gb, "down"); tap(gb, "down"); tap(gb, "right"); tap(gb, "right"); }
-tap(A, "up"); tap(A, "up"); tap(A, "right"); tap(A, "right");
+for (const gb of [A, B]) { tap(gb, "down"); tap(gb, "down"); tap(gb, "down"); tap(gb, "right"); tap(gb, "right"); }   // (TRACK, CAR, RIVALS, MODE)
+tap(A, "up"); tap(A, "up"); tap(A, "up"); tap(A, "right"); tap(A, "right");
 check("menu: both in link mode, A on track 2", H(A, "hMode") === 2 && H(B, "hMode") === 2 && H(A, "hTrackNo") === 2 && H(B, "hTrackNo") === 0, [H(A, "hMode"), H(B, "hMode"), H(A, "hTrackNo"), H(B, "hTrackNo")]);
 A.cable.plug(true); B.cable.plug(false);
 tap(A, "B"); tap(B, "B"); run(90);
@@ -104,7 +108,7 @@ check("B follows the caller's track", H(B, "hTrackNo") === 2, H(B, "hTrackNo"));
 // Race 20 s, both on the gas; watch the link and the other car.
 let worstStale = 0, drops = 0, prev = linked().join();
 const seenA = new Set(), seenB = new Set();
-A.key("B", 1); B.key("B", 1);
+A.key("B", 1); B.key("B", 1); driving = true;
 run(1200, () => {
   worstStale = Math.max(worstStale, H(A, "hLinkStale"), H(B, "hLinkStale"));
   const l = linked().join(); if (l !== prev) { drops++; prev = l; }
@@ -118,7 +122,7 @@ check("the other car is where the other Game Boy is (within 2 s of driving)", Ma
 console.log("     packets A->B", A.cable.stats, "B->A", B.cable.stats);
 
 // B goes back to the menu (Select+Start): the link drops on both.
-A.key("B", 0); B.key("B", 0);
+A.key("B", 0); B.key("B", 0); driving = false; for (const gb of [A, B]) { gb.key("left", 0); gb.key("right", 0); }
 B.key("select", 1); B.key("start", 1); run(4); B.key("select", 0); B.key("start", 0);
 run(300);
 check("B in the menu; both pages dropped the link; A's Game Boy gave up", H(B, "hMenu") === 1 && A.cable.state === "waiting" && B.cable.state === "waiting" && H(A, "hLinked") === 0, [H(B, "hMenu"), A.cable.state, B.cable.state, linked()]);
@@ -151,7 +155,7 @@ check("linked with no player pressing Start: the lower seat's page called", link
 A.key("select", 1); A.key("start", 1); run(4); A.key("select", 0); A.key("start", 0);
 B.key("select", 1); B.key("start", 1); run(4); B.key("select", 0); B.key("start", 0);
 run(60);
-tap(A, "down"); for (let i = 0; i < 4; i++) tap(A, "left");   // (from the TRACK line: RIVALS, then down to NONE)
+tap(A, "down"); tap(A, "down"); for (let i = 0; i < 4; i++) tap(A, "left");   // (from the TRACK line: RIVALS, then down to NONE)
 check("A's menu: RIVALS NONE, B's NORMAL", H(A, "hLevel") === 0 && H(B, "hLevel") === 3, [H(A, "hLevel"), H(B, "hLevel")]);
 tap(A, "B"); tap(B, "B");
 autoPresses = { A: 0, B: 0 };
@@ -162,7 +166,7 @@ run(240, () => { for (const gb of [A, B]) {
 check("heads-up: linked, and B took A's RIVALS NONE", linked().join() === "1,2" && H(B, "hLevel") === 0, [linked(), H(B, "hLevel"), autoPresses]);
 // (A sets off 3 s before B, so that the order is plain: two cars side by side are each a
 // few frames behind on the other's screen, and both may see themselves second.)
-A.key("B", 1); run(180); B.key("B", 1); run(300);
+driving = true; A.key("B", 1); run(180); B.key("B", 1); run(300);
 let places = new Set();
 run(600, () => { if (frame % 15 === 0) places.add(`${H(A, "hRank")}${H(B, "hRank")}`); });
 A.key("B", 0); B.key("B", 0);

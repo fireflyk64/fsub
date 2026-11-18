@@ -75,10 +75,7 @@ DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
 DEF PAL_BANK    EQU 5           ; palette tables, each with two darker copies for fades:
 DEF PAL_BANK2   EQU 6           ; one bank per set of sceneries (a track uses one set)
 DEF RESULT_BANK EQU 12          ; the places painted on the road at the end (Finale)
-DEF RESULT_TILE EQU 128 + SKY_8800_FIRST   ; ...into the tiles the skyline lends
-DEF SKY_BLANK   EQU SKY_8000_FIRST         ; the sky's one tile while they are lent: blank
-DEF PAINT_DONE  EQU 27          ; Finale's steps: 1 the blank tile, 2-6 the sky, 7-22 the
-                                ; words' tiles, 23-26 the road's tilemap
+DEF PAINT_DONE  EQU 2           ; Finale's painting: 0 not yet, 1 under way, 2 done
 DEF FINISH_BRAKE EQU $0020      ; past the flag the camera comes to a stop (a second or so)
 DEF NUM_TRACKS  EQU 4
 DEF SKY_FONT    EQU 4           ; the menu's lettering, loaded where a skyline goes
@@ -94,6 +91,8 @@ DEF MOUTH_TILE  EQU CAR_TILE + 6
 DEF CAR12_TILE  EQU CAR_TILE + 18  ; the car at 12, 8 and 4 pixels, for rivals up the road
 DEF CAR8_TILE   EQU CAR_TILE + 20
 DEF CAR4_TILE   EQU CAR_TILE + 22
+DEF HERO_TILE   EQU CAR_TILE + 30  ; the player's own car: the one picked in the menu (CarStats)
+    ASSERT HERO_TILE + 2 == 128
 DEF NUM_RIVALS  EQU 7
 DEF PLAYER_Z    EQU 175         ; how far ahead of the camera the player's car is
 DEF RIVAL_OAM   EQU 14 * 4      ; rivals own three OAM entries each from here on
@@ -110,7 +109,7 @@ DEF LEVEL_START EQU 3
 DEF STEER_SKID  EQU 40          ; sideways speed in a skid turn
 DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
-DEF RAIL_COST   EQU 2           ; health lost hitting it
+DEF RAIL_COST   EQU 5           ; health lost hitting it
 DEF RAIL_COOL   EQU 45          ; frames before another hit can hurt again
 DEF PUSH_K      EQU 72          ; how hard bends throw the car outward (see PushScale)
 DEF CATCH_UP    EQU 6           ; extra pace for rivals just behind the player (1/16 unit)
@@ -134,7 +133,7 @@ DEF BARRIER_D3  EQU 66          ; ground line from which a barrier is drawn at i
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
-DEF BARRIER_COST EQU 6          ; health lost hitting a barrier
+DEF BARRIER_COST EQU 12         ; health lost hitting a barrier
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
 DEF REV_GAS     EQU 64          ; how far the note rides above the speed on the gas (accelerating)
 DEF REV_TOP     EQU 16          ; ...on the gas at top speed
@@ -145,8 +144,14 @@ DEF BRAKE       EQU $0014
 DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
 DEF HEALTH_MAX  EQU 64
 DEF LOW_HEALTH  EQU 16          ; below this: an alarm ticks and the health bar blinks
-DEF KNOCK_COST  EQU 1           ; health lost bumping a rival
+DEF KNOCK_COST  EQU 3           ; health lost bumping a rival
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
+DEF RIVAL_AIR   EQU 18          ; a rival off a ramp: its moves in the air (each two frames)...
+DEF RIVAL_LIFT  EQU 10          ; ...how high it goes (pixels, at its biggest)...
+DEF RIVAL_JUMP_PACE EQU 48      ; ...and the ramp's boost while it flies (1/16 unit a frame)
+DEF FLYING      EQU %10000000   ; a rival's stun byte: set, the rest is its moves left in the air
+DEF RAMP_WINDOW EQU 48          ; a rival takes off within this many units of its chunk's start
+DEF LEAD        EQU SPAWN_DIST / 256   ; chunks between where a thing appears and where it sits
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
 DEF HEAL_BASE   EQU 26          ; health from a recharge patch at a standstill...
 DEF HEAL_SPEED  EQU 2           ; ...less this for each unit of speed: slow down for more
@@ -319,7 +324,9 @@ VBlankISR:
     ldh a, [hHudDirty]
     or a
     jr z, .noHud
-    xor a
+    ld a, [wPainted]            ; (its tiles lent to the place painted on the road: blank)
+    or a
+    jr nz, .noHud
     ldh [hHudDirty], a
     push bc
     push de
@@ -450,6 +457,7 @@ EntryPoint:
     ldh [hTrackNo], a
     ld [wMenuRow], a
     ld [wPainted], a            ; (nothing painted on the road to put back)
+    ld [wCar], a
     ld [wPaintStep], a
     ld [wPaintCount], a
     dec a
@@ -568,7 +576,7 @@ Menu:
 .notUp
     bit 7, b                    ; PADF_DOWN
     jr z, .notDown
-    cp 3
+    cp 4
     jr nc, .notDown
     inc a
 .notDown
@@ -610,6 +618,8 @@ Menu:
 MenuLines:                      ; value, lowest, highest
     dw hTrackNo
     db 0, NUM_TRACKS - 1
+    dw wCar
+    db 0, NUM_CARS - 1
     dw hLevel
     db 0, LEVELS                ; 0: no rivals (a time trial; linked, just the two players)
     dw hMode
@@ -623,19 +633,22 @@ MACRO MENU_TEXT                 ; \1 = row, \2 = column, \3 = text
 ENDM
 MenuText:
     MENU_TEXT 2, 5, "FSUB RACER"
-    MENU_TEXT 6, 3, "TRACK"
-    MENU_TEXT 8, 3, "RIVALS"
-    MENU_TEXT 10, 3, "MODE"
-    MENU_TEXT 12, 3, "ENGINE"
-    MENU_TEXT 15, 5, "START - GO"
+    MENU_TEXT 5, 3, "TRACK"
+    MENU_TEXT 7, 3, "CAR"
+    MENU_TEXT 9, 3, "RIVALS"
+    MENU_TEXT 11, 3, "MODE"
+    MENU_TEXT 13, 3, "ENGINE"
+    MENU_TEXT 16, 5, "START - GO"
     dw 0
     db 0
 
 DEF MENU_VALUE EQU 9            ; letters in a value
 MenuValues:                     ; for each line, its values in order
-    dw .tracks, .rivals, .modes, .engine
+    dw .tracks, .cars, .rivals, .modes, .engine
 .tracks
     db "NEO CITY ", "BLUE DEEP", "GOLD WIND", "OLD PORT "
+.cars
+    db "ARROW    ", "HORNET   ", "BISON    ", "COMET    "
 .rivals
     db "NONE     ", "ROOKIE   ", "EASY     ", "NORMAL   ", "HARD     ", "EXPERT   "
 .modes
@@ -643,15 +656,15 @@ MenuValues:                     ; for each line, its values in order
 .engine
     db "OFF      ", "ON       "
 
-; Write the cursor and the four values.  (Only when the screen is off or VBlank has just begun.)
+; Write the cursor and the five values.  (Only when the screen is off or VBlank has just begun.)
 DrawMenu:
     xor a
     ld [wMenuDirty], a
     ld c, a                     ; line
 .line
-    ld a, c                     ; where on the screen: rows 6, 8, 10, 12
+    ld a, c                     ; where on the screen: rows 5, 7, 9, 11, 13
     add a
-    add 6
+    add 5
     ld l, a
     ld h, 0
     add hl, hl
@@ -709,7 +722,7 @@ DrawMenu:
     jr nz, .value
     inc c
     ld a, c
-    cp 4
+    cp 5
     jr nz, .line
     ret
 
@@ -720,6 +733,7 @@ StartRace:
     ldh [hMenu], a
     ldh [hReady], a
     ldh [hGen], a
+    call LoadCar
     call LoadTrackData
     ld hl, _SCRN1               ; a clean status bar
     ld b, 32
@@ -797,6 +811,33 @@ LoadTrackData:
     inc de
     dec b
     jr nz, .pages
+    ld a, $FF                   ; where the track's ramp sits (one at most), and the lanes
+    ld [wRampChunk], a          ; that take off from it (rivals: UpdateRivals .move)
+    ld c, 0
+.rampChunk
+    ld a, c
+    sub LEAD                    ; (a thing appears LEAD chunks before it sits)
+    and CHUNK_MASK
+    ld e, a
+    ld d, 0
+    ld hl, wChunkSpawn
+    add hl, de
+    ld a, [hl]
+    ld b, %0011                 ; the left half: lanes 0 and 1
+    cp JUMP_L
+    jr z, .ramp
+    ld b, %1100
+    cp JUMP_R
+    jr nz, .notRamp
+.ramp
+    ld a, c
+    ld [wRampChunk], a
+    ld a, b
+    ld [wRampLanes], a
+.notRamp
+    inc c
+    bit 6, c
+    jr z, .rampChunk
     ld a, 3
     ldh [hSkyStale], a
     ld a, [wTrkSkyline]
@@ -1458,7 +1499,7 @@ PlayerSprites:
     ldh a, [hCarY]
     add b
     ld b, a
-    ld a, CAR_TILE
+    ld a, HERO_TILE
     ldh [hCarTile], a
     ldh a, [hState]
     cp STATE_DEAD               ; destroyed: the explosion plays in a spare tile, then nothing
@@ -1544,6 +1585,13 @@ PlayerSprites:
     ; faster (2.25 pixels a unit of speed: standing still at the left, a boost at the right)
 .speedo
     ld hl, wOam + SPEEDO_OAM
+    ld a, [wPainted]            ; (not while the bar is lent to the place painted on the road)
+    or a
+    jr z, .speedoOn
+    xor a
+    ld [hl], a
+    ret
+.speedoOn
     ld a, HUD_LINE + 16 - 8     ; (an 8x16 sprite whose drawn rows are the bottom eight)
     ld [hl+], a
     ldh a, [hSpeed + 1]
@@ -1654,7 +1702,7 @@ UpdateRivals:
     ld l, [hl]                  ; the line its sprite sits on, 0 if out of sight
     inc l
     dec l
-    call nz, .paint
+    call nz, .restPaint
 .next
     LINK_PUMP
     ldh a, [hRivalIdx]
@@ -1685,6 +1733,36 @@ UpdateRivals:
     ldh [hRankCount], a
     ret
 
+; .paint for a resting frame: with its lift off a ramp, if it is flying
+.restPaint
+    ld e, a
+    ld a, [wFlying]
+    or a
+    ld a, e
+    jr z, .paint
+    push af
+    call .hopOf
+    pop af
+    ; fall through
+
+; .paint for a car wHop up in the air over line l: its lines, lifted (its size is the line's)
+.paintLifted
+    ld d, a
+    ldh a, [hFadeLevel]
+    or a
+    ret nz
+    ldh a, [hBuiltScx]
+    inc a
+    ld h, a
+    ld a, [wHop]
+    ld e, a
+    ld a, l
+    sub e
+    ld e, a
+    ld a, l
+    ld l, e
+    jr .paintSized
+
 ; a = paint, l = bottom line of the car: give its lines that OBP1
 .paint
     ld d, a
@@ -1695,6 +1773,7 @@ UpdateRivals:
     inc a
     ld h, a
     ld a, l                     ; a small car far up the road covers few lines
+.paintSized
     cp HORIZON - 1 + RIVAL_D8
     jr c, .paint6
     cp HORIZON - 1 + RIVAL_D12
@@ -1724,6 +1803,43 @@ UpdateRivals:
         ld [hl], a
         dec l
     ENDR
+    ret
+
+; wHop = how high the rival in hRivalRec flies off a ramp, with l the line it is over: less
+; the further up the road.  Keeps hl, bc.
+.hopOf
+    ld d, HIGH(wRivals)
+    ldh a, [hRivalRec]
+    add 4
+    ld e, a
+    ld a, [de]                  ; its stun byte
+    bit 7, a                    ; (FLYING; on the road, as nearly always: quickly)
+    jr nz, .flies
+    xor a
+    ld [wHop], a
+    ret
+.flies
+    and ~FLYING
+    add LOW(RivalHop)
+    ld e, a
+    ld a, HIGH(RivalHop)
+    adc 0
+    ld d, a
+    ld a, [de]
+    ld e, a
+    ld a, l
+    cp HORIZON - 1 + RIVAL_D16
+    jr nc, .hopSet
+    srl e
+    cp HORIZON - 1 + RIVAL_D12
+    jr nc, .hopSet
+    srl e
+    cp HORIZON - 1 + RIVAL_D8
+    jr nc, .hopSet
+    srl e
+.hopSet
+    ld a, e
+    ld [wHop], a
     ret
 
 ; e = this rival's x across the road, in road units
@@ -1808,6 +1924,7 @@ UpdateRivals:
     ld b, a                     ; bc = distance ahead; hl -> skill
     ldh a, [hPos + 1]
     add c
+    ld d, a                     ; (where in its chunk it is)
     ldh a, [hPos + 2]
     adc b
     and CHUNK_MASK
@@ -1816,11 +1933,44 @@ UpdateRivals:
     ldh [hRivalIdx + 1], a      ; (how far ahead it is, for the catch-up below)
     ld a, [hl+]
     ld c, a                     ; skill
-    ld a, [hl]                  ; stun timer
+    ld a, [hl]                  ; stun timer, or FLYING and its moves left in the air
     ld b, a
     or a
-    jr z, .awake
+    jr z, .steady
     dec [hl]
+    cp FLYING + 1
+    jr nz, .awake
+    ld [hl], 0                  ; (down)
+    ld a, [wFlying]
+    dec a
+    ld [wFlying], a
+    jr nz, .awake
+    ld [wHop], a                ; (nobody up: no lift for anyone)
+    jr .awake
+.steady                         ; on the road and steady: at the ramp, on its side?  Up it goes
+    ld a, [wRampChunk]
+    cp e
+    jr nz, .awake               ; (b = 0)
+    ld a, d
+    cp RAMP_WINDOW              ; (just past the start of the chunk, where the ramp sits)
+    jr nc, .awake
+    ldh a, [hRLane]
+    and 3
+    inc a
+    ld d, a
+    ld a, [wRampLanes]
+.laneBit
+    rrca
+    dec d
+    jr nz, .laneBit
+    jr nc, .awake
+    ld a, FLYING | RIVAL_AIR
+    ld [hl], a
+    ld b, a
+    ld a, [wFlying]
+    inc a
+    ld [wFlying], a
+    jr .awake
 .awake
     ld d, 0
     ld hl, wSpeedProfile
@@ -1865,10 +2015,17 @@ UpdateRivals:
     jr c, .banded
     sub EASE_OFF
 .banded
+    bit 7, b                    ; (FLYING: the ramp's boost)
+    jr nz, .flying
     inc b
     dec b
     jr z, .fullPace
-    srl a
+    srl a                       ; stunned: half pace
+    jr .fullPace
+.flying
+    add RIVAL_JUMP_PACE
+    jr nc, .fullPace
+    ld a, 255
 .fullPace
     ld c, a
     ldh a, [hCount]             ; nobody moves until the start
@@ -2029,6 +2186,10 @@ UpdateRivals:
     sub [hl]
     ld b, a                     ; b = screen x of its centre
 
+    ld a, [wFlying]             ; off a ramp, in the air: how high (wHop; 0 while nobody flies)
+    or a
+    call nz, .hopOf
+
     ; --- its paint on the lines it covers; remember the line for its resting frames.
     ; During a fade it borrows the player's palette, which is being darkened anyway.
     ld e, l
@@ -2046,11 +2207,21 @@ UpdateRivals:
     ldh [hAttrMask], a
 .paintIt
     ld l, e
+    ld a, [wHop]
+    or a
     ldh a, [hRPaint]
+    jr nz, .liftIt
     call .paint
+    jr .painted
+.liftIt
+    call .paintLifted
+.painted
 
+    ld a, [wHop]
+    ld e, a
     ld a, c
     add HORIZON
+    sub e
     ldh [hObjY], a
     ld hl, RivalSize16
     ld a, c
@@ -2096,6 +2267,25 @@ UpdateRivals:
     inc e
     dec c
     jr nz, .sprite
+    ld a, [wHop]                ; in the air: its shadow (the 16 pixel car's last piece) is
+    or a                        ; put back down on the road
+    jr z, .landed
+    ld c, a
+    dec e
+    dec e
+    ld a, [de]
+    dec e
+    dec e
+    cp SHADOW_TILE
+    jr nz, .noShadow
+    ld a, [de]
+    add c
+    ld [de], a
+.noShadow
+    ld a, e
+    add 4
+    ld e, a
+.landed
     ldh a, [hRivalIdx + 1]
     or a
     ret z
@@ -2585,6 +2775,21 @@ Damage:
     ldh a, [hState]
     or c
     jr nz, .done
+    ld a, b                     ; the car's build: the cost in quarters (rounded up, so every
+    cp HEALTH_MAX               ; knock costs something; and a wreck is a wreck)
+    jr nc, .built
+    ld a, [wArmor]
+    ld c, a
+    xor a
+.armor
+    add b
+    dec c
+    jr nz, .armor
+    add 3
+    srl a
+    srl a
+    ld b, a
+.built
     ld a, 8                     ; it jolts the car (PlayerSprites)
     ld [wShake], a
     ldh a, [hHealth]
@@ -3654,6 +3859,8 @@ InitRace:
     call Unpaint
 .unpainted
     xor a
+    ld [wHop], a
+    ld [wFlying], a
     ld [wGone], a
     ld [wGone + 1], a
     ld [wGoneV], a
@@ -3971,8 +4178,10 @@ Drive:
     ldh [hBoost], a
     ldh [hBoostSeen], a
 .noBoost
-    ld a, h                     ; over the normal limit (after a boost): bleed back down
-    cp SPEED_MAX
+    ld a, [wTop]                ; over the normal limit (after a boost): bleed back down
+    ld c, a
+    ld a, h
+    cp c
     jr c, .underLimit
     ld de, -$0010
     add hl, de
@@ -3982,18 +4191,27 @@ Drive:
 .underLimit
     bit 1, b                    ; PADF_B
     jr z, .coast
-    ; the throttle: strong from rest, fading to nothing at top speed
-    ld a, SPEED_MAX
-    sub h                       ; 1..8 "gears" below the limit
-    add a
-    add 3
+    ; the throttle: strong from rest, fading to nothing at top speed (the car's own curve)
+    ld a, [wTop]
+    sub h                       ; "gears" below the limit
+    ld c, a
+    ld a, [wGearK]
+    ld d, a
+    ld a, [wGrunt]
+.gear
+    add c
+    dec d
+    jr nz, .gear
     ld e, a
     ld d, 0
     add hl, de
+    ld a, [wTop]
+    ld c, a
     ld a, h
-    cp SPEED_MAX
+    cp c
     jr c, .throttled
-    ld hl, SPEED_MAX << 8
+    ld h, c
+    ld l, 0
 .throttled
     bit 7, b                    ; throttle and brake together: the brake wins a little
     jr z, .speedSet
@@ -4043,11 +4261,17 @@ Drive:
     or a                        ; gas while there is speed to gain and drops when you lift,
     jp z, .noNote               ; with a rasp; louder on the gas, fuller still on a boost
     ld c, REV_LIFT
+    ldh a, [hAir]               ; (in the air: nothing to push against, the note falls away)
+    or a
+    jr nz, .revAim
     bit 1, b                    ; PADF_B
     jr z, .revAim
     ld c, REV_GAS
+    ld a, [wTop]
+    dec a
+    ld e, a
     ld a, h
-    cp SPEED_MAX - 1            ; (the speed only creeps up to the top: within a unit is there)
+    cp e                        ; (the speed only creeps up to the top: within a unit is there)
     jr c, .revAim
     ld c, REV_TOP
 .revAim
@@ -4099,7 +4323,11 @@ Drive:
     adc HIGH(ENGINE_BASE)
     ld d, a
     ldh [rAUD2HIGH], a
-    ld c, 0                     ; the voice: 0 coasting, 1 on the gas, 2 boosting
+    ld c, 3                     ; the voice: 0 coasting, 1 on the gas, 2 boosting, 3 flying
+    ldh a, [hAir]
+    or a
+    jr nz, .voiceSet
+    ld c, 0
     bit 1, b
     jr z, .gasVoice
     inc c
@@ -4121,8 +4349,12 @@ Drive:
     dec c
     ld e, $60                   ; on the gas: louder
     jr z, .voice
+    dec c
     ld a, %10000000             ; a boost: fuller and louder still
     ld e, $90
+    jr z, .voice
+    xor a                       ; in the air: no roar, a thin whisper (thrust on nothing)
+    ld e, $20
 .voice
     ldh [rAUD2LEN], a
     ld a, e
@@ -4134,6 +4366,9 @@ Drive:
     ; --- the noise channel: a boost howls upward, the brakes scrub lower as the car slows
     xor a
     ldh [hBrake], a
+    ldh a, [hAir]               ; (not in the air, though a ramp gives a boost)
+    or a
+    jr nz, .quiet
     ldh a, [hBoost]
     or a
     jr z, .noHowl
@@ -4483,7 +4718,10 @@ Drive:
     or e
     ld e, a                     ; speed in quarter units
     ld d, 0
-    ld hl, PushScale
+    ld a, [wPush]               ; (the car's own table)
+    ld l, a
+    ld a, [wPush + 1]
+    ld h, a
     add hl, de
     ld c, [hl]
     ldh a, [hBend]
@@ -4626,7 +4864,8 @@ Drive:
     ; braking while steering at speed is a skid turn: far more steering, less speed
     xor a
     ldh [hSkid], a
-    ld h, STEER_MAX
+    ld a, [wSteer]
+    ld h, a
     ldh a, [hSpeed + 1]         ; (a hovercar cannot shuffle sideways at a standstill)
     or a
     jr nz, .moving
@@ -5094,9 +5333,10 @@ InitLines:
 ; ---------------------------------------------------------------------------------------
 ; Past the flag.  Your car speeds off up the road (Departing draws it) while the camera comes
 ; to a stop and the rivals cruise past; then your place (or OUT) is painted onto the road
-; ahead, in perspective, for them to drive through: a patch of the ground's tilemap pointed
-; at the 32 tiles the skyline lends from the shared block (gen_gfx.py result_tiles), the sky
-; plain meanwhile.  A piece a frame: staged here into wPaintBuf, copied by VBlank.  Unpaint
+; ahead, in perspective, for them to drive through, the skyline left as it is.  The letters
+; go into the status bar's tiles (the bar is blank meanwhile) and into the patch's own ground
+; tiles that are seen nowhere else; the patch of tilemap is pointed at them (gen_gfx.py
+; result_scripts).  A piece a frame: staged here into wPaintBuf, copied by VBlank.  Unpaint
 ; puts it all back for the next race.
 Finale:
     ldh a, [hState]
@@ -5159,6 +5399,22 @@ Finale:
     dec a
 .words
     ld [wPaintText], a
+    add a                       ; its script
+    ld l, a
+    ld h, 0
+    ld de, ResultScripts
+    add hl, de
+    ld a, RESULT_BANK
+    ld [rROMB0], a
+    ld a, [hl+]
+    ld h, [hl]
+    ld l, a
+    add hl, de
+    ld a, l
+    ld [wPaintPtr], a
+    ld a, h
+    ld [wPaintPtr + 1], a
+    call SongBank
     ld a, 1
     ld [wPaintStep], a
     ld [wPainted], a
@@ -5166,121 +5422,41 @@ Finale:
     ld a, [wPaintCount]         ; (VBlank has not taken the last piece yet)
     or a
     ret nz
-    ld a, [wPaintStep]
-    ld c, a
-    inc a
-    ld [wPaintStep], a
-    ld a, c
-    cp 1
-    jr nz, .notBlank
-    ld hl, _VRAM8000 + SKY_BLANK * 16   ; 1: the sky's blank tile
-    ld bc, 16 << 8                      ; (16 zeros)
-    jr .fill
-.notBlank
-    cp 7
-    jr nc, .notSky
-    sub 2                               ; 2-6: a row of the sky's tilemap, all blank
-    swap a
-    add a
-    ld l, a
-    ld h, HIGH(_SCRN0)
-    ld bc, (32 << 8) | SKY_BLANK
-    jr .fill
-.notSky
-    cp 23
-    jr nc, .tilemap
-    sub 7                               ; 7-22: 32 bytes of the words' tiles
-    ld c, a
-    swap a
-    add a
-    ld e, a                             ; piece * 32 (ResultTiles is page-aligned) ...
-    ld a, c
-    srl a
-    srl a
-    srl a
-    ld c, a                             ; ... with 256s, plus 512 each of the words
-    ld a, [wPaintText]
-    add a
-    add c
-    add HIGH(ResultTiles)
-    ld d, a
-    ASSERT LOW(_VRAM8800 + SKY_8800_FIRST * 16) == 0
-    ld a, [wPaintStep]
-    sub 8
-    swap a
-    add a
-    ld l, a
-    ld h, HIGH(_VRAM8800 + SKY_8800_FIRST * 16)
-    ld a, [wPaintStep]                  ; (pieces 8 on are past the first 256 bytes)
-    cp 16
-    jr c, .lowHalf
-    inc h
-.lowHalf
-    ld a, RESULT_BANK
+    ld a, RESULT_BANK           ; the next piece: (address, length, bytes); 0 length ends it
     ld [rROMB0], a
-    ld b, 32
-    push hl
-    ld hl, wPaintBuf
+    ld a, [wPaintPtr]
+    ld l, a
+    ld a, [wPaintPtr + 1]
+    ld h, a
+    ld a, [hl+]
+    ld [wPaintDst], a
+    ld a, [hl+]
+    ld [wPaintDst + 1], a
+    ld a, [hl+]
+    or a
+    jr z, .painted
+    ld b, a
+    ld c, a
+    ld de, wPaintBuf
 .copy
-    ld a, [de]
-    ld [hl+], a
+    ld a, [hl+]
+    ld [de], a
     inc de
     dec b
     jr nz, .copy
-    pop hl
-    call SongBank
-    ld b, 32
-    jr .stage
-.tilemap
-    sub 23                              ; 23-26: a row of the road's tilemap, pointed at them
-    ld e, a
-    swap a
-    add a
-    add LOW(_SCRN0 + RESULT_ROW * 32 + RESULT_COL)
-    ld l, a
-    ld h, HIGH(_SCRN0 + RESULT_ROW * 32 + RESULT_COL)
-    jr nc, .rowSet
-    inc h
-.rowSet
-    ld a, e
-    add a
-    add a
-    add a
-    add RESULT_TILE
-    ld c, a
-    push hl
-    ld hl, wPaintBuf
-    ld b, RESULT_W
-.ids
-    ld a, c
-    ld [hl+], a
-    inc c
-    dec b
-    jr nz, .ids
-    pop hl
-    ld b, RESULT_W
-    jr .stage
-.fill                                   ; b bytes of c
-    push hl
-    ld hl, wPaintBuf
-    ld a, b
-    ld e, c
-.fillByte
-    ld [hl], e
-    inc hl
-    dec a
-    jr nz, .fillByte
-    pop hl
-.stage                                  ; b bytes in wPaintBuf, for hl: VBlank copies them
     ld a, l
-    ld [wPaintDst], a
+    ld [wPaintPtr], a
     ld a, h
-    ld [wPaintDst + 1], a
-    ld a, b
-    ld [wPaintCount], a
-    ret
+    ld [wPaintPtr + 1], a
+    ld a, c
+    ld [wPaintCount], a         ; (last: VBlank copies it once this is set)
+    jp SongBank
+.painted
+    ld a, PAINT_DONE
+    ld [wPaintStep], a
+    jp SongBank
 
-; Put the road and the sky back after a painted place (the screen must be off).
+; Put the road and the status bar back after a painted place (the screen must be off).
 Unpaint:
     ld a, [wPainted]
     or a
@@ -5291,6 +5467,14 @@ Unpaint:
     ld [wPaintCount], a
     ld a, TILE_BANK
     ld [rROMB0], a
+    ld de, Tiles9000            ; the bar's tiles, and the ground's painted where they were
+    ld hl, _VRAM9000
+    ld bc, Tiles9000.end - Tiles9000
+    call Copy
+    ld de, Tiles8800
+    ld hl, _VRAM8800
+    ld bc, Tiles8800.end - Tiles8800
+    call Copy
     ld de, Tilemap + (RESULT_ROW - SKY_MAP_BYTES / 32) * 32 + RESULT_COL
     ld hl, _SCRN0 + RESULT_ROW * 32 + RESULT_COL
     ld c, RESULT_H
@@ -5316,8 +5500,16 @@ Unpaint:
 .hl
     dec c
     jr nz, .row
-    ld a, [wTrkSkyline]
-    jp LoadSky
+    ld hl, wHud                 ; the bar as it was
+    ld de, _SCRN1
+    ld b, 20
+.hud
+    ld a, [hl+]
+    ld [de], a
+    inc de
+    dec b
+    jr nz, .hud
+    ret
 
 ; The car past the flag, wGone units on up the road: drawn as the rivals are at that distance
 ; (their smaller cars), in its own palette, until it is out of sight.  Then the speedometer.
@@ -5378,7 +5570,7 @@ Departing:
     jr c, .size12
     ld a, d                     ; close: the car's two halves and its shadow
     sub 2
-    ld e, CAR_TILE
+    ld e, HERO_TILE
     call .pair
     ld a, d
     add 13
@@ -5455,6 +5647,60 @@ Departing:
     ld a, OAMF_XFLIP
     ld [hl+], a
     ret
+
+; A rival reaching a ramp on its side of the road (wRampLanes) takes off: its stun byte holds
+; FLYING and RIVAL_AIR moves, with the ramp's boost (UpdateRivals .move), and its sprite is
+; lifted (.hopOf) by this, with the moves left.
+RivalHop:                       ; how high, by moves left in the air: a parabola
+    FOR T, RIVAL_AIR + 1
+        db (4 * RIVAL_LIFT * T * (RIVAL_AIR - T)) / (RIVAL_AIR * RIVAL_AIR)
+    ENDR
+
+; The car picked in the menu: its shape into the player's tiles (the screen must be off) and
+; its numbers into wTop..wPush.
+LoadCar:
+    ld a, TILE_BANK
+    ld [rROMB0], a
+    ld a, [wCar]
+    swap a
+    add a                       ; 32 bytes each
+    ld e, a
+    ld d, 0
+    ld hl, HeroTiles
+    add hl, de
+    ld d, h
+    ld e, l
+    ld hl, _VRAM8000 + HERO_TILE * 16
+    ld bc, 32
+    call Copy
+    ld a, [wCar]
+    ld l, a
+    add a
+    add a
+    add a
+    sub l                       ; 7 bytes each
+    ld e, a
+    ld d, 0
+    ld hl, CarStats
+    add hl, de
+    ld d, h
+    ld e, l
+    ld hl, wTop
+    ld bc, 7
+    jp Copy
+
+; What each car does (gen_gfx.py CARS has what it looks like; the menu, its name):
+; top speed, the throttle's two numbers, steering, how hard a hit is taken (quarters), and
+; how hard bends throw it.  ARROW is the all-rounder, and the game was tuned with it.
+CarStats:
+    db 8, 2, 3, 24, 4           ; ARROW
+    dw PushScale72
+    db 8, 3, 6, 28, 5           ; HORNET: quick off the mark and nimble, but fragile
+    dw PushScale62
+    db 8, 2, 3, 22, 2           ; BISON: heavy to steer and in a bend, but tough
+    dw PushScale76
+    db 9, 1, 2, 24, 4           ; COMET: the fastest, slow to get there, and at 9 a bend
+    dw PushScale76              ; throws it 40% harder than ARROW at 8
 
 ; a = the place needed by the end of the lap being raced, F-Zero's rank requirement: in a
 ; race against rivals (not practice, not linked, not without rivals), 7th then 5th over
@@ -5572,12 +5818,19 @@ DEF TILE_BOOM    EQU 2
 BoomTilePristine:               ; the small shadow's two tiles as they are in car.bin
     INCBIN "build/car.bin", 64, 32
 
-; How hard a bend pushes at each speed (index: speed in quarter units): PUSH_K at 8, with
-; the square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
-PushScale:
+; How hard a bend pushes at each speed (index: speed in quarter units): K at 8, with the
+; square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
+; One for each car's K (CarStats); PUSH_K is ARROW's.
+MACRO PUSH_SCALE                ; \1 = K
+PushScale\1:
     FOR N, 48
-        db (PUSH_K * N * N + 512) / 1024
+        db (\1 * N * N + 512) / 1024
     ENDR
+ENDM
+    PUSH_SCALE 72
+    PUSH_SCALE 62
+    PUSH_SCALE 76
+    ASSERT PUSH_K == 72
 
 ; ---------------------------------------------------------------------------------------
 ; Page-aligned lookups: the low byte of the address is the index.
@@ -5652,6 +5905,8 @@ Tiles9000:
 CarTiles:
     INCBIN "build/car.bin"
 .end
+HeroTiles:                      ; each car in the menu: the left half (LoadCar)
+    INCBIN "build/heroes.bin"
 Tilemap:
     INCBIN "build/map.bin"
 .end
@@ -5683,9 +5938,9 @@ FontHigh:
 Tracks:                         ; 512 bytes each: see tools/gen_tracks.py
     INCBIN "build/tracks.bin"
 
-SECTION "result tiles", ROMX, BANK[RESULT_BANK], ALIGN[8]
-ResultTiles:                    ; 512 bytes for each of RESULT_TEXTS (gen_gfx.py result_tiles)
-    INCBIN "build/result.bin"
+SECTION "result scripts", ROMX, BANK[RESULT_BANK]
+ResultScripts:                  ; for each of RESULT_TEXTS (gen_gfx.py result_scripts): an
+    INCBIN "build/result.bin"   ; offset from here, then the scripts
 
 SECTION "fzero line tables", ROMX, BANK[GFX_BANK]
 BendTables:                     ; (BEND_LEVELS*2+1) x GROUND_LINES values of SCX
@@ -5725,9 +5980,21 @@ wSlide:     db                  ; frames left of the slide after landing from a 
 wRev:       db                  ; the engine note's rev above (or below) the speed's, signed
 wGone:      ds 2                ; past the flag: how far your car has sped on up the road
 wGoneV:     db                  ; ...and how fast (units a frame)
-wPainted:   db                  ; the place is painted on the road (the sky lent its tiles)
-wPaintStep: db                  ; Finale's painting: the next step, PAINT_DONE when done
+wPainted:   db                  ; the place is painted on the road (the status bar lent its tiles)
+wPaintStep: db                  ; Finale's painting: 0, 1 under way, PAINT_DONE
 wPaintText: db                  ; which words: 0-7 the place, 8 OUT
+wPaintPtr:  ds 2                ; the next piece of its script (RESULT_BANK)
+wCar:       db                  ; the car picked in the menu (CarStats); as it goes:
+wTop:       db                  ; top speed (units a frame)
+wGearK:     db                  ; the throttle: (top - speed) * this + wGrunt, /256 a frame
+wGrunt:     db
+wSteer:     db                  ; sideways speed, 1/16 pixel a frame
+wArmor:     db                  ; a hit costs this many quarters of its health
+wPush:      ds 2                ; its PushScale table: how hard bends throw it
+wHop:       db                  ; how high the rival being drawn flies off a ramp (pixels)
+wFlying:    db                  ; how many rivals are in the air (0: none of that work at all)
+wRampChunk: db                  ; the chunk the track's ramp sits in ($FF: none)...
+wRampLanes: db                  ; ...and the lanes that take off from it (bits)
 wPaintCount: db                 ; bytes in wPaintBuf for VBlank to copy (0: none waiting)
 wPaintDst:  ds 2                ; ...to where
 wPaintBuf:  ds 32

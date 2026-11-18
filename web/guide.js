@@ -7,7 +7,7 @@
 // time a person takes to act on what they are told:
 //   * speed: BRAKE, LIFT (let go of the gas: coasting slows the car and it grips a corner
 //     better), GAS, or BOOST on a clear straight.  A corner is taken no faster than lets
-//     the bend throw the car 40 pixels out before it ends (the push goes with the square of
+//     the bend throw the car 30 pixels out before it ends (the push goes with the square of
 //     the speed, against 1.5 pixels a frame of steering; three quarters of it off the gas).
 //     Lift when coasting from here just gets the car down to that speed by the corner;
 //     brake when coasting alone would not.
@@ -22,29 +22,36 @@
 // buttons it is about.
 
 const PLAYER_Z = 175;                            // the car is this far ahead of the camera
-const PUSH = 72 * 16 / 1024 / 2 / 256;           // PUSH_K: a bend's push per speed^2 per bend level
-const STEER = 1.5;                               // STEER_MAX / 16: pixels a frame of steering
+const PUSH = 72 * 16 / 1024 / 2 / 256;           // PUSH_K (ARROW's): a bend's push per speed^2 per bend level
+let STEER = 1.5;                                 // STEER_MAX / 16: pixels a frame of steering
+let carPush = PUSH;                              // the car picked in the menu's (read each time: CarStats)
 const GRIP = 0.75;                               // off the gas the push is three quarters
 const COAST = 10 / 256, BRAKING = 0x14 / 256;    // FRICTION, BRAKE: speed lost a frame
 const LANES = [-36, -12, 12, 36];                // barrier lanes, kinds 1-4 (a hit within 13 pixels)
 const SPOTS = [-40, -24, 0, 24, 40];             // where to be to miss them (18 or more pixels off)
 let held = { key: "", target: null };            // the spot chosen for the barriers in view
 let told = null;                                 // where the last advice sent the car
+let ramp = { key: "", go: false };               // the ramp in view, and whether to line up for it (decided once)
 export const LEAD = 20;                          // frames: how far ahead of the car the advice looks
 
-// The fastest a bend b can be taken over len units, letting it throw the car 40 pixels out.
+// The fastest a bend b can be taken over len units, letting it throw the car 30 pixels out
+// (a margin under the rail's 44 for a person's reaction: a hit costs 5 of 64).
 function limit(b, len, grip) {
   let v = 12;
-  while (v > 2 && (grip * PUSH * v * v * Math.abs(b) - STEER) * len / v > 40) v -= 0.05;
+  while (v > 2 && (grip * carPush * v * v * Math.abs(b) - STEER) * len / v > 30) v -= 0.05;
   return v;
 }
 
 export function advise(rd, sym, lead = LEAD) {
-  if (rd(sym.hMenu)) { told = null; return null; }
+  if (rd(sym.hMenu)) { told = null; ramp = { key: "", go: false }; return null; }
   const state = rd(sym.hState);
   if (state) { told = null; return { act: "done" }; }
   if (rd(sym.hCount)) { told = null; return { act: "ready" }; }
   const s8 = (v) => (v << 24) >> 24;
+  if (sym.wPush !== undefined) {                 // the car's own grip (its push table at speed 8 is its K) and steering
+    carPush = PUSH * rd((rd(sym.wPush) | rd(sym.wPush + 1) << 8) + 32) / 72;
+    STEER = rd(sym.wSteer) / 16;
+  }
   const speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
   const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8;
   const x = s8(rd(sym.hX + 1)), health = rd(sym.hHealth);
@@ -133,8 +140,14 @@ export function advise(rd, sym, lead = LEAD) {
       // in the air and can take the car over the rail).  Only if there is time to get there
       // and straighten up first (about half a second besides the move); lined up, hold it;
       // too late to line up, keep off it.
-      const c = o.kind === 11 ? -28 : 28, frames = (o.dist - PLAYER_Z) / Math.max(speed, 1);
-      if (Math.abs(x - c) <= 8 || frames > Math.abs(x - c) / STEER + 30) wish = wish || { target: c, why: "a jump ramp: dead straight onto its middle", dist: o.dist };
+      // Decided once, when it comes into view, and held: changing its mind half way over
+      // would have the car swerving onto it sideways.  Lined up, it comes before the racing line.
+      // (Counting time as if boosted, from a pad just before it, say: Old Port puts one on the
+      // other side just before its ramp, to be taken instead of it.)
+      const c = o.kind === 11 ? -28 : 28, frames = (o.dist - PLAYER_Z) / Math.max(speed, 9);
+      const key = `${o.kind}:${((pos + o.dist) >> 8) & 63}`;
+      if (ramp.key !== key) ramp = { key, go: Math.abs(x - c) <= 8 || frames > Math.abs(x - c) / STEER + 45 };
+      if (ramp.go) { if (!danger) { target = c; why = "a jump ramp: dead straight onto its middle"; danger = true; } }
       else if (!danger && Math.abs(x - c) < 24) { target = c < 0 ? c + 32 : c - 32; why = "a ramp you cannot line up for: keep off it"; danger = true; }
     } else if ((o.kind === 9 || o.kind === 10) && health < 48) wish = wish || { target: o.kind === 9 ? -24 : 24, why: "a recharge patch: slow over it for more", dist: o.dist };
     else if (o.kind === 7 || o.kind === 8) wish = wish || { target: o.kind === 7 ? -28 : 28, why: "a boost pad: its middle", dist: o.dist };
