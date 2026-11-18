@@ -1,7 +1,9 @@
 // Headless test of the player's lobby and link (web/lobby.js, web/link.js):
-// two pages enter the lobby, chat, one asks the other to race, and their two
-// Game Boys link through a race room and race; then a friend's link; then
-// leaving.  Run by tools/web-link-test.sh, which starts the servers.
+// first that playing alone needs none of it (a fresh page, desktop or phone,
+// opens no connection, and GAS starts a race); then two pages enter the
+// lobby, chat, one asks the other to race, and their two Game Boys link
+// through a race room and race; then leaving; then a friend's link.  Run by
+// tools/web-link-test.sh, which starts the servers.
 //
 //   node tools/web-link-test.mjs PAGE_URL LOBBY_URL SYM_FILE
 import fs from "node:fs";
@@ -19,15 +21,17 @@ let failures = 0;
 const check = (what, ok, detail) => { if (!ok) failures++; console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail === undefined ? "" : ": " + JSON.stringify(detail)}`); };
 const sleep = (s) => new Promise((r) => setTimeout(r, s * 1000));
 
-async function open(name, query = "") {
-  const context = await browser.newContext({ viewport: { width: 1400, height: 800 } });
+async function open(name, query = "", { phone = false, lobby = true } = {}) {
+  const context = await browser.newContext(phone ? { viewport: { width: 390, height: 800 }, hasTouch: true, isMobile: true } : { viewport: { width: 1400, height: 800 } });
   const page = await context.newPage();
-  page.logs = [];
+  page.logs = []; page.sockets = [];
   page.on("console", (m) => page.logs.push(m.text()));
+  page.on("websocket", (ws) => page.sockets.push(ws.url()));
   page.on("pageerror", (e) => console.log(`[${name}] PAGE ERROR: ${e.message}`));
   await page.goto(`${pageUrl}?server=${encodeURIComponent(lobbyUrl)}${query}`);
   await page.waitForFunction(() => window.__gb && window.__gb.cable, null, { timeout: 20000 });
   page.label = name;
+  if (lobby && !query.includes("race=")) await page.click("#lobbyBtn");
   return page;
 }
 const until = async (what, fn, secs = 15) => { for (let i = 0; i < secs * 10; i++) { if (await fn()) return true; await sleep(0.1); } return false; };
@@ -40,6 +44,29 @@ async function toLinkRace(page) {
   for (const k of ["ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight"]) await press(page, k);
   await press(page, "KeyX");                                            // GAS: the race screen, 2P
 }
+
+// Alone: nothing to do with the lobby, on a desktop or a phone.
+const D = await open("D", "", { lobby: false });
+await sleep(2);
+check("desktop, fresh: the lobby shut and no connection to its server", !(await D.evaluate(() => document.body.classList.contains("lobby"))) && D.sockets.length === 0, D.sockets);
+await D.context().close();
+const P = await open("P", "", { phone: true, lobby: false });
+await sleep(2);
+check("phone, fresh: the lobby shut and no connection to its server", !(await P.evaluate(() => document.body.classList.contains("lobby"))) && P.sockets.length === 0, P.sockets);
+const tapHold = async (sel, ms) => { const box = await P.locator(sel).boundingBox(); const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  const cdp = await P.context().newCDPSession(P);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] }); await sleep(ms / 1000);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }); };
+await tapHold("#gas", 150);
+await sleep(1);
+check("phone: a tap on GAS starts a race, alone", (await hram(P, "hMenu")) === 0 && (await hram(P, "hMode")) === 0 && (await hram(P, "hLinked")) === 0, [await hram(P, "hMenu"), await hram(P, "hMode")]);
+const p0 = await P.evaluate((a) => window.__gb.m._emulator_read_mem(window.__gb.e, a + 1) | window.__gb.m._emulator_read_mem(window.__gb.e, a + 2) << 8, sym.hPos);
+await tapHold("#gas", 4000);
+const p1 = await P.evaluate((a) => window.__gb.m._emulator_read_mem(window.__gb.e, a + 1) | window.__gb.m._emulator_read_mem(window.__gb.e, a + 2) << 8, sym.hPos);
+check("phone: holding GAS drives", p1 > p0 + 100, [p0, p1]);
+await P.screenshot({ path: path.join(shots, "p-phone-solo.png") });
+check("phone: still no connection to the lobby server", P.sockets.length === 0, P.sockets);
+await P.context().close();
 
 const A = await open("A"), B = await open("B");
 check("both pages in the lobby", await until("lobby", async () => (await text(A, "#lobbyState")) === "2 here" && (await text(B, "#lobbyState")) === "2 here", 20),

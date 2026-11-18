@@ -20,6 +20,10 @@
 // cable (web/link.js) between the two Game Boys.  Everybody in a race stays
 // in the lobby and can go on chatting.
 //
+// Playing alone is the page's default and needs none of this: nothing
+// connects to the lobby server until the player opens the lobby (open()), or
+// arrives with a race link.
+//
 // Lobby messages (JSON text on the lobby's channel):
 //   {t: "hello", name, busy, reply}   who this is; busy: "" or the name of whom they race
 //   {t: "chat", text}                 a line (checked on both ends: web/chatfilter.js)
@@ -755,8 +759,11 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
 
   const q = new URLSearchParams(location.search);
   if (isRaceCode(q.get("race"))) startRace(q.get("race"), "");
-  if (q.get("lobby") !== "off" && stored("fsub:lobby") !== "off") enter(); else show();
+  show();
   return {
+    // The panel was opened: enter the lobby (unless the player left it on purpose:
+    // "Enter the lobby" brings them back).
+    open: () => { if (!net && !entering && stored("fsub:lobby") !== "off") { retries = 0; enter(); } },
     raceSend: (bytes, reliable) => { if (!race) throw new Error("no race"); race.send(bytes, reliable); },
     get race() { return race; }, get net() { return net; },
   };

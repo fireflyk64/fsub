@@ -207,15 +207,16 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l)});
     const lobbyBtn=document.getElementById('lobbyBtn'), dot=lobbyBtn.querySelector('.dot');
     let news=0;
-    const openLobby=on=>{document.body.classList.toggle('lobby',on); if(on){news=0;dot.hidden=true;} try{localStorage.setItem('fsub:panel',on?'1':'0');}catch(err){}};
+    // Playing alone is the default: the lobby stays shut, and unconnected, until LOBBY is pressed
+    // (or the page was opened with a friend's race link).
+    const openLobby=on=>{document.body.classList.toggle('lobby',on); if(on){news=0;dot.hidden=true;lobby.open();}};
     lobbyBtn.addEventListener('click',()=>openLobby(!document.body.classList.contains('lobby')));
     document.getElementById('lobbyClose').addEventListener('click',()=>openLobby(false));
     const query=new URLSearchParams(location.search);
     const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),log:l=>console.log(l),
       onNews:()=>{if(!document.body.classList.contains('lobby')){news++;dot.textContent=news>9?'9+':news;dot.hidden=false;}},
       onStatus:t=>{msg.textContent=t||READY;}});
-    let wantPanel=null; try{wantPanel=localStorage.getItem('fsub:panel');}catch(err){}
-    if(query.get('race')||wantPanel==='1'||(wantPanel===null&&matchMedia('(min-width:1000px) and (min-aspect-ratio:3/2)').matches)) openLobby(true);
+    if(lobby.race) openLobby(true);
     requestAnimationFrame(raf);
     window.__gb={m,e,ac,cable,lobby};
     if(!lobby.race) msg.textContent=READY;
