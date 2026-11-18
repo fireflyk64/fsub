@@ -69,6 +69,7 @@ run(30);
 const first = finishes[0];
 check("the race is finished and timed", !!first && first.laps === 3 && first.lapTimes.length === 3, first && { total: clock(first.total), laps: first.lapTimes.map(clock) });
 check("a record and a ghost are kept", first && first.record.race && !!log.ghost(2, 3) && log.records(2).race3 === first.total, Object.keys(Object.fromEntries(store)));
+check("...for ARROW (the car raced) alone: the other cars have none yet", first && first.car === 0 && !log.ghost(2, 3, 1) && !log.records(2, 3).race3, first && first.car);
 
 // Back to the menu (Select once the race is over), MODE to LINK, the ghost plugged in.
 tap("select"); run(60);
