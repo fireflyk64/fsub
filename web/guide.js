@@ -162,7 +162,15 @@ export function advise(rd, sym, lead = LEAD) {
   const straight = [0, 1, 2].every((k) => Math.abs(bendAt((ahead >> 8) + k)) < 3);
   if (act === "gas" && rd(sym.hBoosts) && !rd(sym.hBoost) && straight && speed > 7.6 && !danger) act = "boost";
   if (act === "lift" && rd(sym.hDirt)) act = "gas";                             // (in the dirt: it slows you anyway)
-  return { act, corner, steer, why: steer ? why : "", target, x, speed };
+  // --- the pit: low on health, brake down to a crawl over the recharge patch and it fills you
+  // up (fzero.asm HEAL_CRAWL; flat out it gives half of what is missing)
+  let actWhy = "";
+  if (health < 40) for (const o of objs) {
+    if (o.kind !== 9 && o.kind !== 10) continue;
+    const d = o.dist - PLAYER_Z - speed * lead;
+    if (speed > 3.5 && d < (speed * speed - 9) / (2 * BRAKING) + speed * 8) { act = "brake"; actWhy = "crawl over the recharge: it fills you up"; }
+  }
+  return { act, corner, steer, why: steer ? why : "", actWhy, target, x, speed };
 }
 
 // --- on the page ---------------------------------------------------------------------------
@@ -211,7 +219,7 @@ export function createGuide({ canvas, buttons, touch = false }) {
       box.dataset.act = shown.act;
       actEl.textContent = words[shown.act] || "";
       steerEl.textContent = shown.steer < 0 ? words.left : shown.steer > 0 ? words.right : "";
-      whyEl.textContent = shown.steer ? advice.why || "" : shown.act === "lift" ? "coast: the car grips the corner" : shown.act === "brake" ? "too fast for the corner" : "";
+      whyEl.textContent = shown.steer ? advice.why || "" : advice.actWhy ? advice.actWhy : shown.act === "lift" ? "coast: the car grips the corner" : shown.act === "brake" ? "too fast for the corner" : "";
       light(buttons.brake, "cue", shown.act === "brake");
       light(buttons.gas, "cue", shown.act === "gas" || shown.act === "ready");
       light(buttons.gas, "cue-off", shown.act === "lift" || shown.act === "brake");

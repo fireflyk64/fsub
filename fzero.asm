@@ -115,7 +115,6 @@ DEF PUSH_K      EQU 72          ; how hard bends throw the car outward (see Push
 DEF CATCH_UP    EQU 6           ; extra pace for rivals just behind the player (1/16 unit)
 DEF CATCH_UP_FAR EQU 18         ; ...and for ones over two chunks behind: the field stays in
                                 ; touch whatever the level (ROOKIE's rivals are 16 slower)
-DEF EASE_OFF    EQU 8           ; less for ones four chunks or more ahead
 DEF BEHIND_Z    EQU PLAYER_Z - 90  ; where a rival is put to pounce on a mistake
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
@@ -153,8 +152,7 @@ DEF FLYING      EQU %10000000   ; a rival's stun byte: set, the rest is its move
 DEF RAMP_WINDOW EQU 48          ; a rival takes off within this many units of its chunk's start
 DEF LEAD        EQU SPAWN_DIST / 256   ; chunks between where a thing appears and where it sits
 DEF CHUNK_MASK  EQU 63          ; 64 chunks to a lap
-DEF HEAL_BASE   EQU 26          ; health from a recharge patch at a standstill...
-DEF HEAL_SPEED  EQU 2           ; ...less this for each unit of speed: slow down for more
+DEF HEAL_CRAWL  EQU 3           ; the recharge patch (the pit) at this speed or less fills you up
 DEF LINE_END    EQU 20          ; depth of the painted finish line
 DEF MODE_RACE     EQU 0
 DEF MODE_PRACTICE EQU 1
@@ -1994,9 +1992,11 @@ UpdateRivals:
     xor a
 .paced
     ld c, a
-    ldh a, [hRivalIdx + 1]      ; keep the field in touch: quicker behind us (much quicker
-    bit 7, a                    ; when well behind),
-    jr z, .notBehind
+    ldh a, [hRivalIdx + 1]      ; the field dogs you: quicker behind us (much quicker when
+    bit 7, a                    ; well behind).  Ahead, never slower: dawdle, and they are gone.
+    ld a, c
+    jr z, .banded
+    ldh a, [hRivalIdx + 1]
     cp -2
     ld a, c
     jr nc, .nearBehind
@@ -2009,11 +2009,6 @@ UpdateRivals:
     jr nc, .banded
     ld a, 255
     jr .banded
-.notBehind
-    cp 4                        ; a little slower when well ahead
-    ld a, c
-    jr c, .banded
-    sub EASE_OFF
 .banded
     bit 7, b                    ; (FLYING: the ramp's boost)
     jr nz, .flying
@@ -2405,18 +2400,52 @@ UpdateObject:
     jp nc, .onRamp
     cp KIND_HEAL_L
     jr c, .notHeal
-    ldh a, [hSpeed + 1]         ; a recharge patch: the slower we cross it, the more it gives
-    add a                       ; (HEAL_SPEED is 2)
+    ; The recharge patch, the pit: braked down to a crawl over it, it fills you up; a little
+    ; under top speed it gives three quarters of what is missing, flat out a half, boosting a
+    ; quarter.  Slow down to come out healthy, or blast through to win.
+    push de
+    push hl
+    ld d, 16                    ; (sixteenths of what is missing)
+    ldh a, [hSpeed + 1]
+    cp HEAL_CRAWL + 1
+    jr c, .healShare
     ld e, a
-    ld a, HEAL_BASE
-    sub e
-    ld e, a
+    ld d, 12
+    ld a, [wTop]
+    dec a
+    dec a
+    cp e
+    jr nc, .healShare           ; top speed less 2, or slower
+    ld d, 8
+    add 2
+    cp e
+    jr nc, .healShare           ; up to top speed
+    ld d, 4                     ; over it: boosting
+.healShare
     ldh a, [hHealth]
-    add e
+    ld e, a
+    ld a, HEALTH_MAX
+    sub e
+    ld e, a                     ; missing
+    ld a, d
+    ld d, 0
+    ld hl, 15                   ; (rounded up)
+.healMul
+    add hl, de
+    dec a
+    jr nz, .healMul
+    REPT 4
+        srl h
+        rr l
+    ENDR
+    ldh a, [hHealth]
+    add l
     cp HEALTH_MAX
     jr c, .healed
     ld a, HEALTH_MAX
 .healed
+    pop hl
+    pop de
     ldh [hHealth], a
     ld a, SFX_BOOST
     call Sfx
@@ -3839,7 +3868,7 @@ SetLevel:
     ldh [hLaps], a
     ret
 LevelPace:                      ; added to every rival's pace (1/16 unit per frame), signed
-    db 0, -16, -7, 0, 4, 8      ; (level 0 has nobody to pace)
+    db 0, -16, -3, 0, 4, 8      ; (level 0 has nobody to pace)
 
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
