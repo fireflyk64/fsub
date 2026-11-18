@@ -667,24 +667,28 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
   }
 
   // -- what the panel shows
+  // What the player is to do next, in a line: the panel's box, and the page's own bar.
+  // (Once both Game Boys wait in link mode the page presses Start itself: link.js autoCall.)
   function raceText() {
-    if (!race) return "";
+    const me = listening();
+    if (!race) return me ? "LINK needs a second player: press Race next to somebody in the lobby, or Invite a friend and send them the link." : "";
     const who = race.otherName || "your friend";
     if (race.phase === "joining") return "Opening the race…";
     if (race.phase === "alone") return race.invite ? "Waiting for your friend to open the link:" : `Waiting for ${who} to join the race…`;
     if (race.phase === "connecting") return `Connecting to ${who}…`;
-    const st = cable.state, peer = cable.peer, me = listening();
+    const st = cable.state, peer = cable.peer;
     if (st === "master" || st === "slave") return `Linked with ${who}: race on!`;
-    if (st === "calling") return `Calling ${who}'s Game Boy…`;
-    if (me && peer.listening) return `Both waiting: either of you press Start to link.`;
-    if (me) return `Your Game Boy waits (2P). ${who} picks LINK in the menu and presses GAS.`;
-    if (peer.listening) return `${who} waits: pick LINK in the menu and press GAS, then Start.`;
-    return `Connected to ${who}. Both: pick LINK in the menu and press GAS; then either presses Start.`;
+    if (st === "calling" || (me && peer.listening)) return `Linking with ${who}…`;
+    if (me) return `Your Game Boy waits (2P) for ${who} to set MODE to LINK in the menu and press GAS.`;
+    if (peer.listening) return `${who} is waiting: set MODE to LINK in the menu and press GAS.`;
+    return `Connected to ${who}. Both: set MODE to LINK in the menu and press GAS. The race starts when you both wait (2P).`;
   }
   let lastRaceText = "";
   function showRace() {
     const box = $("race"), t = raceText();
-    box.hidden = !race;
+    box.hidden = !t;
+    box.classList.toggle("alone", !race);
+    $("raceEnd").hidden = !race;
     if (t !== lastRaceText) { lastRaceText = t; $("raceText").textContent = t; onStatus(t); }
     const a = $("raceLink");
     a.hidden = !(race && race.invite && race.phase === "alone");

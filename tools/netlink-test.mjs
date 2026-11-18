@@ -132,5 +132,16 @@ B.cable.unplug();
 run(360);
 check("B unplugged: both Game Boys give up the link", linked().join() === "0,0" && A.cable.state === "waiting", [linked(), A.cable.state]);
 
+// Paired again while both Game Boys wait (2P): the lower seat's page presses Start for
+// its player (as web/index.html does when cable.autoCall() says so); nobody else does.
+A.cable.unplug(); A.cable.plug(true); B.cable.plug(false);
+check("both waiting again (2P), nobody linked", linked().join() === "0,0" && A.cable.listening() && B.cable.listening(), [linked()]);
+let autoPresses = { A: 0, B: 0 };
+run(180, () => { for (const gb of [A, B]) {
+  if (gb.autoLeft) { if (--gb.autoLeft === 0) gb.key("start", 0); }
+  else if (gb.cable.autoCall()) { gb.key("start", 1); gb.autoLeft = 6; autoPresses[gb.name]++; }
+} });
+check("linked with no player pressing Start: the lower seat's page called", linked().join() === "1,2" && autoPresses.A >= 1 && autoPresses.B === 0, [linked(), autoPresses]);
+
 console.log(failures ? `${failures} FAILED` : "all ok");
 process.exit(failures ? 1 : 0);

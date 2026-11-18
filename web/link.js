@@ -75,6 +75,13 @@ export class Cable {
   // Our Game Boy waits for a link: link mode, no partner, $55 loaded, the external clock armed.
   listening() { return this.role === null && (this.reg(0xff02) & 0x81) === 0x80 && this.reg(0xff01) === ANSWER; }
 
+  // Should the page press Start for its player?  Both Game Boys wait in link mode (2P)
+  // and ours is the lower seat's: on a real cable one of the players presses Start to
+  // call the other; here the page does it, so that waiting together is enough.
+  autoCall() {
+    return this.plugged && this.lower && this.role === null && !this.calling && !this.incoming && this.peer.listening && this.listening();
+  }
+
   // The other page is there (lower: our seat is the lower one).
   plug(lower) {
     if (this.plugged) return;

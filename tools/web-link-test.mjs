@@ -39,16 +39,22 @@ const hram = (page, name) => page.evaluate((a) => window.__gb.m._emulator_read_m
 const cableState = (page) => page.evaluate(() => window.__gb.cable.state);
 const text = (page, sel) => page.locator(sel).innerText();
 async function press(page, key, ms = 120) { await page.keyboard.down(key); await sleep(ms / 1000); await page.keyboard.up(key); await sleep(0.12); }
-async function toLinkRace(page) {
+// MODE to LINK with the arrows, then GAS (or a click on the START button, as a player might).
+async function toLinkRace(page, { click = false } = {}) {
   await page.locator("canvas").click({ position: { x: 5, y: 5 } });   // (the keyboard to the game, not the name box)
   for (const k of ["ArrowDown", "ArrowDown", "ArrowRight", "ArrowRight"]) await press(page, k);
-  await press(page, "KeyX");                                            // GAS: the race screen, 2P
+  if (click) await page.click("#top [data-k=start]"); else await press(page, "KeyX");   // the race screen, 2P
 }
 
 // Alone: nothing to do with the lobby, on a desktop or a phone.
 const D = await open("D", "", { lobby: false });
 await sleep(2);
 check("desktop, fresh: the lobby shut and no connection to its server", !(await D.evaluate(() => document.body.classList.contains("lobby"))) && D.sockets.length === 0, D.sockets);
+// LINK with nobody to link with: the lobby opens and says what is missing.
+await toLinkRace(D);
+check("alone in LINK mode: the lobby opens and says a second player is needed", await until("alone", async () => (await D.evaluate(() => document.body.classList.contains("lobby"))) && (await text(D, "#raceText")).startsWith("LINK needs a second player")),
+  [await text(D, "#raceText"), await text(D, "#msg")]);
+await D.screenshot({ path: path.join(shots, "d-link-alone.png") });
 await D.context().close();
 const P = await open("P", "", { phone: true, lobby: false });
 await sleep(2);
@@ -88,12 +94,13 @@ await B.click("#askYes");
 check("both in a race room, the cable plugged in", await until("race", async () => (await cableState(A)) !== "unplugged" && (await cableState(B)) !== "unplugged", 20), [await cableState(A), await cableState(B)]);
 check("the lobby shows them racing", await until("busy", async () => (await text(A, "#roster")).includes("racing") || (await text(A, "#roster")).includes("race room")), await text(A, "#roster"));
 
-await toLinkRace(A); await toLinkRace(B);
-check("both Game Boys wait for a link (2P)", await until("2p", async () => A.evaluate(() => window.__gb.cable.listening()) && B.evaluate(() => window.__gb.cable.listening()) && A.evaluate(() => window.__gb.cable.peer.listening)),
-  [await A.evaluate(() => window.__gb.cable.peer), await text(A, "#raceText")]);
-await press(A, "Enter");
-check("linked: Alice's Game Boy clocks, Bob's answers", await until("linked", async () => (await hram(A, "hLinked")) === 1 && (await hram(B, "hLinked")) === 2, 10),
-  [await hram(A, "hLinked"), await hram(B, "hLinked"), await cableState(A), await cableState(B)]);
+await toLinkRace(A);
+check("Alice waits (2P); the panel tells Bob what to do", await until("2p", async () => (await A.evaluate(() => window.__gb.cable.listening())) && (await text(B, "#raceText")).includes("set MODE to LINK")), [await text(B, "#raceText"), await text(B, "#msg")]);
+await toLinkRace(B, { click: true });
+// Nobody presses Start: the lower seat's page does, once both wait.
+const linkedAs = async () => [await hram(A, "hLinked"), await hram(B, "hLinked")].sort().join();
+check("both waiting: linked by itself, one clocks and one answers", await until("linked", async () => (await linkedAs()) === "1,2", 10),
+  [await hram(A, "hLinked"), await hram(B, "hLinked"), await cableState(A), await cableState(B), await text(A, "#raceText")]);
 check("the panel says so", (await text(A, "#raceText")).startsWith("Linked with Bob"), await text(A, "#raceText"));
 
 // Race: both on the gas for 12 s.
@@ -107,7 +114,7 @@ for (let i = 0; i < 24; i++) {
     if ((await hram(p, "hLinked")) === 0) drops++;
   }
 }
-check("still linked after 12 s of racing", drops === 0 && (await hram(A, "hLinked")) === 1 && (await hram(B, "hLinked")) === 2, { drops });
+check("still linked after 12 s of racing", drops === 0 && (await linkedAs()) === "1,2", { drops });
 check("each sees the other car move", seen.A.size > 15 && seen.B.size > 15, [seen.A.size, seen.B.size]);
 console.log("     cable", await A.evaluate(() => window.__gb.cable.stats), await B.evaluate(() => window.__gb.cable.stats));
 await A.screenshot({ path: path.join(shots, "a-racing.png") });
