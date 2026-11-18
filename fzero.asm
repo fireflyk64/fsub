@@ -55,13 +55,14 @@
 ;           Start after a race: go again; Select then: back to the menu.
 ;           Select+Start together: back to the menu at any time.
 ;
-; The menu picks the track, how quick the rivals are, the mode (race, practice, two-player
+; The menu picks the track, how quick the rivals are (or none), the mode (race, practice, two-player
 ; link) and the engine note.  It has real lettering because it borrows the tiles a track's
 ; skyline uses; choosing a track loads that skyline, the track's tables (into RAM, so the
 ; rest of the code just reads fixed addresses), its sceneries and its song.
 ;
 ; Two players: both pick link mode, one presses Start.  Each console runs its own car and
 ; two rivals and tells the other where they are; the other shows them a few frames late.
+; The console that called sets the track and the rivals for both (RIVALS NONE: just the two).
 ; The serial port is polled (LinkPump), never interrupt driven, so it cannot delay HBlank.
 ;
 ; Music is music/race.uge (edit it in hUGETracker), played by hUGEDriver.
@@ -563,7 +564,7 @@ MenuLines:                      ; value, lowest, highest
     dw hTrackNo
     db 0, NUM_TRACKS - 1
     dw hLevel
-    db 1, LEVELS
+    db 0, LEVELS                ; 0: no rivals (a time trial; linked, just the two players)
     dw hMode
     db 0, MODE_LINK
     dw hEngine
@@ -589,7 +590,7 @@ MenuValues:                     ; for each line, its values in order
 .tracks
     db "NEO CITY ", "BLUE DEEP", "GOLD WIND", "OLD PORT "
 .rivals
-    db "         ", "ROOKIE   ", "EASY     ", "NORMAL   ", "HARD     ", "EXPERT   "
+    db "NONE     ", "ROOKIE   ", "EASY     ", "NORMAL   ", "HARD     ", "EXPERT   "
 .modes
     db "RACE     ", "PRACTICE ", "LINK     "
 .engine
@@ -2952,7 +2953,7 @@ HudDigits:
 ;                  g flips when that player restarts the race
 ;   1  position bits 0-6        2  bits 7-13      3  bits 14-15, then x bit 7, -, state (2 bits)
 ;   4  x bits 0-6
-;   5  rival distance bits 0-6  6  bits 7-13      7  its lane
+;   5  rival distance bits 0-6  6  bits 7-13      7  its lane, then the level (3 bits; 0: no rivals)
 ;   8  sum of 1..7, 7 bits
 ; "position" is the 16-bit count of units driven; distances are 14-bit signed.
 
@@ -3204,6 +3205,11 @@ BuildPacket:
     ld a, [hl]
     and 3
     ld b, a
+    ldh a, [hLevel]             ; with our level (0: no rivals), for the other side to follow
+    add a
+    add a
+    or b
+    ld b, a
     pop hl
     ld a, d                     ; keep it inside 14 bits signed
     add $20
@@ -3283,7 +3289,7 @@ LinkApply:
     ld b, a
     ldh a, [hTrackNo]
     cp b
-    jr z, .sameTrack
+    jr z, .sameTrackSlave
     ld a, b
     ldh [hTrackNo], a
     call LcdOff
@@ -3292,6 +3298,20 @@ LinkApply:
     ld a, LCDC_UPPER
     ldh [rLCDC], a
     ei
+    jp InitRace
+.sameTrackSlave                 ; ... and the rivals: how quick, or none
+    ld a, [wRemote + 7]
+    rrca
+    rrca
+    and 7
+    cp LEVELS + 1
+    jr nc, .sameTrack
+    ld b, a
+    ldh a, [hLevel]
+    cp b
+    jr z, .sameTrack
+    ld a, b
+    ldh [hLevel], a
     jp InitRace
 .sameTrack
     ld hl, wRemote + 1
@@ -3343,7 +3363,19 @@ LinkApply:
     ld a, d
     adc 0
     ld [wRivals + 4 * 8 + 2], a
-    ; one of their rivals: record 2 or 3
+    ; one of their rivals: record 2 or 3 (they have none at level 0)
+    ld a, [wRemote + 7]
+    and %00011100
+    jr nz, .theirRival
+    pop de
+    ld a, LOW(HIDDEN)           ; (any they had before are gone from our road too)
+    ld [wRivals + 2 * 8 + 1], a
+    ld [wRivals + 3 * 8 + 1], a
+    ld a, HIGH(HIDDEN)
+    ld [wRivals + 2 * 8 + 2], a
+    ld [wRivals + 3 * 8 + 2], a
+    ret
+.theirRival
     call .get14
     bit 5, d                    ; 14-bit signed
     jr z, .ahead
@@ -3388,12 +3420,13 @@ LinkApply:
     srl d
     ret
 
-; The difficulty level (1..LEVELS) sets how many laps and how the rivals' pace is shifted.
+; The difficulty level (1..LEVELS, or 0 for no rivals) sets how many laps and how the
+; rivals' pace is shifted.
 SetLevel:
     ldh a, [hLevel]
     ld e, a
     ld d, 0
-    ld hl, LevelPace - 1
+    ld hl, LevelPace
     add hl, de
     ld a, [hl]
     ldh [hPace], a
@@ -3406,7 +3439,7 @@ SetLevel:
     ldh [hLaps], a
     ret
 LevelPace:                      ; added to every rival's pace (1/16 unit per frame), signed
-    db -16, -7, 0, 4, 8
+    db 0, -16, -7, 0, 4, 8      ; (level 0 has nobody to pace)
 
 ; Put everything back on the grid.  Keeps the mode and the level.
 InitRace:
@@ -3493,6 +3526,11 @@ InitRace:
     call SetLevel
 
     ld de, RivalStart
+    ldh a, [hLevel]             ; no rivals: nobody on the grid
+    or a
+    jr nz, .someRivals
+    ld de, RivalsAlone
+.someRivals
     ldh a, [hMode]
     cp MODE_LINK
     jr nz, .grid
@@ -3513,6 +3551,14 @@ InitRace:
     ld hl, wRivals
     ld bc, NUM_RIVALS * 8
     call Copy
+    ldh a, [hLevel]             ; linked with no rivals: our two are never placed either,
+    or a                        ; and only the two players race
+    jr nz, .ordered
+    ld de, RivalsAlone
+    ld hl, wRivals
+    ld bc, 2 * 8
+    call Copy
+.ordered
     ld hl, wOrder
     xor a
 .order
@@ -3569,6 +3615,8 @@ Drive:
     dec a
     jr nz, .again
     ldh a, [hLevel]
+    or a                        ; (not from no rivals at all)
+    jr z, .again
     cp LEVELS
     jr nc, .again
     inc a

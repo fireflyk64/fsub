@@ -22,6 +22,7 @@ SITE="$OUT/site"
 mkdir -p "$SITE"
 cp "$REPO"/web/* "$SITE"/
 cp "$REPO/fzero.gb" "$SITE/fsub.gb"
+cp "$REPO/fzero.sym" "$SITE/fsub.sym"
 
 LOBBY_PID=""
 if [[ -z "${LOBBY_URL:-}" ]]; then

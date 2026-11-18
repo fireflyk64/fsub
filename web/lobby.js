@@ -371,9 +371,11 @@ export const isRaceCode = (c) => /^FSUB-[A-Z0-9]{4,12}$/.test(String(c || "")) &
 const META = 0x7b;   // '{': a JSON message between the two pages; anything else is the cable's
 
 // on.change() something to show changed; on.over(why) the race is over.
+// host: our player asked for the race (or invited): our page makes the call when both
+// Game Boys wait, so our track and rivals count.
 class Race {
-  constructor({ server, code, cable, name, on, log }) {
-    Object.assign(this, { server, code, cable, name, on, log });
+  constructor({ server, code, cable, name, host, on, log }) {
+    Object.assign(this, { server, code, cable, name, host: !!host, on, log });
     this.game = null; this.other = -1; this.left = false;
     this.phase = "joining";        // joining | alone | connecting | connected
     this.otherName = "";
@@ -410,7 +412,7 @@ class Race {
         return;
       case "peer-state":
         if (ev.playerId !== this.other) return;
-        if (ev.state === "connected") { this.phase = "connected"; this.cable.plug(this.game.selfId < this.other); this.hello(); }
+        if (ev.state === "connected") { this.phase = "connected"; this.cable.plug(this.game.selfId < this.other, this.host); this.hello(); }
         else if (ev.state === "failed" || ev.state === "closed") { this.phase = "connecting"; this.cable.unplug(); }
         this.on.change();
         return;
@@ -459,9 +461,11 @@ const ASK_WAIT_MS = 60000;   // a question to race stands this long
 
 // cable: web/link.js's Cable (its send goes to the race through raceSend).
 // server: the lobby server.  listening(): our Game Boy waits for a link (2P).
+// game(): where our Game Boy is, { menu, alone } (racing, not in link mode), or null when
+// the page cannot tell.
 // onNews(): something new while the panel is shut.  log(line).
 // onStatus(text): the race's state in a line (or "" without a race), for the page's own bar.
-export function initLobby({ cable, server = LOBBY_SERVER, listening = () => false, onNews = () => {}, onStatus = () => {}, log = () => {} }) {
+export function initLobby({ cable, server = LOBBY_SERVER, listening = () => false, game = () => null, onNews = () => {}, onStatus = () => {}, log = () => {} }) {
   let net = null, entering = false, retry = null, retries = 0, race = null;
   let asking = null;                 // { to, code, at, timer }: our question to a racer
   const asked = new Map();           // seat -> { code, at }: their questions to us
@@ -602,7 +606,7 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
         if (asked.has(id) && asked.get(id).code === m.code) { asked.delete(id); show(); }
         return;
       case "yes":
-        if (asking && asking.to === id && asking.code === m.code) { const code = asking.code; dropAsk(); startRace(code, theirName(id)); }
+        if (asking && asking.to === id && asking.code === m.code) { const code = asking.code; dropAsk(); startRace(code, theirName(id), true); }
         return;
       case "no":
         if (asking && asking.to === id && asking.code === m.code) { dropAsk(); sys(`${theirName(id)} cannot race right now.`); show(); }
@@ -629,17 +633,17 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
     if (yes) {
       for (const [other, oq] of asked) sendTo(other, { t: "no", code: oq.code });
       asked.clear();
-      startRace(q.code, theirName(id));
+      startRace(q.code, theirName(id), false);
     }
     show();
   }
 
   // -- the race
-  function startRace(code, withName) {
+  function startRace(code, withName, host) {
     if (race) race.leave();
     dropAsk();
     const r = race = new Race({
-      server, code, cable, name: myName(), log,
+      server, code, cable, name: myName(), host, log,
       on: {
         change: () => { if (race === r) { hellos(); show(); } },
         over: (why) => { if (race === r) { race = null; sys(`The race is over: ${why}.`); hellos(); show(); } },
@@ -660,7 +664,7 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
   const raceLink = (code) => { const u = new URL(location.href); u.search = ""; u.hash = ""; u.searchParams.set("race", code); return u.toString(); };
   async function invite() {
     const code = newRaceCode();
-    startRace(code, "");
+    startRace(code, "", true);
     race.invite = raceLink(code);
     try { await navigator.clipboard.writeText(race.invite); note("Link copied: send it to a friend."); } catch (e) { note("Copy the link below and send it to a friend."); }
     show();
@@ -676,12 +680,16 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
     if (race.phase === "joining") return "Opening the race…";
     if (race.phase === "alone") return race.invite ? "Waiting for your friend to open the link:" : `Waiting for ${who} to join the race…`;
     if (race.phase === "connecting") return `Connecting to ${who}…`;
-    const st = cable.state, peer = cable.peer;
+    const st = cable.state, peer = cable.peer, g = game();
     if (st === "master" || st === "slave") return `Linked with ${who}: race on!`;
     if (st === "calling" || (me && peer.listening)) return `Linking with ${who}…`;
-    if (me) return `Your Game Boy waits (2P) for ${who} to set MODE to LINK in the menu and press GAS.`;
-    if (peer.listening) return `${who} is waiting: set MODE to LINK in the menu and press GAS.`;
-    return `Connected to ${who}. Both: set MODE to LINK in the menu and press GAS. The race starts when you both wait (2P).`;
+    // Whose track and rivals count: the host's (whose page makes the call).
+    const rules = race.host ? " Your TRACK and RIVALS count (RIVALS NONE: just the two of you)." : ` ${who} hosts: ${who}'s track and rivals count.`;
+    const them = peer.menu ? `${who} is in the menu and has to press GAS` : peer.alone ? `${who} is racing alone and has to press SELECT+START for the menu, then GAS` : `${who} has to set MODE to LINK and press GAS`;
+    if (me) return `Your Game Boy waits (2P). ${them}.`;
+    if (g && g.alone) return `You are racing alone: press SELECT+START for the menu, then GAS, to race ${who}.`;
+    if (g && g.menu) return (g.link ? `Press GAS to race ${who}.` : `Set MODE to LINK and press GAS to race ${who}.`) + rules;
+    return `Connected to ${who}: set MODE to LINK in the menu and press GAS.` + rules;
   }
   let lastRaceText = "";
   function showRace() {
@@ -762,7 +770,7 @@ export function initLobby({ cable, server = LOBBY_SERVER, listening = () => fals
   cable.on = (what) => { if (what === "state" && (cable.state === "master" || cable.state === "slave")) hellos(); showRace(); };
 
   const q = new URLSearchParams(location.search);
-  if (isRaceCode(q.get("race"))) startRace(q.get("race"), "");
+  if (isRaceCode(q.get("race"))) startRace(q.get("race"), "", false);
   show();
   return {
     // The panel was opened: enter the lobby (unless the player left it on purpose:

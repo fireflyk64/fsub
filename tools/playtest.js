@@ -15,7 +15,7 @@ const sym = {};
 for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { const m = l.match(/^00:([0-9a-f]{4}) (\w+)$/i); if (m) sym[m[2]] = parseInt(m[1], 16); }
 const args = process.argv.slice(2);
 const bots = args.filter(a => ['masher', 'casual', 'expert'].includes(a));
-const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : 0;
+const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : -1;   // (-1: the menu's own; 0: no rivals)
 const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
 const gifAt = args.indexOf('--gif');
 const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)'))[1];
@@ -43,7 +43,7 @@ async function race(kind, record) {
       const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), tap = i % 6 < 3;
       let key = 'start';
       if (trk !== track) key = row !== 0 ? 'up' : (trk < track ? 'right' : 'left');
-      else if (level && lv !== level) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
+      else if (level >= 0 && lv !== level) key = row !== 1 ? (row < 1 ? 'down' : 'up') : (lv < level ? 'right' : 'left');
       for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, tap && k === key);
       continue; }
     if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }

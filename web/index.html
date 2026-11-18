@@ -12,7 +12,7 @@ html,body{margin:0;background:#111;color:#ddd;font:14px sans-serif;text-align:ce
 canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(var(--gw),calc(52dvh*160/144));flex:none;touch-action:none}
 #top{display:flex;gap:8px;align-items:center;justify-content:center;width:100%;padding:6px;flex:none}
 #msg{flex:1;font-size:12px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-#msg.act{color:#fc6;font-weight:bold}
+#msg.act{color:#111;background:#fc6;font-weight:bold;border-radius:6px;padding:3px 7px}
 #pads{flex:1;display:flex;width:100%;min-height:0;gap:10px;padding:6px 10px 12px}
 #stick{flex:1;position:relative;border:2px dashed #555;border-radius:18px;color:#777;display:flex;align-items:center;justify-content:center;font-size:13px;min-height:90px}
 #knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:#8af;opacity:.0;pointer-events:none;left:50%;top:50%}
@@ -102,15 +102,15 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </aside>
 <details id="help"><summary>How to play</summary>
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
-<p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival; race, practice or two-player link.</p>
+<p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
 <p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
 <p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
-<p><b>Two players, two browsers:</b> first pair up: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Then both set <b>MODE</b> to <b>LINK</b> in the menu and press GAS: each screen shows 2P while it waits, and the race starts by itself once you are both waiting. Each Game Boy runs its own car and two rivals and shows the other player's car and rivals too (a few frames late, as a link cable between two consoles would), so each of you races five others. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
+<p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT), with link-cable hooks · lobby: lobbylink</p>
 </details>
 <script src="binjgb.js"></script>
 <script type="module">
-import { Cable, EV_SERIAL } from "./link.js";
+import { Cable, EV_SERIAL, INFO_MENU, INFO_ALONE } from "./link.js";
 import { initLobby, LOBBY_SERVER } from "./lobby.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
 const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
@@ -120,8 +120,12 @@ const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
 (async()=>{
   try{
+    // Where the ROM keeps a few things (fsub.sym, written with the ROM), so that the page can tell
+    // a player in a race what to do next.  Without it the page only says less.
+    const symP=fetch('fsub.sym').then(r=>r.ok?r.text():'').catch(()=>'');
     const m=await Binjgb();
     const rom=new Uint8Array(await (await fetch('fsub.gb')).arrayBuffer());
+    const sym={}; for(const l of (await symP).split('\n')){const x=/^[0-9a-f]+:([0-9a-f]{4}) (\w+)\s*$/i.exec(l); if(x) sym[x[2]]=parseInt(x[1],16);}
     const size=(rom.length+0x7fff)&~0x7fff;
     const ptr=m._malloc(size);
     new Uint8Array(m.HEAP8.buffer,ptr,size).fill(0).set(rom);
@@ -138,6 +142,10 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       else{const f=wrap.requestFullscreen||wrap.webkitRequestFullscreen; if(f) f.call(wrap); else msg.textContent='No fullscreen here: add the page to your home screen instead';} }catch(err){} };
     document.getElementById('fs').addEventListener('click',toggleFS);
     const typing=ev=>ev.target&&ev.target.closest&&ev.target.closest('input,textarea');   // (keys typed in the lobby are not the game's)
+    // A click or tap on the game, or Esc, gives the keys back to the game after typing in the lobby.
+    const unfocus=()=>{const a=document.activeElement; if(a&&a.matches&&a.matches('input,textarea')) a.blur();};
+    wrap.addEventListener('pointerdown',unfocus,true);
+    addEventListener('keydown',ev=>{if(ev.key==='Escape'&&typing(ev)) unfocus();},true);
     addEventListener('keydown',ev=>{ac.resume(); if(typing(ev)) return; if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k&&src.kb[k]){src.kb[k]=0;apply();ev.preventDefault();}});
@@ -195,28 +203,43 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       const s=ac.createBufferSource(); s.buffer=b; s.connect(ac.destination); s.start(audioT); audioT+=AUDIO_FRAMES/ac.sampleRate;
     };
     const ticks=()=>m._emulator_get_ticks_f64(e);
+    // (A mistake in the link's code must not stop the game: it is logged, and the race goes on.)
+    let linkErrors=0;
+    const linkStep=f=>{try{f();}catch(err){if(linkErrors++<5) console.error('link:',err);}};
     const runUntil=t=>{for(;;){const until=cable.plugged?Math.min(t,ticks()+SLICE):t, ev=m._emulator_run_until_f64(e,until);
-      if(ev&EV_SERIAL) cable.serial();
+      if(ev&EV_SERIAL) linkStep(()=>cable.serial());
       if(ev&EV_FRAME) img.data.set(fb);
       if(ev&EV_AUDIO) pushAudio();
-      if(ev&EV_TICKS){cable.tick(); if(until>=t) break;}}};
-    // Linking: both Game Boys wait in link mode (2P), so the lower seat's page presses Start
-    // for its player (a tenth of a second, again after two if nothing came of it).  And a
-    // Game Boy waiting in link mode with nobody to link with opens the lobby, once each time.
-    let autoUntil=0, autoNext=0, aloneWas=false;
+      if(ev&EV_TICKS){linkStep(()=>cable.tick()); if(until>=t) break;}}};
+    // Where our Game Boy is: in the menu (and whether MODE is LINK), or racing alone.
+    const rd=a=>m._emulator_read_mem(e,a), MODE_LINK=2;
+    const known=sym.hMenu!==undefined&&sym.hMode!==undefined;
+    const game=()=>known?{menu:rd(sym.hMenu)===1, link:rd(sym.hMode)===MODE_LINK, alone:rd(sym.hMenu)===0&&rd(sym.hMode)!==MODE_LINK}:null;
+    // Linking, as forgiving as it can be:
+    //  - paired, and in the menu: MODE is set to LINK (once each visit to the menu; the player may
+    //    put it back), so that GAS is all there is to press;
+    //  - both Game Boys wait in link mode (2P): the host's page presses Start for its player
+    //    (a tenth of a second, again after two if nothing came of it);
+    //  - a Game Boy waiting in link mode with nobody to link with opens the lobby, once each time.
+    let autoUntil=0, autoNext=0, aloneWas=false, menuSet=false, dirtyFrames=0;
     const linkHelp=ms=>{
+      const g=game(), paired=!!(lobby.race&&lobby.race.phase==='connected');
+      if(g&&g.menu&&paired&&!menuSet){menuSet=true; if(!g.link){m._emulator_write_mem(e,sym.hMode,MODE_LINK); dirtyFrames=4;}}
+      if(g&&!g.menu) menuSet=false;
+      if(dirtyFrames>0&&sym.wMenuDirty!==undefined){dirtyFrames--; m._emulator_write_mem(e,sym.wMenuDirty,1);}   // (the menu redraws its lines)
       if(cable.autoCall()&&ms>autoNext){autoUntil=ms+100; autoNext=ms+2000;}
       const press=ms<autoUntil?1:0; if(src.auto.start!==press){src.auto.start=press; apply();}
       const alone=!lobby.race&&cable.listening();
       if(alone&&!aloneWas) openLobby(true);
       aloneWas=alone;};
-    const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkHelp(ms);
+    const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms));
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
       ctx.putImageData(img,0,0);};
     // The link cable to another browser, and the lobby where the other browser is found.
-    const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l)});
+    const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l),
+      info:()=>{const g=game(); return g?(g.menu?INFO_MENU:0)|(g.alone?INFO_ALONE:0):0;}});
     const lobbyBtn=document.getElementById('lobbyBtn'), dot=lobbyBtn.querySelector('.dot');
     let news=0;
     // Playing alone is the default: the lobby stays shut, and unconnected, until LOBBY is pressed
@@ -225,7 +248,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     lobbyBtn.addEventListener('click',()=>openLobby(!document.body.classList.contains('lobby')));
     document.getElementById('lobbyClose').addEventListener('click',()=>openLobby(false));
     const query=new URLSearchParams(location.search);
-    const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),log:l=>console.log(l),
+    const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),game,log:l=>console.log(l),
       onNews:()=>{if(!document.body.classList.contains('lobby')){news++;dot.textContent=news>9?'9+':news;dot.hidden=false;}},
       onStatus:t=>{msg.textContent=t||READY; msg.classList.toggle('act',!!t);}});
     if(lobby.race) openLobby(true);

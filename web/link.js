@@ -31,6 +31,7 @@
 // is the ROM's own test: two SameBoy cores on a plain emulated cable).
 
 export const EV_SERIAL = 0x20;
+export const INFO_MENU = 8, INFO_ALONE = 16;   // info(): in the menu; racing, not in link mode
 const CALL = 0xaa, ANSWER = 0x55, NOBODY = 0xff;
 const N = 9;                       // bytes in a packet
 const CLOCK_TICKS = 12288;         // ~2.9 ms between the bytes we clock in (the ROM's 2 ms gap plus the byte)
@@ -47,11 +48,13 @@ const M_PACKET = 0x50, M_STATUS = 0x53, M_CALL = 0x43, M_ACCEPT = 0x41, M_REFUSE
 export class Cable {
   // m, e: the binjgb module and emulator.  send(bytes, reliable): to the other page.
   // now(): milliseconds.  on(event, detail): "state" when the link's state changes,
-  // "peer" when the other page's status changes.
-  constructor({ m, e, send, now = () => performance.now(), on = () => {}, log = () => {} }) {
-    Object.assign(this, { m, e, send, now, on, log });
+  // "peer" when the other page's status changes.  info(): where our Game Boy is, for the
+  // other page to tell its player: INFO_MENU | INFO_ALONE (racing, not in link mode).
+  constructor({ m, e, send, now = () => performance.now(), on = () => {}, info = () => 0, log = () => {} }) {
+    Object.assign(this, { m, e, send, now, on, info, log });
     this.plugged = false;
     this.lower = false;            // our seat is the lower: we win a call made by both at once
+    this.host = false;             // our player hosts: our page makes the call (our track and rivals count)
     this.reset();
   }
 
@@ -64,7 +67,7 @@ export class Cable {
     this.asm = null;               // our Game Boy's packet being put together
     this.seqOut = 0; this.seqIn = -1;
     this.lastRx = 0; this.lastUse = 0; this.nextClock = 0;
-    this.peer = { listening: false, linked: false };
+    this.peer = { listening: false, linked: false, calling: false, menu: false, alone: false };
     this.statusAt = 0; this.statusSent = -1;
     this.stats = { tx: 0, rx: 0, late: 0 };
   }
@@ -76,17 +79,18 @@ export class Cable {
   listening() { return this.role === null && (this.reg(0xff02) & 0x81) === 0x80 && this.reg(0xff01) === ANSWER; }
 
   // Should the page press Start for its player?  Both Game Boys wait in link mode (2P)
-  // and ours is the lower seat's: on a real cable one of the players presses Start to
-  // call the other; here the page does it, so that waiting together is enough.
+  // and ours is the host's: on a real cable one of the players presses Start to call the
+  // other (and that console's track and rivals count); here the host's page does it, so
+  // that waiting together is enough.
   autoCall() {
-    return this.plugged && this.lower && this.role === null && !this.calling && !this.incoming && this.peer.listening && this.listening();
+    return this.plugged && this.host && this.role === null && !this.calling && !this.incoming && this.peer.listening && this.listening();
   }
 
-  // The other page is there (lower: our seat is the lower one).
-  plug(lower) {
+  // The other page is there (lower: our seat is the lower one; host: our player hosts).
+  plug(lower, host = lower) {
     if (this.plugged) return;
     this.reset();
-    this.plugged = true; this.lower = !!lower;
+    this.plugged = true; this.lower = !!lower; this.host = !!host;
     this.m._emulator_set_serial_link(this.e, 1);
     this.changed();
   }
@@ -102,7 +106,7 @@ export class Cable {
   ctl(type, ...rest) { try { this.send(Uint8Array.of(type, ...rest), true); } catch (err) { this.log("link: " + err); } }
   status(force) {
     if (!this.plugged) return;
-    const s = (this.listening() ? 1 : 0) | (this.role ? 2 : 0) | (this.calling ? 4 : 0);
+    const s = (this.listening() ? 1 : 0) | (this.role ? 2 : 0) | (this.calling ? 4 : 0) | (this.info() & (INFO_MENU | INFO_ALONE));
     const t = this.now();
     if (!force && s === this.statusSent && t - this.statusAt < STATUS_MS) return;
     this.statusSent = s; this.statusAt = t;
@@ -187,10 +191,10 @@ export class Cable {
         return;
       }
       case M_STATUS: {
-        const peer = { listening: !!(d[1] & 1), linked: !!(d[1] & 2), calling: !!(d[1] & 4) };
+        const peer = { listening: !!(d[1] & 1), linked: !!(d[1] & 2), calling: !!(d[1] & 4), menu: !!(d[1] & INFO_MENU), alone: !!(d[1] & INFO_ALONE) };
         const was = this.peer;
         this.peer = peer;
-        if (was.listening !== peer.listening || was.linked !== peer.linked || was.calling !== peer.calling) this.on("peer", peer);
+        if (Object.keys(peer).some((k) => peer[k] !== was[k])) this.on("peer", peer);
         return;
       }
       case M_CALL:

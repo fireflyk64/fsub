@@ -25,6 +25,7 @@ git -C "$PAGES" pull --rebase -q
 mkdir -p "$DEST"
 cp "$HERE"/web/* "$DEST"/
 cp "$HERE/fzero.gb" "$DEST/fsub.gb"
+cp "$HERE/fzero.sym" "$DEST/fsub.sym"   # (the page reads where the game keeps a few things: web/index.html)
 
 cd "$PAGES"
 git add fsub

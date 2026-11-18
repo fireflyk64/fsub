@@ -87,19 +87,33 @@ await B.fill("#chatInput", "see my site at example.com"); await B.press("#chatIn
 await sleep(0.5);
 check("a link is not sent", !(await text(A, "#chatLog")).includes("example") && (await text(B, "#chatHint")).includes("links"), await text(B, "#chatHint"));
 
-// Alice asks Bob; Bob says yes.
+// Bob is off on a race of his own (RACE mode) when Alice asks; he says yes.
+await B.locator("canvas").click({ position: { x: 5, y: 5 } });
+await press(B, "KeyX");
+check("Bob races alone (RACE mode)", await until("solo", async () => (await hram(B, "hMenu")) === 0 && (await hram(B, "hMode")) === 0), [await hram(B, "hMenu"), await hram(B, "hMode")]);
 await A.locator("#roster li", { hasText: "Bob" }).getByRole("button", { name: "Race" }).click();
 check("Bob is asked", await until("ask", async () => B.locator("#ask").isVisible()));
 await B.click("#askYes");
 check("both in a race room, the cable plugged in", await until("race", async () => (await cableState(A)) !== "unplugged" && (await cableState(B)) !== "unplugged", 20), [await cableState(A), await cableState(B)]);
 check("the lobby shows them racing", await until("busy", async () => (await text(A, "#roster")).includes("racing") || (await text(A, "#roster")).includes("race room")), await text(A, "#roster"));
 
-await toLinkRace(A);
-check("Alice waits (2P); the panel tells Bob what to do", await until("2p", async () => (await A.evaluate(() => window.__gb.cable.listening())) && (await text(B, "#raceText")).includes("set MODE to LINK")), [await text(B, "#raceText"), await text(B, "#msg")]);
-await toLinkRace(B, { click: true });
-// Nobody presses Start: the lower seat's page does, once both wait.
-const linkedAs = async () => [await hram(A, "hLinked"), await hram(B, "hLinked")].sort().join();
-check("both waiting: linked by itself, one clocks and one answers", await until("linked", async () => (await linkedAs()) === "1,2", 10),
+// Alice is in the menu: paired, its MODE is set to LINK for her; GAS is all she presses.
+check("paired in the menu: Alice's MODE set to LINK, and she is told to press GAS", await until("menu", async () => (await hram(A, "hMode")) === 2 && (await text(A, "#raceText")).startsWith("Press GAS to race Bob")),
+  [await hram(A, "hMode"), await text(A, "#raceText")]);
+check("Alice hosts: her track and rivals count", (await text(A, "#raceText")).includes("Your TRACK and RIVALS count"), await text(A, "#raceText"));
+check("Bob, racing alone, is told how to get to the menu", (await text(B, "#raceText")).startsWith("You are racing alone: press SELECT+START"), await text(B, "#raceText"));
+await A.locator("canvas").click({ position: { x: 5, y: 5 } });
+await press(A, "KeyX");
+check("Alice waits (2P), and is told Bob is racing alone", await until("2p", async () => (await A.evaluate(() => window.__gb.cable.listening())) && (await text(A, "#raceText")).includes("Bob is racing alone")), [await text(A, "#raceText")]);
+await B.keyboard.down("ShiftLeft"); await B.keyboard.down("Enter"); await sleep(0.2); await B.keyboard.up("Enter"); await B.keyboard.up("ShiftLeft");
+check("Bob in the menu: MODE set to LINK for him too", await until("bmenu", async () => (await hram(B, "hMenu")) === 1 && (await hram(B, "hMode")) === 2 && (await text(B, "#raceText")).startsWith("Press GAS to race Alice")),
+  [await hram(B, "hMenu"), await hram(B, "hMode"), await text(B, "#raceText")]);
+await B.screenshot({ path: path.join(shots, "b-menu-paired.png") });
+await sleep(0.3);
+await B.click("#top [data-k=start]");   // (a mouse click on START, as a player might)
+// Nobody presses Start on the race screen: the host's page does, once both wait.
+const linkedAs = async () => [await hram(A, "hLinked"), await hram(B, "hLinked")].join();
+check("both waiting: linked by itself, Alice (the host) calling", await until("linked", async () => (await linkedAs()) === "1,2", 10),
   [await hram(A, "hLinked"), await hram(B, "hLinked"), await cableState(A), await cableState(B), await text(A, "#raceText")]);
 check("the panel says so", (await text(A, "#raceText")).startsWith("Linked with Bob"), await text(A, "#raceText"));
 

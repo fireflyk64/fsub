@@ -81,6 +81,9 @@ const H = (gb, s) => gb.rd(sym[s]);
 const linked = () => [H(A, "hLinked"), H(B, "hLinked")];
 const pos = (gb) => gb.rd(sym.hPos + 1) | gb.rd(sym.hPos + 2) << 8;
 const remotePos = (gb) => { const r = sym.wRemote; return gb.rd(r + 1) | gb.rd(r + 2) << 7 | (gb.rd(r + 3) & 3) << 14; };
+// The other cars this Game Boy places on the road (a record at HIDDEN is nobody).
+const HIDDEN = -30000 & 0xffff;
+const carsShown = (gb) => { let n = 0; for (let i = 0; i < 7; i++) { const d = gb.rd(sym.wRivals + i * 8 + 1) | gb.rd(sym.wRivals + i * 8 + 2) << 8; if (d !== HIDDEN) n++; } return n; };
 
 run(240);
 // Both pick LINK (and A the third track); then GAS brings up the race screen ("2P").
@@ -110,6 +113,7 @@ run(1200, () => {
 check("linked through 20 s of racing", linked().join() === "1,2" && drops === 0, { linked: linked(), drops });
 check("no long gap in good packets (frames)", worstStale < 30, worstStale);
 check("each screen's other car moves", seenA.size > 20 && seenB.size > 20, [seenA.size, seenB.size]);
+check("each screen races five others (the other player, two rivals each)", carsShown(A) === 5 && carsShown(B) === 5, [carsShown(A), carsShown(B)]);
 check("the other car is where the other Game Boy is (within 2 s of driving)", Math.abs(remotePos(A) - (pos(B) & 0xffff)) < 3000 && Math.abs(remotePos(B) - (pos(A) & 0xffff)) < 3000, [remotePos(A), pos(B), remotePos(B), pos(A)]);
 console.log("     packets A->B", A.cable.stats, "B->A", B.cable.stats);
 
@@ -142,6 +146,29 @@ run(180, () => { for (const gb of [A, B]) {
   else if (gb.cable.autoCall()) { gb.key("start", 1); gb.autoLeft = 6; autoPresses[gb.name]++; }
 } });
 check("linked with no player pressing Start: the lower seat's page called", linked().join() === "1,2" && autoPresses.A >= 1 && autoPresses.B === 0, [linked(), autoPresses]);
+
+// Heads-up: back to the menu, A sets RIVALS to NONE; B keeps NORMAL and follows A's.
+A.key("select", 1); A.key("start", 1); run(4); A.key("select", 0); A.key("start", 0);
+B.key("select", 1); B.key("start", 1); run(4); B.key("select", 0); B.key("start", 0);
+run(60);
+tap(A, "down"); for (let i = 0; i < 4; i++) tap(A, "left");   // (from the TRACK line: RIVALS, then down to NONE)
+check("A's menu: RIVALS NONE, B's NORMAL", H(A, "hLevel") === 0 && H(B, "hLevel") === 3, [H(A, "hLevel"), H(B, "hLevel")]);
+tap(A, "B"); tap(B, "B");
+autoPresses = { A: 0, B: 0 };
+run(240, () => { for (const gb of [A, B]) {
+  if (gb.autoLeft) { if (--gb.autoLeft === 0) gb.key("start", 0); }
+  else if (gb.cable.autoCall()) { gb.key("start", 1); gb.autoLeft = 6; autoPresses[gb.name]++; }
+} });
+check("heads-up: linked, and B took A's RIVALS NONE", linked().join() === "1,2" && H(B, "hLevel") === 0, [linked(), H(B, "hLevel"), autoPresses]);
+// (A sets off 3 s before B, so that the order is plain: two cars side by side are each a
+// few frames behind on the other's screen, and both may see themselves second.)
+A.key("B", 1); run(180); B.key("B", 1); run(300);
+let places = new Set();
+run(600, () => { if (frame % 15 === 0) places.add(`${H(A, "hRank")}${H(B, "hRank")}`); });
+A.key("B", 0); B.key("B", 0);
+check("heads-up: each screen shows just the other player", carsShown(A) === 1 && carsShown(B) === 1, [carsShown(A), carsShown(B)]);
+check("heads-up: A 1st and B 2nd on both screens", [...places].every((p) => p === "12"), [...places]);
+check("heads-up: still linked after 15 s", linked().join() === "1,2", linked());
 
 console.log(failures ? `${failures} FAILED` : "all ok");
 process.exit(failures ? 1 : 0);
