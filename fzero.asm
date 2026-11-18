@@ -107,8 +107,10 @@ DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 2           ; health lost hitting it
 DEF RAIL_COOL   EQU 45          ; frames before another hit can hurt again
 DEF PUSH_K      EQU 72          ; how hard bends throw the car outward (see PushScale)
-DEF CATCH_UP    EQU 6           ; extra pace for rivals behind the player (1/16 unit)
-DEF EASE_OFF    EQU 6           ; and less for ones far ahead
+DEF CATCH_UP    EQU 6           ; extra pace for rivals just behind the player (1/16 unit)
+DEF CATCH_UP_FAR EQU 18         ; ...and for ones over two chunks behind: the field stays in
+                                ; touch whatever the level (ROOKIE's rivals are 16 slower)
+DEF EASE_OFF    EQU 8           ; less for ones four chunks or more ahead
 DEF BEHIND_Z    EQU PLAYER_Z - 90  ; where a rival is put to pounce on a mistake
 DEF JUMP_PLATE  EQU $0400       ; take-off speed from a jump plate
 DEF DIRT_DRAG   EQU $0030       ; speed lost per frame on dirt, down to DIRT_SPEED
@@ -1794,16 +1796,23 @@ UpdateRivals:
     xor a
 .paced
     ld c, a
-    ldh a, [hRivalIdx + 1]      ; keep the field in touch: quicker behind us,
-    bit 7, a
+    ldh a, [hRivalIdx + 1]      ; keep the field in touch: quicker behind us (much quicker
+    bit 7, a                    ; when well behind),
     jr z, .notBehind
+    cp -2
     ld a, c
+    jr nc, .nearBehind
+    add CATCH_UP_FAR
+    jr nc, .banded
+    ld a, 255
+    jr .banded
+.nearBehind
     add CATCH_UP
     jr nc, .banded
     ld a, 255
     jr .banded
 .notBehind
-    cp 6                        ; a little slower when well ahead
+    cp 4                        ; a little slower when well ahead
     ld a, c
     jr c, .banded
     sub EASE_OFF
@@ -2895,7 +2904,18 @@ UpdateHud:
     jr nz, .noRace
     ldh a, [hState]
     cp STATE_FINISHED           ; after the flag, the finishing place blinks
+    jr z, .blink
+    or a
     jr nz, .place
+    push hl                     ; racing, and behind the place this lap asks for: it blinks
+    call RankNeeded
+    pop hl
+    ld b, a
+    ldh a, [hRank]
+    cp b
+    jr c, .place
+    jr z, .place
+.blink
     ldh a, [hFrame]
     and %00010000
     jr z, .place
@@ -2924,7 +2944,9 @@ UpdateHud:
 .laps
     ldh a, [hState]
     cp STATE_DEAD
-    jr nz, .lapCount
+    jr nc, .out                 ; (wrecked, or ranked out)
+    jr .lapCount
+.out
     ld a, HUD_O                 ; wrecked: OUT
     ld [hl+], a
     ld a, HUD_U
@@ -4116,7 +4138,7 @@ Drive:
     ld c, a
     ldh a, [hChunk]
     cp c
-    jr z, .sameChunk
+    jp z, .sameChunk
     ld a, c
     ldh [hChunk], a
     ldh a, [hPractice]
@@ -4136,6 +4158,21 @@ Drive:
     ldh [hState], a
     jr .sameChunk
 .nextLap
+    push bc                     ; was this lap's place good enough?  (F-Zero's rank-out)
+    call RankNeeded
+    pop bc
+    ld e, a
+    ldh a, [hRank]
+    dec a
+    cp e
+    jr c, .rankOk
+    ld a, STATE_OUT
+    ldh [hState], a
+    ld a, SFX_BOOM
+    call Sfx
+    jp .sameChunk
+.rankOk
+    ldh a, [hLap]
     inc a
     ldh [hLap], a
     ld a, 120                   ; make something of it: the lap number flashes, with a sound
@@ -4659,6 +4696,7 @@ Drive:
 
 DEF STATE_FINISHED EQU 1
 DEF STATE_DEAD     EQU 2
+DEF STATE_OUT      EQU 3        ; ranked out: not in the place the lap asked for (it coasts)
 
 DEF MOUTH    EQU 1              ; what a track's "things" table can name (tools/gen_tracks.py)
 DEF BARRIER  EQU 2
@@ -4884,6 +4922,40 @@ InitLines:
     ret
 
 ; de = source, hl = destination, bc = length
+; a = the place needed by the end of the lap being raced, F-Zero's rank requirement: in a
+; race against rivals (not practice, not linked, not without rivals), 7th then 5th over
+; three laps, 7th, 6th, 5th, 4th over five; none on the last lap (8).  Uses bc, hl.
+RankNeeded:
+    ldh a, [hMode]
+    or a                        ; MODE_RACE
+    jr nz, .none
+    ldh a, [hLevel]
+    or a
+    jr z, .none
+    ldh a, [hLaps]
+    ld b, a
+    ldh a, [hLap]
+    cp b
+    jr nc, .none
+    ld c, a
+    ld a, b
+    cp 5
+    ld hl, RankNeeded3 - 1
+    jr c, .table
+    ld hl, RankNeeded5 - 1
+.table
+    ld b, 0
+    add hl, bc
+    ld a, [hl]
+    ret
+.none
+    ld a, NUM_RIVALS + 1
+    ret
+RankNeeded3:
+    db 7, 5
+RankNeeded5:
+    db 7, 6, 5, 4
+
 ; hl = de * a, both signed (|a| small: one add per bit).  Keeps bc.
 MulSigned:
     ld hl, 0

@@ -66,7 +66,7 @@ async function race(kind, record) {
     if (lap !== lastLap) { out.lapFrames.push(out.frames); lastLap = lap; }
     if (count === 0 && st === 0) { out.frames++; const r = rd(sym.hRank); if (out.frames > 600) { out.worst = Math.max(out.worst, r); out.best = Math.min(out.best, r); } }
     if (st !== 0) {
-      out.place = rd(sym.hRank); out.health = hp; out.wrecked = st === 2; out.lapFrames.push(out.frames);
+      out.place = rd(sym.hRank); out.health = hp; out.wrecked = st === 2; out.rankedOut = st === 3; out.lapFrames.push(out.frames);
       // how far each rival is ahead (+) or behind (-) at the end, in units
       out.gaps = []; for (let r = 0; r < 7; r++) out.gaps.push(s16(rd(sym.wRivals + r * 8 + 1) | rd(sym.wRivals + r * 8 + 2) << 8) - 175);
       break;
@@ -146,7 +146,7 @@ async function race(kind, record) {
   for (const kind of bots.length ? bots : KINDS) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
-    console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : r.rankedOut ? `RANKED OUT in place ${r.place} after lap ${r.lapFrames.length}` : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
     if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
   }
