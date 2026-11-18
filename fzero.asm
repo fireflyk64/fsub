@@ -123,12 +123,17 @@ DEF PAD_OBP_A   EQU %01010000   ; boost pad: dirt in the road's grey, arrows whi
 DEF PAD_OBP_B   EQU %01011100   ; ...then black
 DEF HEAL_OBP_A  EQU %10100000   ; recharge patch: dark, with white arrows...
 DEF HEAL_OBP_B  EQU %00001000   ; ...then light, with dark ones
-DEF RAMP_OBP    EQU %11110000   ; jump ramp: black, with white arrows up it
+DEF RAMP_OBP    EQU %10001100   ; jump ramp: a white slab with black arrows up it
+DEF BARRIER_D3  EQU 66          ; ground line from which a barrier is drawn at its biggest
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
 DEF BARRIER_COST EQU 6          ; health lost hitting a barrier
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
+DEF REV_GAS     EQU 64          ; how far the note rides above the speed on the gas (accelerating)
+DEF REV_TOP     EQU 16          ; ...on the gas at top speed
+DEF REV_LIFT    EQU -40         ; ...and below it off the gas
+DEF RASP        EQU 6           ; the engine's flutter, every other pair of frames
 DEF FRICTION    EQU $000A       ; lost per frame off it: lifting scrubs speed off (a unit in ~0.4 s)
 DEF BRAKE       EQU $0014
 DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
@@ -2396,11 +2401,14 @@ UpdateObject:
     ld hl, PadSize3
     jr .sized
 .barrierSizes
-    ld hl, BarrierFar           ; a barrier: a dot far off, then a block
-    ld a, c
+    ld hl, BarrierFar           ; a barrier: a dot far off, then a striped roadblock, bigger
+    ld a, c                     ; close to
     cp MOUTH_D2
     jr c, .sized
-    ld hl, MouthSize1
+    ld hl, BarrierSize2
+    cp BARRIER_D3
+    jr c, .sized
+    ld hl, BarrierSize3
     jr .sized
 .mouthSizes
     ld hl, MouthSize1
@@ -2408,9 +2416,6 @@ UpdateObject:
     cp MOUTH_D2
     jr c, .sized
     ld hl, MouthSize2
-    cp MOUTH_D3
-    jr c, .sized
-    ld hl, MouthSize3
 .sized
     ld a, [hl+]
     ld c, a                     ; sprites in this size
@@ -2907,7 +2912,11 @@ UpdateHud:
     jr z, .blink
     or a
     jr nz, .place
-    push hl                     ; racing, and behind the place this lap asks for: it blinks
+    ldh a, [hPos + 2]           ; racing, in the last 24 chunks of the lap (the grid starts
+    and CHUNK_MASK              ; everyone behind), and behind the place this lap asks for:
+    cp 40                       ; it blinks
+    jr c, .place
+    push hl
     call RankNeeded
     pop hl
     ld b, a
@@ -3936,45 +3945,96 @@ Drive:
     ld a, h
     ldh [hSpeed + 1], a
 
-    ldh a, [hEngine]            ; the engine note climbs with speed
-    or a
-    jr z, .noNote
-    ld d, h
+    ldh a, [hEngine]            ; the engine note: it climbs with speed, rides above it on the
+    or a                        ; gas while there is speed to gain and drops when you lift,
+    jp z, .noNote               ; with a rasp; louder on the gas, fuller still on a boost
+    ld c, REV_LIFT
+    bit 1, b                    ; PADF_B
+    jr z, .revAim
+    ld c, REV_GAS
+    ld a, h
+    cp SPEED_MAX - 1            ; (the speed only creeps up to the top: within a unit is there)
+    jr c, .revAim
+    ld c, REV_TOP
+.revAim
+    ld a, [wRev]                ; (eased there, 3 a frame)
+    cp c
+    jr z, .revHeld
+    ld e, a
+    sub c
+    bit 7, a
+    ld a, e
+    jr nz, .revUp
+    sub 3
+    jr .revSet
+.revUp
+    add 3
+.revSet
+    ld [wRev], a
+.revHeld
+    ld d, h                     ; frequency: base + speed / 4 + the rev (+ the rasp)
     ld e, l
     srl d
     rr e
     srl d
     rr e
+    ld a, [wRev]
+    add e
+    ld e, a
+    ld a, d
+    adc 0
+    ld d, a
+    ld a, [wRev]
+    bit 7, a
+    jr z, .revPositive
+    dec d
+.revPositive
+    ldh a, [hFrame]             ; the rasp: a little higher every other pair of frames
+    and 2
+    jr z, .smooth
+    ld a, e
+    add RASP
+    ld e, a
+    jr nc, .smooth
+    inc d
+.smooth
     ld a, e
     add LOW(ENGINE_BASE)
     ldh [rAUD2LOW], a
     ld a, d
     adc HIGH(ENGINE_BASE)
+    ld d, a
     ldh [rAUD2HIGH], a
-    ldh a, [hBoost]             ; under boost the engine opens up: fuller and louder
+    ld c, 0                     ; the voice: 0 coasting, 1 on the gas, 2 boosting
+    bit 1, b
+    jr z, .gasVoice
+    inc c
+.gasVoice
+    ldh a, [hBoost]
     or a
-    jr z, .calmNote
-    ld a, 1
-.calmNote
-    ld c, a
+    jr z, .voiceSet
+    ld c, 2
+.voiceSet
     ldh a, [hEngineMode]
     cp c
     jr z, .noNote
     ld a, c
     ldh [hEngineMode], a
     or a
-    ld a, %01000000
-    ld c, $50
+    ld a, %01000000             ; coasting: thin and quiet
+    ld e, $40
     jr z, .voice
-    ld a, %10000000
-    ld c, $90
+    dec c
+    ld e, $60                   ; on the gas: louder
+    jr z, .voice
+    ld a, %10000000             ; a boost: fuller and louder still
+    ld e, $90
 .voice
     ldh [rAUD2LEN], a
-    ld a, c
+    ld a, e
     ldh [rAUD2ENV], a
     ld a, d
-    adc HIGH(ENGINE_BASE)
-    or $80
+    or $80                      ; (a new envelope takes effect on a restart)
     ldh [rAUD2HIGH], a
 .noNote
     ; --- the noise channel: a boost howls upward, the brakes scrub lower as the car slows
@@ -4449,13 +4509,25 @@ Drive:
     jp .vxDone
 .notWreck
     ldh a, [hAir]
-    ld c, a
-    ldh a, [hState]
-    or c
-    jr z, .grounded
+    or a
+    jr z, .onTheRoad
     ldh a, [hVX]                ; no grip in the air: keep drifting the way we were
     ld b, a
     jp .vxDone
+.onTheRoad
+    ldh a, [hState]             ; the race is over: the car steers itself to the middle of the
+    or a                        ; road and coasts to a halt there (rather than drift from
+    jr z, .grounded             ; rail to rail with nobody steering)
+    ldh a, [hX + 1]
+    ld b, 0
+    add 4
+    cp 9
+    jr c, .grounded             ; within 4 pixels: straight on
+    sub 4
+    bit 7, a
+    ld b, PADF_LEFT
+    jr z, .grounded
+    ld b, PADF_RIGHT
 .grounded
     ; braking while steering at speed is a skid turn: far more steering, less speed
     xor a
@@ -4756,13 +4828,16 @@ MouthSize2:
     db 0, MOUTH_TILE + 4, 0
     db 8, MOUTH_TILE + 4, OAMF_XFLIP
     db 16, MOUTH_TILE + 2, OAMF_XFLIP
-MouthSize3:
-    db 5
-    db -12, MOUTH_TILE + 6, 0
-    db -4, MOUTH_TILE + 8, 0
-    db 4, MOUTH_TILE + 10, 0
-    db 12, MOUTH_TILE + 8, OAMF_XFLIP
-    db 20, MOUTH_TILE + 6, OAMF_XFLIP
+BarrierSize2:                   ; the roadblock, 16 wide (gen_gfx.py barrier_image)
+    db 2
+    db 0, MOUTH_TILE + 6, 0
+    db 8, MOUTH_TILE + 6, OAMF_XFLIP
+BarrierSize3:                   ; ...and 32 wide, close to
+    db 4
+    db -8, MOUTH_TILE + 8, 0
+    db 0, MOUTH_TILE + 10, 0
+    db 8, MOUTH_TILE + 10, OAMF_XFLIP
+    db 16, MOUTH_TILE + 8, OAMF_XFLIP
 
 ; Sprites for each size of rival: count, then (y offset, x offset, tile, attributes).
 DEF RP EQU OAMF_PAL1
@@ -5184,6 +5259,7 @@ wTurn:      ds 2                ; last frame's bend * speed (signed): how hard w
 wAdvance:   ds 2                ; how far the car went along the course this frame (8.8)
 wShake:     db                  ; frames left of the jolt after a hit
 wSlide:     db                  ; frames left of the slide after landing from a ramp
+wRev:       db                  ; the engine note's rev above (or below) the speed's, signed
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash
@@ -5296,7 +5372,7 @@ hKick:        db    ; the car's surge up the screen after a boost starts
 hBrake:       db    ; braking at speed this frame
 hYOff:        db
 hBoostSeen:   db    ; hBoost as last seen, to catch it starting
-hEngineMode:  db    ; engine voice: 0 normal, 1 boosting
+hEngineMode:  db    ; engine voice: 0 coasting, 1 on the gas, 2 boosting
 hScriptTimer: db
 hCarY:        db
 hCurKeys:     db

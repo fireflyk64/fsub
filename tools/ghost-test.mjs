@@ -32,7 +32,7 @@ const key = (k, v) => m["_set_joyp_" + k](e, v ? 1 : 0);
 const store = new Map(), local = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) };
 let ghost = null, finishes = [];
 const cable = new Cable({ m, e, now: () => frame * 1000 / 59.73, send: (b) => ghost && ghost.receive(b) });
-const log = new RaceLog({ rd, sym, store: local, kind: () => (ghost ? "ghost" : rd(sym.hMode) === 0 ? "solo" : "other"), on: (ev, d) => finishes.push(d) });
+const log = new RaceLog({ rd, sym, store: local, kind: () => (ghost ? "ghost" : rd(sym.hMode) === 0 ? "solo" : "other"), on: (ev, d) => { if (d.state === 1) finishes.push(d); } });
 
 const FRAME = 70224, SLICE = 12288;
 let frame = 0, ticks = 0;

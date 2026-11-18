@@ -33,6 +33,21 @@ body.classic canvas{box-shadow:none;border-radius:0;background:#000}
 #guide .steer{background:rgba(45,90,190,.92)}
 #guide .why{font-size:.66em;font-weight:normal;color:#fff;text-shadow:0 1px 3px #000,0 0 2px #000}
 #guideBtn.on,#ghostBtn.on{border-color:#fc6;color:#fc6}
+/* The end of a race: the place, the time and the laps, over the picture. */
+#result{position:absolute;z-index:5;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:.25em;
+  padding:.6em 1em .7em;border-radius:.6em;background:rgba(16,18,14,.84);color:#eee;font-family:sans-serif;text-align:center;
+  box-shadow:0 6px 24px #000a;transform:translateX(-50%);animation:resultIn .35s ease-out}
+#result[hidden]{display:none}
+@keyframes resultIn{from{opacity:0;transform:translateX(-50%) scale(.8)}to{opacity:1;transform:translateX(-50%) scale(1)}}
+#result .place{font-size:2.6em;font-weight:900;letter-spacing:.04em;line-height:1}
+#result.win .place{color:#ffd24a;text-shadow:0 0 18px #ffb80080;animation:winPulse 1.2s ease-in-out infinite}
+@keyframes winPulse{50%{transform:scale(1.08)}}
+#result .track{font-weight:bold;letter-spacing:.06em}
+#result .laps{font-size:.8em;color:#bbb}
+#result .laps b{color:#fff}
+#result .rec{font-weight:bold;color:#ffd24a}
+#result .again{font-size:.75em;color:#9ab;margin-top:.3em}
+#result>div:empty{display:none}
 #brake.cue,#gas.cue,#boost.cue{box-shadow:0 0 0 3px #fff,0 0 22px 6px rgba(255,255,255,.45)}
 #gas.cue-off{opacity:.35}
 #stick.cue-left::after,#stick.cue-right::after{position:absolute;top:50%;transform:translateY(-50%);font-size:44px;color:#8af}
@@ -132,7 +147,7 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
 <p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's skin · G = the guide · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
-<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out; for sharp ones let go of the gas a moment before and through the corner (off the gas the car slows and grips better, as in F-Zero), and for the sharpest add a dab of brake (the brake takes the edge off but never stops you, and cuts a boost short). What is on the road shows up a good second before you reach it. Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
+<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out; for sharp ones let go of the gas a moment before and through the corner (off the gas the car slows and grips better, as in F-Zero), and for the sharpest add a dab of brake (the brake takes the edge off but never stops you, and cuts a boost short). What is on the road shows up a good second before you reach it. Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Striped roadblocks are barriers (a hit costs health and knocks you aside); grey patches with flickering arrows are boost pads (cross the middle for the full boost); white slabs with black arrows are jump ramps: take one straight, because any sideways slide carries on in the air and can take you over the rail. A mistake lets a rival pounce.</p>
 <p><b>Records and your ghost:</b> each track keeps your best lap and best race in this browser (the menu shows them). Press <b>GHOST</b> and your best race on the track comes back as the other car, frame for frame: the page sets MODE to LINK for it, so press GAS and race yourself (RIVALS NONE for just the two of you). Against the rivals you must also be in a place by the end of each lap (7th, then 5th; over five laps 7th, 6th, 5th, 4th), or you are OUT: your place blinks while you are behind it.</p>
 <p><b>Guide:</b> press <b>GUIDE</b> (or G) and the page reads the race out of the Game Boy's memory and shows what to press a moment before you need to: <b>LET GO OF GAS</b> before a corner (coasting slows the car and it grips the corner better), <b>BRAKE</b> when that will not be enough, <b>BOOST</b> on a clear straight, and which way to steer, round a barrier, off the dirt or onto the inside of a corner. On a touch screen it lights the buttons too.</p>
 <p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
@@ -293,7 +308,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       aloneWas=alone;};
     const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms)); showMsg();
       if(guide.on) linkStep(()=>guide.show(known?advise(rd,sym):null,ms));
-      linkStep(ghostHelp);
+      linkStep(ghostHelp); linkStep(resultHelp);
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
@@ -329,11 +344,30 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     // Records and the ghost (ghost.js).  Only races against the rivals or a ghost count.
     const lapsFor=lv=>lv>=4?5:3;
     const raceLog=known?new RaceLog({rd,sym,kind:()=>lobby.race?'net':ghost?'ghost':rd(sym.hMode)===0?'solo':'other',
-      on:(ev,d)=>{ if(ev!=='finish') return;
-        ghostFor='';   // (a new record: the next visit to the menu plugs the new ghost in)
-        say(`Finished ${rd(sym.hRank)}${['st','nd','rd'][rd(sym.hRank)-1]||'th'} in ${clock(d.total)}, best lap ${clock(d.bestLap)}`+(d.record.race?' · a record: your new ghost':d.record.lap?' · a lap record':''),7000); }}):null;
+      on:(ev,d)=>{ if(ev!=='end') return;
+        if(d.record.race) ghostFor='';   // (a new record: the next visit to the menu plugs the new ghost in)
+        showResult(d); }}):null;
     menuBest=()=>{ if(!raceLog) return ''; const t=rd(sym.hTrackNo), r=raceLog.records(t), best=r['race'+lapsFor(rd(sym.hLevel))];
       return best?`${TRACKS[t]} best ${clock(best)}${r.lap?', lap '+clock(r.lap):''} · `:''; };
+    // The end of a race, over the picture until the next race starts or the menu is back.
+    const result=document.createElement('div'); result.id='result'; result.hidden=true; document.body.appendChild(result);
+    const ord=n=>n+(['st','nd','rd'][n-1]||'th');
+    const touchy=matchMedia('(pointer: coarse)').matches;
+    function showResult(d){
+      const needed=(d.laps===5?[7,6,5,4]:[7,5])[d.lapTimes.length];
+      const place=d.state===1?(d.place===1?'1st!':ord(d.place)):d.state===3?'OUT':'WRECKED';
+      const sub=d.state===1?`${TRACKS[d.track]} · ${clock(d.total)}`:d.state===3?`not ${ord(needed||5)} or better by the line`:`${TRACKS[d.track]}: the health ran out`;
+      const laps=d.lapTimes.map(f=>f===d.bestLap&&d.lapTimes.length>1?`<b>${clock(f)}</b>`:clock(f)).join(' · ');
+      const rec=d.record.race?'★ A record: your new ghost':d.record.lap?'★ A lap record':'';
+      result.className=d.state===1&&d.place===1?'win':'';
+      result.innerHTML=`<div class="place">${place}</div><div class="track">${sub}</div><div class="laps">${laps?'laps '+laps:''}</div><div class="rec">${rec}</div>`+
+        `<div class="again">${touchy?'START: race again · SELECT: menu':'Enter: race again · Shift: menu'}</div>`;
+      placeResult(); result.hidden=false; }
+    function placeResult(){ const r=cv.getBoundingClientRect();
+      result.style.left=r.left+scrollX+r.width/2+'px'; result.style.top=r.top+scrollY+r.height*0.12+'px';
+      result.style.fontSize=Math.max(10,Math.min(20,r.width/26))+'px'; }
+    window.__gb.showResult=showResult;   // (for the tests)
+    const resultHelp=()=>{ if(result.hidden) return; if(rd(sym.hMenu)||rd(sym.hCount)||!rd(sym.hState)) result.hidden=true; else placeResult(); };
     const ghostBtn=document.getElementById('ghostBtn');
     let ghostOn=false, ghostFor='', ghostText='';
     const unplugGhost=()=>{ if(ghost){ cable.unplug(); ghost=null; } ghostFor=''; };
@@ -356,7 +390,27 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       }
       ghostLine=ghostText;
     };
-    onGameFrame=()=>linkStep(()=>{ if(raceLog) raceLog.frame(); if(ghost) ghost.frame(); });
+    // Rumble: a phone vibrates and a controller rumbles at a hit, a landing, a wreck, a boost,
+    // and the picture shakes at a hit (not when the system asks for less motion).
+    const still=matchMedia('(prefers-reduced-motion: reduce)').matches, feel={hp:null,state:0,air:0,boost:0};
+    const rumble=(ms,strong,weak,shake)=>{
+      try{ if(navigator.vibrate) navigator.vibrate(ms); }catch(err){}
+      try{ for(const g of navigator.getGamepads?navigator.getGamepads():[]){ const a=g&&g.vibrationActuator;
+        if(a&&a.playEffect) a.playEffect('dual-rumble',{duration:ms,strongMagnitude:strong,weakMagnitude:weak}).catch(()=>{}); } }catch(err){}
+      if(shake&&!still&&cv.animate) cv.animate([{transform:'none'},{transform:`translate(${shake}px,${-shake/2}px)`},
+        {transform:`translate(${-shake}px,${shake/2}px)`},{transform:`translate(${shake/2}px,0)`},{transform:'none'}],{duration:Math.min(ms+80,260)}); };
+    const feelFrame=()=>{
+      if(!known||rd(sym.hMenu)){ feel.hp=null; return; }
+      const hp=rd(sym.hHealth), state=rd(sym.hState), air=rd(sym.hAir), boost=rd(sym.hBoost);
+      if(feel.hp!==null){
+        if(state===2&&feel.state!==2) rumble(450,1,1,9);            // wrecked
+        else if(feel.hp-hp>=6) rumble(140,.9,.5,6);                // a barrier
+        else if(feel.hp>hp) rumble(60,.45,.3,3);                   // the rail, a rival
+        if(feel.air&&!air&&state!==2) rumble(100,.8,.3,4);          // down from a ramp
+        if(!feel.boost&&boost) rumble(90,0,.6,0);                  // a boost
+      }
+      feel.hp=hp; feel.state=state; feel.air=air; feel.boost=boost; };
+    onGameFrame=()=>linkStep(()=>{ if(raceLog) raceLog.frame(); if(ghost) ghost.frame(); feelFrame(); });
 
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();

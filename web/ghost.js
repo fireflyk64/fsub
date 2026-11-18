@@ -33,7 +33,9 @@ const toB64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x
 const fromB64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
 // rd, sym: the Game Boy's memory.  kind(): "solo" | "ghost" | other (not counted).
-// on(event, detail): "finish" { track, laps, total, bestLap, lapTimes, record: {race, lap} }.
+// on(event, detail): "end" at the end of every race, { state (1 finished, 2 wrecked, 3 out),
+// place, track, laps, total, lapTimes, bestLap, kind, counted, record: {race, lap} } (the
+// record only for one that counts).
 export class RaceLog {
   constructor({ rd, sym, kind, store = localStorage, on = () => {} }) {
     Object.assign(this, { rd, sym, kind, store, on });
@@ -65,19 +67,23 @@ export class RaceLog {
       return;
     }
     r.done = true;
-    if (state !== FINISHED || (r.kind !== "solo" && r.kind !== "ghost")) return;   // wrecked, ranked out, or not counted
-    r.lapTimes.push(r.frames - r.lapStart);
-    const all = (() => { try { return JSON.parse(get(this.store, "fsub:records") || "{}"); } catch (e) { return {}; } })();
-    const rec = all[r.track] || {}, key = `race${r.laps}`, bestLap = Math.min(...r.lapTimes);
-    const record = { race: !rec[key] || r.frames < rec[key], lap: !rec.lap || bestLap < rec.lap };
-    if (record.race) {
-      rec[key] = r.frames;
-      put(this.store, `fsub:ghost:${r.track}:${r.laps}`, toB64(Uint8Array.from(r.samples)));
+    if (state === FINISHED) r.lapTimes.push(r.frames - r.lapStart);
+    const counted = state === FINISHED && (r.kind === "solo" || r.kind === "ghost");
+    const end = { state, place: rd(sym.hRank), track: r.track, laps: r.laps, total: r.frames, lapTimes: r.lapTimes,
+                  bestLap: r.lapTimes.length ? Math.min(...r.lapTimes) : 0, kind: r.kind, counted, record: { race: false, lap: false } };
+    if (counted) {
+      const all = (() => { try { return JSON.parse(get(this.store, "fsub:records") || "{}"); } catch (e) { return {}; } })();
+      const rec = all[r.track] || {}, key = `race${r.laps}`;
+      end.record = { race: !rec[key] || r.frames < rec[key], lap: !rec.lap || end.bestLap < rec.lap };
+      if (end.record.race) {
+        rec[key] = r.frames;
+        put(this.store, `fsub:ghost:${r.track}:${r.laps}`, toB64(Uint8Array.from(r.samples)));
+      }
+      if (end.record.lap) rec.lap = end.bestLap;
+      all[r.track] = rec;
+      put(this.store, "fsub:records", JSON.stringify(all));
     }
-    if (record.lap) rec.lap = bestLap;
-    all[r.track] = rec;
-    put(this.store, "fsub:records", JSON.stringify(all));
-    this.on("finish", { track: r.track, laps: r.laps, total: r.frames, bestLap, lapTimes: r.lapTimes, record });
+    this.on("end", end);
   }
 }
 

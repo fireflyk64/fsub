@@ -559,13 +559,34 @@ def mouth_image(w, h):
     return img
 
 
+BARRIER_SIZES = ((16, 10, 2), (32, 15, 3))               # barricade: width, height, stripe width
+
+
+def barrier_image(w, h, s):
+    """A roadblock: a board of black and white stripes on two legs.  Only the left half is
+    kept and mirrored, so the stripes meet in a chevron down the middle."""
+    img = [[0] * w for _ in range(16)]
+    legs = max(3, h // 4)
+    for y in range(h):
+        for x in range(w):
+            if y >= h - legs:                         # the legs, near the ends
+                c = 3 if x in (2, 3, w - 4, w - 3) else 0
+            elif y in (0, h - legs - 1) or x in (0, w - 1):
+                c = 3                                 # the board's black edge
+            else:
+                c = 1 if ((x + y) // s) % 2 == 0 else 3
+            img[16 - h + y][x] = c                    # bottom-aligned in the 8x16 objects
+    return img
+
+
 def mouth_tiles():
-    """Left halves only (plus the centre column of the 40-wide one); the rest is mirrored."""
+    """Left halves only; the rest is mirrored.  The tunnel mouth's two smaller sizes, then
+    the barricade's two (in the slots its third size had)."""
     out = bytearray()
-    for w, h in MOUTH_SIZES:
-        img = mouth_image(w, h)
+    for img, w in [(mouth_image(w, h), w) for w, h in MOUTH_SIZES[:2]] + [(barrier_image(w, h, s), w) for w, h, s in BARRIER_SIZES]:
         for col in range((w // 8 + 1) // 2):
             out += pack_object([r[col * 8:col * 8 + 8] for r in img])
+    assert len(out) == 12 * 16, "the object tiles must keep their places"
     return bytes(out)
 
 
