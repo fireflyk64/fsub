@@ -5,7 +5,7 @@
          tight": drawn the same, felt half as hard again)
     64   the same for the tunnel short cut
     128  pace of the field through each chunk (1/16 unit per frame; each rival adds its skill)
-    192  what appears two chunks ahead on entering each chunk (see the codes below)
+    192  what appears LEAD chunks ahead on entering each chunk (see the codes below)
     256  scenery of each chunk (an index into the track's palette set)
     320  crosswind in each chunk (signed, 1/16 pixel per frame; positive blows to the right)
     384  skyline, palette set, chunk where the tunnel comes back up, chunks it cuts off
@@ -28,6 +28,11 @@ SET_CITY = 0                                    # 0 city, 1 underpass, 2 water
 SET_FIELD = 1                                   # 0 wheat fields, 1 underpass, 2 city
 START_LINE = [(0, 24, PLAIN), (24, 48, DARK), (48, 72, PLAIN)]
 RECHARGE = {1: HEAL_L, 2: HEAL_L}               # two recharge patches on the left, after the line
+# Things appear this many chunks before they sit (SPAWN_DIST in gen_gfx.py is LEAD * 256):
+# about 1.2 s at top speed between showing up and reaching the car, time enough for a person
+# to see one and get out of its way (two chunks, 0.7 s, was not: a person needs about 0.45 s to
+# take in what it is and which way to go, and 0.3 to steer a lane over).
+LEAD = 3
 
 
 def chunk(n, extra=0):
@@ -81,9 +86,9 @@ TRACKS = [
                 18: DIRT_R,                             # Dirt Hairpin: no inside line (it turns right)
                 20: PAD_L, 24: B1,
                 31: B0, 33: B3,                         # Barrier Straight
-                41: DIRT_L, 42: DIRT_R, 43: DIRT_L, 44: DIRT_R,   # Causeway Slalom
+                41: DIRT_L, 43: DIRT_R, 45: DIRT_L,     # Causeway Slalom
                 48: PAD_R,
-                52: B1, 53: B2, 54: B1,                 # the Underpass: hug a wall
+                52: B1, 53: B2, 55: B1,                 # the Underpass: hug a wall
                 60: PAD_L},
         bands=START_LINE + [(chunk(7), chunk(7, 90), DASH), (chunk(36), chunk(36, 60), JUMP),
                             (chunk(40), chunk(40, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),
@@ -95,7 +100,7 @@ TRACKS = [
         scenes=[(4, 0), (56, 2), (4, 0)],               # harbour at the line, open water beyond
         wind=[(64, 0)],
         things={4: PAD_R, 9: PAD_L,
-                19: DIRT_L, 20: DIRT_R, 21: DIRT_L,     # the Sandbars
+                19: DIRT_L, 21: DIRT_R, 23: DIRT_L,     # the Sandbars
                 25: PAD_R,
                 29: PAD_L, 33: PAD_R, 37: PAD_L, 41: PAD_R,   # the Waves: a pad outside each one
                 48: B1, 49: B2,                         # pick a side
@@ -108,7 +113,7 @@ TRACKS = [
                 ("R", 16, 2), ("S", 10), ("L", 16, 1), ("S", 4), ("R", 16, 1), ("S", 6)],
         scenes=[(64, 0)],
         wind=[(10, 10), (2, 0), (10, -12), (8, 0), (10, 12), (2, 0), (10, -10), (12, 8)],
-        things={3: PAD_L, 5: DIRT_R, 7: DIRT_R,         # the wind carries you into the dirt
+        things={4: PAD_L, 5: DIRT_R, 7: DIRT_R,         # the wind carries you into the dirt
                 14: DIRT_L, 16: PAD_R, 18: DIRT_L, 20: DIRT_L,
                 27: B0, 31: B3,
                 34: DIRT_R, 36: PAD_L, 38: DIRT_R,
@@ -125,10 +130,11 @@ TRACKS = [
         scenes=[(16, 0), (10, 1), (38, 0)],             # the dock chicane runs under the docks
         wind=[(64, 0)],
         things={9: B0,                                  # last marker before the Tight One (11)
-                14: PAD_L,                              # and the reward for getting round it
+                13: PAD_L,                              # and the reward for getting round it
+                                                        # (spent before the left at 16)
                 18: B3, 21: B0, 24: B3,                 # the Dock Chicane: a chunk past each exit
                 28: DIRT_R,                             # inside of the hairpin at 30
-                33: PAD_R, 41: B2, 45: DIRT_L, 50: B1, 56: PAD_L},
+                41: B2, 45: DIRT_L, 50: B1, 52: PAD_R, 56: PAD_L},   # (pads on the home straight)
         bands=START_LINE + [(chunk(49), chunk(49, 90), DASH), (chunk(59), chunk(59, 90), DASH)]),
 ]
 
@@ -185,8 +191,12 @@ def block(t):
     out += bytes(paces(bends))
     things = [0] * 64
     for where, what in {**RECHARGE, **t["things"]}.items():
-        assert things[(where - 2) % 64] == 0
-        things[(where - 2) % 64] = what           # it shows up two chunks before it sits
+        assert things[(where - LEAD) % 64] == 0
+        things[(where - LEAD) % 64] = what        # it shows up LEAD chunks before it sits
+    # The game has two slots for things on the road: none may come third in three chunks.
+    at = [any(things[(c - LEAD) % 64] for _ in [0]) for c in range(64)]
+    for c in range(64):
+        assert sum(at[(c + k) % 64] for k in range(3)) <= 2, f"three things in a row from chunk {c}"
     out += bytes(things)
     out += bytes(spread(t["scenes"], "scenes"))
     out += bytes(w & 255 for w in spread(t["wind"], "wind"))

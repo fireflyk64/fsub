@@ -8,13 +8,23 @@
 //         and fires boosts on straights.
 // expert  knows the course: brakes before bends to the speed the physics allows, takes the
 //         inside line, goes for boost pads, uses the tunnel, skid-turns when too fast.
+// human   the expert with a person's reactions: it acts on what it saw REACT frames ago (0.3 s),
+//         so it brakes and dodges that much late, and keeps a margin for it.  If the human
+//         cannot get through without hitting things, a person cannot either.
+// lifter  how a player of the old F-Zero drives: holds the gas, lifts off for a sharp corner
+//         it can see coming, never brakes, steers for the inside, dodges (also 0.3 s late).
+// guided  does what the page's guide (web/guide.js) says, and nothing else, REACT frames after
+//         it says it: the check that following the guide gets you round.
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const ROOT = path.join(__dirname, '..');
 vm.runInThisContext(fs.readFileSync(ROOT + '/web/binjgb.js', 'utf8') + '\nglobalThis.Binjgb = Binjgb;');
 const sym = {};
 for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { const m = l.match(/^00:([0-9a-f]{4}) (\w+)$/i); if (m) sym[m[2]] = parseInt(m[1], 16); }
 const args = process.argv.slice(2);
-const bots = args.filter(a => ['masher', 'casual', 'expert'].includes(a));
+const KINDS = ['masher', 'casual', 'expert', 'human', 'lifter', 'guided'];
+let advise = null;                               // web/guide.js's, for the guided bot
+const bots = args.filter(a => KINDS.includes(a));
+const REACT = +(process.env.REACT || 18);       // frames between seeing and acting, for human and lifter
 const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : -1;   // (-1: the menu's own; 0: no rivals)
 const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
 const gifAt = args.indexOf('--gif');
@@ -36,6 +46,8 @@ async function race(kind, record) {
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
   let lastHp = 64, lastLap = 1, lastF = -1, started = false;
+  const seen = [];                                // human, lifter: what they saw, frame by frame
+  const told = [];                                // guided: what the guide said, frame by frame
   for (let i = 0; i < 40000; i++) {
     step();
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
@@ -65,7 +77,11 @@ async function race(kind, record) {
     let target = 0, gas = true, brake = false, boost = false, healing = false;
     const objs = [];
     for (let k = 0; k < 2; k++) { const a = sym.wObjSlots + k * 4; if (rd(a)) objs.push({ kind: rd(a + 1), dist: ((rd(a + 2) | rd(a + 3) << 8) - pos) & 0xffff }); }
-    const dodge = reach => { for (const o of objs) { if (o.dist > reach) continue;
+    // (human, lifter: the objects as they were REACT frames ago, moved on by how far we came)
+    seen.push({ pos, objs: objs.map(o => ({ ...o })) }); if (seen.length > REACT + 1) seen.shift();
+    const late = seen.length > REACT ? seen[0] : null;
+    const lateObjs = late ? late.objs.map(o => ({ ...o, dist: (o.dist - ((pos - late.pos) & 0xffff)) & 0xffff })).filter(o => o.dist < 0x8000) : [];
+    const dodge = (reach, list = objs) => { for (const o of list) { if (o.dist > reach) continue;
       if (o.kind === 0) { if (kind === 'expert') target = -24; else if (x < 0) target = 14; }       // tunnel mouth: left lane
       else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; const at = target || x;
         if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -38 : 38) : (lane > 0 ? lane - 30 : lane + 30); }   // a middle lane: go to the wall on our side
@@ -76,22 +92,42 @@ async function race(kind, record) {
       dodge(330);
       if (Math.abs(bend) > 16 && speed > 6.2 && Math.abs(x) > 20) brake = true;
       if (boosts && bend === 0 && bendAt(chunk + 1) === 0 && speed > 7.5) boost = true;
-    } else if (kind === 'expert') {
+    } else if (kind === 'guided') {
+      // What the guide said REACT frames ago: the pedals as it said, the place on the road it
+      // pointed to (steered for as a person would, watching the car).
+      told.push(advise(rd, sym)); if (told.length > REACT + 1) told.shift();
+      const a = told.length > REACT ? told[0] : null;
+      if (a && a.act) {
+        gas = ['gas', 'boost', 'ready'].includes(a.act); brake = a.act === 'brake'; boost = a.act === 'boost';
+        if (typeof a.target === 'number') target = a.target;
+      }
+    } else if (kind === 'lifter') {
+      // Off the gas for a sharp corner that is close (as seen a moment ago), on it again once in
+      // the corner; the inside of the corner; what it saw in the road, dodged.
+      const lc = late ? ((late.pos + PLAYER_Z) >> 8) : chunk;
+      // (off the gas from a little before the corner to its end: lc is where it was REACT ago)
+      const near = [0, 1].map(k => bendAt(lc + k)).find(b => Math.abs(b) >= 16);
+      if (near !== undefined || Math.abs(bendAt(lc)) >= 16) gas = false;
+      if (Math.abs(bend) > 8) target = bend > 0 ? 18 : -18;
+      dodge(480, lateObjs);
+    } else if (kind === 'expert' || kind === 'human') {
       // A corner pushes the car outward by K * speed^2 * bend pixels a frame, against 1.5 of
       // steering.  Take each corner ahead no faster than lets it drift 40 pixels before it
       // ends, and start braking for it in time (the brake takes off 0.078 a frame).
       const car = pos + PLAYER_Z, drift = (b, len) => { let v = 12; while (v > 2 && (PUSH * v * v * Math.abs(b) - 1.5) * len / v > 40) v -= 0.05; return v; };
       let want = 12;
-      for (let c = car >> 8; c < (car >> 8) + 4; c++) {
+      // (human: plans from where it was REACT frames ago, and leaves itself a margin)
+      const plan = kind === 'human' && late ? late.pos + PLAYER_Z : car, margin = kind === 'human' ? 0.35 : 0;
+      for (let c = plan >> 8; c < (plan >> 8) + 4; c++) {
         const b = bendAt(c); if (Math.abs(b) < 2) continue;
         let end = c + 1; while (end < c + 4 && bendAt(end) === b) end++;
-        const from = Math.max(car, c * 256), v = drift(b, end * 256 - from);
-        want = Math.min(want, Math.sqrt(v * v + 2 * 0.07 * (from - car)));
+        const from = Math.max(plan, c * 256), v = drift(b, end * 256 - from) - margin;
+        want = Math.min(want, Math.sqrt(Math.max(0, v * v + 2 * 0.07 * (from - plan))));
         c = end - 1;
       }
       const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
       if (Math.abs(ahead) > 8) target = ahead > 0 ? 18 : -18;        // inside line
-      dodge(480);
+      if (kind === 'human') dodge(480, lateObjs); else dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
       if (speed > want + 0.15) { gas = false; brake = speed > want + 0.5; }
       const straight = [0, 1, 2].every(k => Math.abs(bendAt(chunk + k)) < 3) && Math.abs(bend) < 3;
@@ -105,7 +141,8 @@ async function race(kind, record) {
 }
 
 (async () => {
-  for (const kind of bots.length ? bots : ['masher', 'casual', 'expert']) {
+  ({ advise } = await import(require('url').pathToFileURL(path.join(ROOT, 'web/guide.js')).href));
+  for (const kind of bots.length ? bots : KINDS) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
     console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);

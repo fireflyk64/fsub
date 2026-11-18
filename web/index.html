@@ -19,6 +19,24 @@ canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#3e414c;width:m
 #msg.act{color:#111;background:#fc6;font-weight:bold;border-radius:6px;padding:3px 7px}
 #more .short{display:none}
 body.classic canvas{box-shadow:none;border-radius:0;background:#000}
+/* The guide (web/guide.js): what to press, over the top of the screen, and the touch buttons lit. */
+#guide{position:absolute;z-index:4;pointer-events:none;display:flex;flex-direction:column;align-items:center;gap:.3em;font-family:sans-serif;font-weight:bold;text-align:center;line-height:1.15}
+#guide[hidden]{display:none}
+#guide>div:empty{display:none}
+#guide .act,#guide .steer{padding:.18em .75em;border-radius:.5em;color:#fff;letter-spacing:.03em;box-shadow:0 2px 8px #0008}
+#guide .act{background:rgba(30,30,30,.8)}
+#guide[data-act=gas] .act{background:rgba(35,110,65,.7);font-size:.75em}
+#guide[data-act=ready] .act{background:rgba(35,110,65,.9)}
+#guide[data-act=lift] .act{background:#e3a02a;color:#111}
+#guide[data-act=brake] .act{background:#d23a32}
+#guide[data-act=boost] .act{background:#f2f2f2;color:#111}
+#guide .steer{background:rgba(45,90,190,.92)}
+#guide .why{font-size:.66em;font-weight:normal;color:#fff;text-shadow:0 1px 3px #000,0 0 2px #000}
+#guideBtn.on{border-color:#fc6;color:#fc6}
+#brake.cue,#gas.cue,#boost.cue{box-shadow:0 0 0 3px #fff,0 0 22px 6px rgba(255,255,255,.45)}
+#gas.cue-off{opacity:.35}
+#stick.cue-left::after,#stick.cue-right::after{position:absolute;top:50%;transform:translateY(-50%);font-size:44px;color:#8af}
+#stick.cue-left::after{content:"◀";left:10px} #stick.cue-right::after{content:"▶";right:10px}
 #pads{flex:1;display:flex;width:100%;min-height:0;gap:10px;padding:6px 10px 12px}
 #stick{flex:1;position:relative;border:2px dashed #555;border-radius:18px;color:#777;display:flex;align-items:center;justify-content:center;font-size:13px;min-height:90px}
 #knob{position:absolute;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:#8af;opacity:.0;pointer-events:none;left:50%;top:50%}
@@ -33,7 +51,8 @@ button.on{background:#555;border-color:#aaa}
   #top{flex-wrap:wrap;gap:6px;padding:5px 6px 2px}
   #top button,#more{padding:7px 8px}
   #more .long{display:none} #more .short{display:inline}
-  #msg{order:9;flex:1 1 100%;white-space:normal}
+  #guideBtn{order:10}
+  #msg{order:9;flex:1 1 220px;min-width:0;white-space:normal}
 }
 #gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
 #brake{background:#422;border-color:#a55} #brake.on{background:#a44}
@@ -91,7 +110,7 @@ body.lobby #lobby{transform:none}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
 <div id="wrap">
-  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="skinBtn" title="The screen's skin: LCD, Smooth (no lines between the dots) or Classic (the plain pixels). Key: L">SKIN</button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy"><span class="long">How it works</span><span class="short">How?</span></a></div>
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="guideBtn" title="The guide: what to press, and when, shown over the screen as you race. Key: G">GUIDE</button><button id="skinBtn" title="The screen's skin: LCD, Smooth (no lines between the dots) or Classic (the plain pixels). Key: L">SKIN</button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy"><span class="long">How it works</span><span class="short">How?</span></a></div>
   <canvas id="screen" width="160" height="144"></canvas>
   <div id="pads">
     <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
@@ -112,8 +131,9 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 <details id="help"><summary>How to play</summary>
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
-<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's skin · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
-<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
+<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's skin · G = the guide · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
+<p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out; for sharp ones let go of the gas a moment before and through the corner (off the gas the car slows and grips better, as in F-Zero), and for the sharpest add a dab of brake (the brake takes the edge off but never stops you, and cuts a boost short). What is on the road shows up a good second before you reach it. Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
+<p><b>Guide:</b> press <b>GUIDE</b> (or G) and the page reads the race out of the Game Boy's memory and shows what to press a moment before you need to: <b>LET GO OF GAS</b> before a corner (coasting slows the car and it grips the corner better), <b>BRAKE</b> when that will not be enough, <b>BOOST</b> on a clear straight, and which way to steer, round a barrier, off the dirt or onto the inside of a corner. On a touch screen it lights the buttons too.</p>
 <p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
 <p><b>Skin:</b> <button data-look="lcd">LCD</button><button data-look="smooth">Smooth</button><button data-look="classic">Classic</button> (or SKIN, or the L key). LCD is the original Game Boy's green screen: its dots, their shadows and its slow liquid crystal, which smears what moves and half-lights what flickers. Smooth is the same without the lines between the dots; Classic the plain grey pixels.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT), with link-cable hooks · lobby: lobbylink</p>
@@ -123,6 +143,7 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 import { Cable, EV_SERIAL, INFO_MENU, INFO_ALONE } from "./link.js";
 import { initLobby, LOBBY_SERVER } from "./lobby.js";
 import { createScreen, LOOKS, OLD_LOOKS } from "./lcd.js";
+import { advise, createGuide } from "./guide.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
 const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
 const ac=new (window.AudioContext||window.webkitAudioContext)();
@@ -139,7 +160,7 @@ setLook(screen.look);
 // The line in the top bar: a passing note (say), else what a race asks of the player (amber),
 // else the keys for where the game is, the menu or a race (or the touch controls on a touch
 // screen); kept up to date every frame (showMsg).
-let note='', noteUntil=0, raceLine='', where=()=>null;
+let note='', noteUntil=0, raceLine='', where=()=>null, toggleGuide=()=>{};
 const say=(t,ms=2500)=>{note=t; noteUntil=performance.now()+ms;};
 const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
@@ -173,6 +194,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     addEventListener('keydown',ev=>{if(ev.key==='Escape'&&typing(ev)) unfocus();},true);
     addEventListener('keydown',ev=>{ac.resume(); if(typing(ev)) return; if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
       if(ev.code==='KeyL'&&!ev.repeat){nextLook(); ev.preventDefault(); return;}
+      if(ev.code==='KeyG'&&!ev.repeat){toggleGuide(); ev.preventDefault(); return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k&&src.kb[k]){src.kb[k]=0;apply();ev.preventDefault();}});
     // Touch.  Nothing here may select text, open a menu, scroll or zoom.
@@ -267,6 +289,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       if(alone&&!aloneWas) openLobby(true);
       aloneWas=alone;};
     const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms)); showMsg();
+      if(guide.on) linkStep(()=>guide.show(known?advise(rd,sym):null,ms));
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
@@ -289,6 +312,15 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     requestAnimationFrame(raf);
     window.__gb={m,e,ac,cable,lobby};
     where=game;
+    // The guide (web/guide.js): off unless the player turned it on (remembered in this browser).
+    const guideBtn=document.getElementById('guideBtn');
+    const guide=createGuide({canvas:cv,touch:matchMedia('(pointer: coarse)').matches,
+      buttons:{gas:document.getElementById('gas'),brake:document.getElementById('brake'),boost:document.getElementById('boost'),stick:document.getElementById('stick')}});
+    toggleGuide=(v)=>{guide.on=v===undefined?!guide.on:v; guideBtn.classList.toggle('on',guide.on); try{localStorage.setItem('fsub:guide',guide.on?'1':'0');}catch(err){}
+      if(v===undefined) say(guide.on?'Guide on: it shows what to press during a race':'Guide off');};
+    guideBtn.addEventListener('click',()=>toggleGuide());
+    try{ if(localStorage.getItem('fsub:guide')==='1') toggleGuide(true);}catch(err){}
+    window.__gb.guide=guide;
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();
 </script></body></html>

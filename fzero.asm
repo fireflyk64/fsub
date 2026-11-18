@@ -124,7 +124,7 @@ DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
 DEF DIRT_SPEED  EQU 3
 DEF BARRIER_COST EQU 6          ; health lost hitting a barrier
 DEF ENGINE_BASE EQU $02C0       ; engine note at rest (a frequency register value, ~97 Hz)
-DEF FRICTION    EQU $0004       ; lost per frame off it
+DEF FRICTION    EQU $000A       ; lost per frame off it: lifting scrubs speed off (a unit in ~0.4 s)
 DEF BRAKE       EQU $0014
 DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
 DEF HEALTH_MAX  EQU 64
@@ -3989,7 +3989,7 @@ Drive:
     jr nz, .sameChunk           ; nothing counts in practice or once the race is over
     ld a, c
     or a
-    jr nz, .notLine
+    jr nz, .spawn
     ldh a, [hLaps]              ; across the line
     ld e, a
     ldh a, [hLap]
@@ -4007,11 +4007,12 @@ Drive:
     call Sfx
     ldh a, [hBoosts]            ; a boost for every lap done
     cp BOOSTS_MAX
-    jr nc, .sameChunk
+    jr nc, .lapBoosted
     inc a
     ldh [hBoosts], a
-    jr .sameChunk
-.notLine
+.lapBoosted
+    xor a                       ; (things appear on crossing the line too)
+.spawn
     ld e, a                     ; does something appear on the road ahead here?
     ld d, 0
     ld hl, wChunkSpawn
@@ -4197,6 +4198,21 @@ Drive:
     rr e
     add hl, de
 .notTight
+    bit 1, b                    ; off the gas the car grips: three quarters of the push.  Lift
+    jr nz, .onGas               ; for a corner and it holds the line, as in F-Zero
+    ld d, h
+    ld e, l
+    sra d
+    rr e
+    sra d
+    rr e
+    ld a, l
+    sub e
+    ld l, a
+    ld a, h
+    sbc d
+    ld h, a
+.onGas
     ld d, h
     ld e, l
 
