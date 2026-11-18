@@ -5,7 +5,8 @@
 //
 // AFTER=N runs on N frames past the end of the race, hands off (the finale), and with --gif
 // records those frames instead.  --car N picks the car (0 ARROW .. 3 COMET).
-// PEAK=1 prints the frames that set a new worst load (PEAK=all: some fixed frames);
+// PEAK=1 prints the frames that set a new worst load, with what was going on (PEAK=all:
+// some fixed frames);
 // LOADAVG=1 the mean load as well.
 //
 // masher  holds the throttle and steers for the middle of the road.  Nothing else.
@@ -79,7 +80,7 @@ async function race(kind, record) {
     if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
     const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
     const ld = rd(sym.hLoad), lv = ld >= 144 ? ld - 144 : ld + 10;
-    if (process.env.PEAK && (process.env.PEAK === 'all' ? [136, 396, 1000, 2000, 3000, 4000].includes(out.frames) : lv >= out.peak - 1)) console.log('peak', lv, 'frame', out.frames, 'chunk', ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + PLAYER_Z) >> 8 & 63, 'state', st, 'count', count, 'hp', hp, 'air', rd(sym.hAir), 'objs', [0, 1].map(k => rd(sym.wObjSlots + k * 4) + ':' + rd(sym.wObjSlots + k * 4 + 1)).join(' '), 'flying', sym.wFlying === undefined ? '-' : rd(sym.wFlying), 'shown', [0,1,2,3,4,5,6].filter(r => rd(sym.wRivals + r * 8 + 7)).length);
+    if (process.env.PEAK && (process.env.PEAK === 'all' ? [136, 396, 1000, 2000, 3000, 4000].includes(out.frames) : lv >= out.peak - 1)) console.log('peak', lv, 'frame', out.frames, 'chunk', ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + PLAYER_Z) >> 8 & 63, 'state', st, 'count', count, 'hp', hp, 'air', rd(sym.hAir), 'objs', [0, 1].map(k => rd(sym.wObjSlots + k * 4) + ':' + rd(sym.wObjSlots + k * 4 + 1)).join(' '), 'flying', sym.wFlying === undefined ? '-' : rd(sym.wFlying), 'sfx', sym.wSfxPtr === undefined ? '-' : rd(sym.wSfxPtr + 1), 'flash', sym.wHitFlash === undefined ? '-' : rd(sym.wHitFlash), 'stale', rd(sym.hSkyStale), 'shown', [0,1,2,3,4,5,6].filter(r => rd(sym.wRivals + r * 8 + 7)).length);
     out.peak = Math.max(out.peak, lv); out.sum = (out.sum || 0) + lv; out.n = (out.n || 0) + 1;
     if (record && !AFTER && i >= record[0] && i < record[1] && i % 2 === 0) frames.push(Buffer.from(new Uint8Array(m.HEAP8.buffer, m._get_frame_buffer_ptr(e), 160 * 144 * 4)));
     if (hp < lastHp) { out.hits++; if (process.env.HITS) (out.where = out.where || []).push(((rd(sym.hPos + 2) & 63)) + ":" + (lastHp - hp)); } lastHp = hp; out.minHealth = Math.min(out.minHealth, hp);

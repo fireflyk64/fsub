@@ -144,6 +144,7 @@ DEF BRAKE_FLOOR EQU 2           ; braking alone takes the car no lower than this
 DEF HEALTH_MAX  EQU 64
 DEF LOW_HEALTH  EQU 16          ; below this: an alarm ticks and the health bar blinks
 DEF KNOCK_COST  EQU 3           ; health lost bumping a rival
+DEF HIT_FLASH   EQU 12          ; frames of the flash at a hit (negative while bit 1 is set: 3 times)
 DEF STUN_TIME   EQU 45          ; frames a knocked rival runs at half pace
 DEF RIVAL_AIR   EQU 18          ; a rival off a ramp: its moves in the air (each two frames)...
 DEF RIVAL_LIFT  EQU 10          ; ...how high it goes (pixels, at its biggest)...
@@ -425,6 +426,11 @@ EntryPoint:
     ldh [hTrackNo], a
     ld [wMenuRow], a
     ld [wPainted], a            ; (nothing painted on the road to put back)
+    ld [wSfxPtr + 1], a         ; (no sound effect)
+    ld [wSfxPri], a
+    ld [wSfxNew], a
+    ld [wSfxMuted], a
+    ld [wHitFlash], a
     ld a, $A5                   ; (the explosion's noise: HRAM is not cleared at power on, and
     ldh [hRand], a              ; on some consoles and emulators it starts as 0, which is silent)
     xor a
@@ -476,6 +482,14 @@ Menu:
     ldh [hLinkTry], a
     ldh [rAUD2ENV], a           ; and silences the engine
     ld b, 1
+    ld c, a
+    call hUGE_mute_channel
+    xor a                       ; (a sound effect cut short: the music has its drums back)
+    ld [wSfxPtr + 1], a
+    ld [wSfxPri], a
+    ld [wSfxNew], a
+    ld [wSfxMuted], a
+    ld b, 3
     ld c, a
     call hUGE_mute_channel
     ld a, %00011011             ; white letters on black
@@ -1011,6 +1025,9 @@ BuildLines:
 .skyTable
     ld h, b
     ld l, 0
+    ld a, [wHitFlash]           ; a hit: the city flashes in negative
+    and 2
+    jr nz, .skyNegative
 .sky
     ld a, [de]
     ld [hl+], a
@@ -1018,6 +1035,15 @@ BuildLines:
     ld a, l
     cp HORIZON
     jr nz, .sky
+    jp .bgpDone
+.skyNegative
+    ld a, [de]
+    cpl
+    ld [hl+], a
+    inc de
+    ld a, l
+    cp HORIZON
+    jr nz, .skyNegative
     jp .bgpDone
 .roofed
     ld h, b                     ; underground: everything above the road is black
@@ -1034,7 +1060,11 @@ BuildLines:
 
 .bgpReady
     ld h, b                     ; the status bar's lines: their own palette, flashing in
-    ld l, HUD_LINE              ; negative for a moment when a new lap begins
+    ld l, HUD_LINE              ; negative at a hit, and for a moment when a new lap begins
+    ld a, [wHitFlash]
+    and 2
+    ld a, HUD_BGP ^ $FF
+    jr nz, .hudPalette
     ldh a, [hLapFlash]
     or a
     ld a, HUD_BGP
@@ -2107,6 +2137,8 @@ UpdateRivals:
 .knocked
     ld a, KNOCK_COST
     call Damage
+    ld a, SFX_CRUNCH
+    call Sfx
 .noHit
 
     ; --- where is it across the road on that line?
@@ -2500,7 +2532,7 @@ UpdateObject:
     jr nc, .draw
     ld a, BARRIER_COST          ; yes: it hurts and knocks the car aside (but only dirt slows it)
     call Damage
-    ld a, SFX_HIT
+    ld a, SFX_CRUNCH
     call Sfx
     ld a, STEER_MAX
     bit 7, e
@@ -2794,6 +2826,8 @@ Damage:
 .built
     ld a, 8                     ; it jolts the car (PlayerSprites)
     ld [wShake], a
+    ld a, HIT_FLASH             ; and the sky and the status bar flash in negative
+    ld [wHitFlash], a
     ldh a, [hHealth]
     sub b
     jr z, .dead
@@ -2947,35 +2981,166 @@ DEF FEATURE_JUMP  EQU 2
 DEF FEATURE_DIRT  EQU 3
 DEF FEATURE_DARK  EQU 4         ; a black band that does nothing
 ; Sound effects on the noise channel (the music's drums take it back on their next hit).
-DEF SFX_SKID  EQU 0
-DEF SFX_HIT   EQU 2
-DEF SFX_BOOST EQU 4
-DEF SFX_BOOM  EQU 6
-DEF SFX_ALARM EQU 8
+DEF SFX_SKID   EQU 0
+DEF SFX_HIT    EQU 2
+DEF SFX_BOOST  EQU 4
+DEF SFX_BOOM   EQU 6
+DEF SFX_ALARM  EQU 8
+DEF SFX_CRUNCH EQU 10           ; a barrier or a rival hit: a crunch falling in pitch
+DEF SFX_ROCK   EQU 12           ; the rail: a rattle, rocking between two pitches
+; Ask for a sound effect on the noise channel (a = SFX_*), unless a more important one is
+; playing or asked for.  It starts at the top of the next frame (SfxStep), where there is
+; time to spare: hits come late in a frame, where there is none.  Keeps all.
 Sfx:
     push hl
     push de
+    push bc
     ld e, a
     ld d, 0
-    ld hl, .table
+    ld hl, SfxPriority
+    srl e
     add hl, de
-    xor a
-    ldh [rAUD4LEN], a
-    ld a, [hl+]
-    ldh [rAUD4ENV], a
-    ld a, [hl]
-    ldh [rAUD4POLY], a
-    ld a, $80
-    ldh [rAUD4GO], a
+    ld c, [hl]                  ; c = how much it matters
+    ld a, [wSfxPtr + 1]
+    or a
+    jr z, .notPlaying
+    ld a, [wSfxPri]
+    cp c
+    jr z, .notPlaying           ; (the same again: starts over)
+    jr nc, .busy                ; (something that matters more is playing)
+.notPlaying
+    ld a, [wSfxNew]
+    or a
+    jr z, .ask
+    ld a, [wSfxNewPri]
+    cp c
+    jr z, .ask
+    jr nc, .busy                ; (something that matters more is asked for)
+.ask
+    ld a, c
+    ld [wSfxNewPri], a
+    ld a, e
+    inc a
+    ld [wSfxNew], a             ; (its number + 1)
+.busy
+    pop bc
     pop de
     pop hl
     ret
-.table
-    db $51, $23                 ; skid: short hiss
-    db $F2, $65                 ; hit: thud
-    db $A5, $14                 ; boost: rush
-    db $F7, $73                 ; wreck: long low roar
-    db $B1, $01                 ; low energy: a sharp tick
+
+; Drive calls this at the top of every frame: a sound effect asked for starts (the noise
+; channel taken from the music if it is not ours already), and the one playing plays on.
+; Each step is (envelope, or 0 to change only the pitch of the sound already going; the
+; noise register; frames to hold), an envelope of $FF ending it; the last hold lets the
+; sound die away before the music has the channel back.  Keeps all.
+SfxStep:
+    ld a, [wSfxNew]
+    or a
+    jr z, .playing
+    push hl
+    push de
+    push bc
+    dec a
+    add a
+    ld e, a
+    ld d, 0
+    ld hl, SfxSeqs
+    add hl, de
+    ld a, [hl+]
+    ld [wSfxPtr], a
+    ld a, [hl]
+    ld [wSfxPtr + 1], a
+    ld a, [wSfxNewPri]
+    ld [wSfxPri], a
+    xor a
+    ld [wSfxNew], a
+    ld [wSfxWait], a
+    ld a, [wSfxMuted]
+    or a
+    jr nz, .muted
+    inc a
+    ld [wSfxMuted], a
+    ld b, 3                     ; the music leaves the noise channel alone until it is over
+    ld c, a
+    call hUGE_mute_channel
+.muted
+    pop bc
+    pop de
+    pop hl
+.playing
+    ld a, [wSfxPtr + 1]
+    or a
+    ret z
+    ld a, [wSfxWait]
+    or a
+    jr z, .next
+    dec a
+    ld [wSfxWait], a
+    ret
+.next
+    push hl
+    push de
+    push bc
+    ld a, [wSfxPtr]
+    ld l, a
+    ld a, [wSfxPtr + 1]
+    ld h, a
+    ld a, [hl+]
+    cp $FF
+    jr z, .over
+    or a
+    jr z, .pitch
+    ldh [rAUD4ENV], a           ; a new sound
+    ld a, [hl+]
+    ldh [rAUD4POLY], a
+    xor a
+    ldh [rAUD4LEN], a
+    ld a, $80
+    ldh [rAUD4GO], a
+    jr .hold
+.pitch
+    ld a, [hl+]                 ; the same sound, at another pitch
+    ldh [rAUD4POLY], a
+.hold
+    ld a, [hl+]
+    ld [wSfxWait], a
+    ld a, l
+    ld [wSfxPtr], a
+    ld a, h
+    ld [wSfxPtr + 1], a
+    jr .done
+.over
+    xor a
+    ld [wSfxPtr + 1], a
+    ld [wSfxPri], a
+    ld [wSfxMuted], a
+    ld b, 3                     ; the music's drums again
+    ld c, a
+    call hUGE_mute_channel
+.done
+    pop bc
+    pop de
+    pop hl
+    ret
+
+SfxPriority:                    ; (a more important one is not cut short by a lesser)
+    db 1, 2, 2, 4, 1, 3, 3
+SfxSeqs:
+    dw .skid, .hit, .boost, .boom, .alarm, .crunch, .rock
+.skid                           ; a short hiss
+    db $51, $23, 6, $FF
+.hit                            ; a thud
+    db $F2, $65, 28, $FF
+.boost                          ; a rush
+    db $A5, $14, 48, $FF
+.boom                           ; the wreck: a long low roar
+    db $F7, $73, 100, $FF
+.alarm                          ; low health: a sharp tick
+    db $B1, $01, 10, $FF
+.crunch                         ; loud, falling from a hiss to a metallic crack to a thud
+    db $F2, $34, 2,  0, $45, 2,  0, $56, 2,  0, $6E, 3,  0, $77, 20, $FF
+.rock                           ; rattling along the rail: four knocks, two pitches, dying
+    db $D1, $66, 4,  $B1, $55, 4,  $91, $66, 4,  $71, $55, 8, $FF
 
 ; Paint a stretch of the road.  de = where it starts, hl = where it ends, in units from
 ; the finish line.  b = BGP page being built, hBandOr = the road colour's bits there.
@@ -3863,6 +4028,7 @@ InitRace:
     xor a
     ld [wHop], a
     ld [wFlying], a
+    ld [wHitFlash], a
     ld [wGone], a
     ld [wGone + 1], a
     ld [wGoneV], a
@@ -4076,6 +4242,19 @@ Drive:
     ld a, 3
     ldh [hSkyStale], a
 .flashed
+    ld a, [wHitFlash]           ; a hit's flash: the sky lines are rewritten each time it
+    or a                        ; turns negative or back (both line buffers: 2 frames)
+    jr z, .hitFlashed
+    ld e, a
+    dec a
+    ld [wHitFlash], a
+    xor e
+    and 2
+    jr z, .hitFlashed
+    ld a, 2
+    ldh [hSkyStale], a
+.hitFlashed
+    call SfxStep
     ldh a, [hLapFlash]
     or a
     jr z, .lapFlash
@@ -4407,6 +4586,11 @@ Drive:
     ld c, a
     ld a, $31
 .noise
+    ld e, a
+    ld a, [wSfxPtr + 1]         ; (a sound effect has the noise channel)
+    or a
+    jr nz, .quiet
+    ld a, e
     ldh [rAUD4ENV], a
     ld a, c
     ldh [rAUD4POLY], a
@@ -5000,7 +5184,7 @@ Drive:
     jr nz, .railHurt
     ld a, RAIL_COST             ; it costs health, never speed: only dirt slows the car
     call Damage
-    ld a, SFX_HIT
+    ld a, SFX_ROCK
     call Sfx
     ld a, RAIL_COOL
     ldh [hRailCool], a
@@ -6041,6 +6225,13 @@ wArmor:     db                  ; a hit costs this many quarters of its health
 wPush:      ds 2                ; its PushScale table: how hard bends throw it
 wHop:       db                  ; how high the rival being drawn flies off a ramp (pixels)
 wBoomBuf:   ds 32               ; the explosion's next frame, for VBlank to copy (BoomNoise)
+wSfxPtr:    ds 2                ; the sound effect playing: its next step (0: none; Sfx)
+wSfxWait:   db                  ; ...frames until that step
+wSfxPri:    db                  ; ...and how much it matters
+wSfxNew:    db                  ; one asked for, to start next frame (its number + 1; 0: none)
+wSfxNewPri: db                  ; ...and how much it matters
+wSfxMuted:  db                  ; the music has been told to leave the noise channel alone
+wHitFlash:  db                  ; frames left of the flash at a hit: sky and status bar in negative
 wFlying:    db                  ; how many rivals are in the air (0: none of that work at all)
 wRampChunk: db                  ; the chunk the track's ramp sits in ($FF: none)...
 wRampLanes: db                  ; ...and the lanes that take off from it (bits)
