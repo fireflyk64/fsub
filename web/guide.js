@@ -162,13 +162,13 @@ export function advise(rd, sym, lead = LEAD) {
   const straight = [0, 1, 2].every((k) => Math.abs(bendAt((ahead >> 8) + k)) < 3);
   if (act === "gas" && rd(sym.hBoosts) && !rd(sym.hBoost) && straight && speed > 7.6 && !danger) act = "boost";
   if (act === "lift" && rd(sym.hDirt)) act = "gas";                             // (in the dirt: it slows you anyway)
-  // --- the pit: low on health, brake down to a crawl over the recharge patch and it fills you
-  // up (fzero.asm HEAL_CRAWL; flat out it gives half of what is missing)
+  // --- the pit: low on health, brake down to a crawl over the recharge patches for the most
+  // (fzero.asm HEAL_CRAWL: nearly half of what is missing over both; flat out, a quarter)
   let actWhy = "";
   if (health < 40) for (const o of objs) {
     if (o.kind !== 9 && o.kind !== 10) continue;
     const d = o.dist - PLAYER_Z - speed * lead;
-    if (speed > 3.5 && d < (speed * speed - 9) / (2 * BRAKING) + speed * 8) { act = "brake"; actWhy = "crawl over the recharge: it fills you up"; }
+    if (speed > 3.5 && d < (speed * speed - 9) / (2 * BRAKING) + speed * 8) { act = "brake"; actWhy = "crawl over the recharge: it gives the most"; }
   }
   return { act, corner, steer, why: steer ? why : "", actWhy, target, x, speed };
 }

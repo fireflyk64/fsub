@@ -27,7 +27,7 @@ FUTURE, OLDTOWN, OCEAN, PLAINS = range(4)       # skylines, in gen_gfx.py's orde
 SET_CITY = 0                                    # 0 city, 1 underpass, 2 water
 SET_FIELD = 1                                   # 0 wheat fields, 1 underpass, 2 city
 START_LINE = [(0, 24, PLAIN), (24, 48, DARK), (48, 72, PLAIN)]
-RECHARGE = {1: HEAL_L}                          # the pit: one recharge patch on the left, after the line
+RECHARGE = {1: HEAL_L, 2: HEAL_L}               # the pit: two recharge patches on the left, after the line
 # Things appear this many chunks before they sit (SPAWN_DIST in gen_gfx.py is LEAD * 256):
 # about 1.2 s at top speed between showing up and reaching the car, time enough for a person
 # to see one and get out of its way (two chunks, 0.7 s, was not: a person needs about 0.45 s to
