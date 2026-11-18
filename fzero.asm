@@ -1785,9 +1785,9 @@ UpdateRivals:
     add hl, hl
     add hl, hl
     add hl, hl                  ; (1/16 unit) -> 8.8 units per frame
-    ldh a, [hSpeed]
+    ld a, [wAdvance]            ; (how far we really went: the racing line)
     ld c, a
-    ldh a, [hSpeed + 1]
+    ld a, [wAdvance + 1]
     ld b, a
     ld a, l
     sub c
@@ -3778,6 +3778,11 @@ Drive:
     cp BRAKE_FLOOR
     jr c, .speedSet
     ld de, -BRAKE
+    ld a, b                     ; steering too: a skid turn, which scrubs speed itself
+    and PADF_LEFT | PADF_RIGHT  ; (SKID_COST): the brake bites half as hard, so a drift
+    jr z, .fullBrake            ; through a corner keeps more of its speed
+    ld de, -(BRAKE / 2)
+.fullBrake
     add hl, de
     ld a, h
     cp BRAKE_FLOOR
@@ -3889,6 +3894,30 @@ Drive:
     ldh [rAUD4GO], a
 .quiet
 
+    ; --- the racing line: in a bend the inside is the shorter way round, so the car covers
+    ; more of the course there and less on the outside: bend * speed * x / 4096 a frame,
+    ; 7% more on the usual inside line of a right angle, a third at the very inside of a
+    ; hairpin.  (Holding the inside at speed means fighting the bend's push: that is the
+    ; trade.)  The rivals are moved against this, not against the speed.
+    push hl
+    ld a, [wTurn]
+    ld e, a
+    ld a, [wTurn + 1]
+    ld d, a
+    ldh a, [hX + 1]
+    call MulSigned              ; hl = turn * x
+    REPT 4
+        sra h
+        rr l
+    ENDR
+    ld d, h
+    ld e, l
+    pop hl
+    add hl, de
+    ld a, l
+    ld [wAdvance], a
+    ld a, h
+    ld [wAdvance + 1], a
     ; --- distance driven (24 bit: fraction, units, chunks)
     ldh a, [hPos]
     add l
@@ -4121,6 +4150,10 @@ Drive:
     dec c
     jr nz, .turnAdd
 .noTurn
+    ld a, l                     ; (kept for next frame's distance: the racing line)
+    ld [wTurn], a
+    ld a, h
+    ld [wTurn + 1], a
     ld d, h
     ld e, l
 
@@ -4723,6 +4756,35 @@ InitLines:
     ret
 
 ; de = source, hl = destination, bc = length
+; hl = de * a, both signed (|a| small: one add per bit).  Keeps bc.
+MulSigned:
+    ld hl, 0
+    bit 7, a
+    jr z, .positive
+    cpl
+    inc a
+    push af
+    xor a
+    sub e
+    ld e, a
+    sbc a
+    sub d
+    ld d, a
+    pop af
+.positive
+    or a
+    ret z
+.bit
+    srl a
+    jr nc, .skip
+    add hl, de
+.skip
+    sla e
+    rl d
+    or a
+    jr nz, .bit
+    ret
+
 Copy:
     ld a, [de]
     ld [hl+], a
@@ -4918,6 +4980,8 @@ wSongNow:   db                  ; which track's song is playing
 wSongBank:  db
 wPalBank:   db                  ; bank of the track's palette tables
 wTight:     db                  ; the chunk we are in is a "special tight" corner
+wTurn:      ds 2                ; last frame's bend * speed (signed): how hard we were turning
+wAdvance:   ds 2                ; how far the car went along the course this frame (8.8)
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash

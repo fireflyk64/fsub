@@ -72,10 +72,10 @@ def course(sections):
 TRACKS = [
     dict(  # 0  NEO CITY: a bit of everything
         skyline=FUTURE, palset=SET_CITY, exit=28, skip=3,
-        course=[("S", 6), ("R", 16, 1), ("S", 4), ("L", 16, 1), ("S", 6), ("R", 32, 1), ("S", 3),
-                ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 7), ("R", 16, 1),
-                ("S", 3), ("L", 8, 2), ("S", 6), ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 4),
-                ("R", 16, 1), ("S", 2), ("R", 16, 1), ("S", 5)],
+        course=[("S", 6), ("R", 8, 2), ("S", 3), ("L", 16, 1), ("S", 6), ("R", 32, 1), ("S", 3),
+                ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 7), ("R", 8, 2),     # (sweepers to carve:
+                ("S", 2), ("L", 8, 2), ("S", 6), ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 4),   # the inside
+                ("R", 16, 1), ("S", 2), ("R", 8, 2), ("S", 4)],                  # is the short way)
         scenes=[(40, 0), (6, 2), (4, 0), (5, 1), (9, 0)],
         wind=[(64, 0)],
         things={4: PAD_R,                               # launch pad
@@ -88,7 +88,7 @@ TRACKS = [
                 31: B0, 33: B3,                         # Barrier Straight
                 41: DIRT_L, 43: DIRT_R, 45: DIRT_L,     # Causeway Slalom
                 48: PAD_R,
-                52: B1, 53: B2, 55: B1,                 # the Underpass: hug a wall
+                52: B1, 53: B2,                         # the Underpass: hug a wall
                 60: PAD_L},
         bands=START_LINE + [(chunk(7), chunk(7, 90), DASH), (chunk(36), chunk(36, 60), JUMP),
                             (chunk(40), chunk(40, 90), DASH), (chunk(61), chunk(61, 90), DASH)]),

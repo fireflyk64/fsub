@@ -108,7 +108,7 @@ async function race(kind, record) {
       // (off the gas from a little before the corner to its end: lc is where it was REACT ago)
       const near = [0, 1].map(k => bendAt(lc + k)).find(b => Math.abs(b) >= 16);
       if (near !== undefined || Math.abs(bendAt(lc)) >= 16) gas = false;
-      if (Math.abs(bend) > 8) target = bend > 0 ? 18 : -18;
+      if (Math.abs(bend) > 2) target = bend > 0 ? 30 : -30;
       dodge(480, lateObjs);
     } else if (kind === 'expert' || kind === 'human') {
       // A corner pushes the car outward by K * speed^2 * bend pixels a frame, against 1.5 of
@@ -126,7 +126,7 @@ async function race(kind, record) {
         c = end - 1;
       }
       const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
-      if (Math.abs(ahead) > 8) target = ahead > 0 ? 18 : -18;        // inside line
+      if (Math.abs(ahead) > 2) target = ahead > 0 ? 30 : -30;        // the inside: the short way round
       if (kind === 'human') dodge(480, lateObjs); else dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
       if (speed > want + 0.15) { gas = false; brake = speed > want + 0.5; }
