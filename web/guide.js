@@ -163,7 +163,7 @@ export function advise(rd, sym, lead = LEAD) {
   if (act === "gas" && rd(sym.hBoosts) && !rd(sym.hBoost) && straight && speed > 7.6 && !danger) act = "boost";
   if (act === "lift" && rd(sym.hDirt)) act = "gas";                             // (in the dirt: it slows you anyway)
   // --- the pit: low on health, brake down to a crawl over the recharge patches for the most
-  // (fzero.asm HEAL_CRAWL: nearly half of what is missing over both; flat out, a quarter)
+  // (fzero.asm HEAL_CRAWL: about 60% of what is missing over both; flat out, a third)
   let actWhy = "";
   if (health < 40) for (const o of objs) {
     if (o.kind !== 9 && o.kind !== 10) continue;

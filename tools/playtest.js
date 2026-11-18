@@ -1,7 +1,7 @@
 // Playtest bots: drive a full race in the ROM (headless, in the web build's emulator) at
 // three levels of skill and report how each got on.  For tuning the balance.
 //
-//   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--car N] [--gif NAME FROM TO]
+//   node tools/playtest.js [masher|casual|expert ...] [--track N] [--level N] [--car N] [--mode N] [--gif NAME FROM TO]
 //
 // AFTER=N runs on N frames past the end of the race, hands off (the finale), and with --gif
 // records those frames instead.  --car N picks the car (0 ARROW .. 3 COMET).
@@ -33,6 +33,7 @@ const REACT = +(process.env.REACT || 18);       // frames between seeing and act
 const levelAt = args.indexOf('--level'), level = levelAt >= 0 ? +args[levelAt + 1] : -1;   // (-1: the menu's own; 0: no rivals)
 const trackAt = args.indexOf('--track'), track = trackAt >= 0 ? +args[trackAt + 1] : 0;
 const carAt = args.indexOf('--car'), car = carAt >= 0 ? +args[carAt + 1] : 0;   // (0 ARROW, 1 HORNET, 2 BISON, 3 COMET)
+const modeAt = args.indexOf('--mode'), mode = modeAt >= 0 ? +args[modeAt + 1] : 0;   // (0 RACE, 3 LEARN: never ranked out)
 const gifAt = args.indexOf('--gif');
 const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)'))[1];
 const PLAYER_Z = asmConst('PLAYER_Z'), PUSH = asmConst('PUSH_K') * 16 / 1024 / 2 / 256;
@@ -67,6 +68,7 @@ async function race(kind, record) {
     }
     const st = rd(sym.hState), lap = rd(sym.hLap), hp = rd(sym.hHealth), count = rd(sym.hCount);
     if (i > 20 && rd(sym.hMenu)) {        // the menu: pick the track and the level, then Start
+      if (mode) m._emulator_write_mem(e, sym.hMode, mode);
       const row = rd(sym.wMenuRow), trk = rd(sym.hTrackNo), lv = rd(sym.hLevel), cr = rd(sym.wCar), tap = i % 6 < 3;
       let key = 'start';
       if (trk !== track) key = row !== 0 ? 'up' : (trk < track ? 'right' : 'left');

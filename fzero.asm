@@ -157,6 +157,7 @@ DEF LINE_END    EQU 20          ; depth of the painted finish line
 DEF MODE_RACE     EQU 0
 DEF MODE_PRACTICE EQU 1
 DEF MODE_LINK     EQU 2
+DEF MODE_LEARN    EQU 3         ; a race, but never ranked out: for learning a track (RankNeeded)
 DEF LINK_MASTER   EQU 1         ; hLinked: this console clocks the cable
 DEF LINK_SLAVE    EQU 2
 DEF LINK_CALL     EQU $AA       ; "anyone there?" from whoever pressed Start
@@ -271,51 +272,20 @@ VBlankISR:
     xor a
     ldh [hTileJob], a
     ld hl, _VRAM8000 + BOOM_TILE * 16
+    push de
+    ld de, BoomTilePristine     ; TILE_RESTORE: the small shadow, back from ROM
     dec b
-    jr nz, .boom
-    push de                     ; TILE_RESTORE: the small shadow, back from ROM
-    ld de, BoomTilePristine
+    jr z, .copyTile
+    ld de, wBoomBuf             ; TILE_BOOM: a frame of the explosion (BoomNoise made it)
+.copyTile
     ld b, 32
-.restore
+.tileByte
     ld a, [de]
     ld [hl+], a
     inc de
     dec b
-    jr nz, .restore
+    jr nz, .tileByte
     pop de
-    jr .jobDone
-.boom                           ; TILE_BOOM: noise, thinning out as the explosion ages
-    ldh a, [hRand]
-    ld c, a
-    ld b, 32
-.noise
-    ld a, c                     ; an 8-bit shift register for the noise
-    srl a
-    jr nc, .noTap
-    xor $B8
-.noTap
-    ld c, a
-    ldh a, [hBoom]
-    cp BOOM_TIME / 2
-    ld a, c
-    jr c, .dense
-    rrca
-    and c                       ; later: sparser
-    push af
-    ldh a, [hBoom]
-    cp BOOM_TIME - 8
-    jr c, .sparse
-    pop af
-    xor a                       ; last frames: gone
-    push af
-.sparse
-    pop af
-.dense
-    ld [hl+], a
-    dec b
-    jr nz, .noise
-    ld a, c
-    ldh [hRand], a
 .jobDone
     pop bc
 .noJob
@@ -455,6 +425,9 @@ EntryPoint:
     ldh [hTrackNo], a
     ld [wMenuRow], a
     ld [wPainted], a            ; (nothing painted on the road to put back)
+    ld a, $A5                   ; (the explosion's noise: HRAM is not cleared at power on, and
+    ldh [hRand], a              ; on some consoles and emulators it starts as 0, which is silent)
+    xor a
     ld [wCar], a
     ld [wPaintStep], a
     ld [wPaintCount], a
@@ -621,7 +594,7 @@ MenuLines:                      ; value, lowest, highest
     dw hLevel
     db 0, LEVELS                ; 0: no rivals (a time trial; linked, just the two players)
     dw hMode
-    db 0, MODE_LINK
+    db 0, MODE_LEARN
     dw hEngine
     db 0, 1
 
@@ -650,7 +623,7 @@ MenuValues:                     ; for each line, its values in order
 .rivals
     db "NONE     ", "ROOKIE   ", "EASY     ", "NORMAL   ", "HARD     ", "EXPERT   "
 .modes
-    db "RACE     ", "PRACTICE ", "LINK     "
+    db "RACE     ", "PRACTICE ", "LINK     ", "LEARN    "
 .engine
     db "OFF      ", "ON       "
 
@@ -2400,28 +2373,27 @@ UpdateObject:
     jp nc, .onRamp
     cp KIND_HEAL_L
     jr c, .notHeal
-    ; A recharge patch, the pit (two in a row): braked down to a crawl over one, it gives a
-    ; quarter of what is missing; a little under top speed 3/16, flat out an eighth, boosting
-    ; 1/16 (over both: nearly half, a third, a quarter, an eighth).  Slow down to come out
-    ; healthier, or blast through to win.
+    ; A recharge patch, the pit (two in a row): braked down to a crawl over one, it gives
+    ; 12/32 of what is missing; a little under top speed 9/32, flat out 6/32, boosting 3/32
+    ; (over both: 61%, 48%, 34%, 18%).  Slow down to come out healthier, or blast through.
     push de
     push hl
-    ld d, 4                     ; (sixteenths of what is missing)
+    ld d, 12                    ; (32nds of what is missing)
     ldh a, [hSpeed + 1]
     cp HEAL_CRAWL + 1
     jr c, .healShare
     ld e, a
-    ld d, 3
+    ld d, 9
     ld a, [wTop]
     dec a
     dec a
     cp e
     jr nc, .healShare           ; top speed less 2, or slower
-    ld d, 2
+    ld d, 6
     add 2
     cp e
     jr nc, .healShare           ; up to top speed
-    ld d, 1                     ; over it: boosting
+    ld d, 3                     ; over it: boosting
 .healShare
     ldh a, [hHealth]
     ld e, a
@@ -2430,12 +2402,12 @@ UpdateObject:
     ld e, a                     ; missing
     ld a, d
     ld d, 0
-    ld hl, 15                   ; (rounded up)
+    ld hl, 31                   ; (rounded up)
 .healMul
     add hl, de
     dec a
     jr nz, .healMul
-    REPT 4
+    REPT 5
         srl h
         rr l
     ENDR
@@ -4137,7 +4109,8 @@ Drive:
     ldh a, [hBoom]
     and 3
     jr nz, .noBoom
-    ld a, TILE_BOOM             ; a new frame of it every fourth frame
+    call BoomNoise              ; a new frame of it every fourth frame
+    ld a, TILE_BOOM
     ldh [hTileJob], a
 .noBoom
     ldh a, [hState]
@@ -5686,6 +5659,51 @@ RivalHop:                       ; how high, by moves left in the air: a parabola
         db (4 * RIVAL_LIFT * T * (RIVAL_AIR - T)) / (RIVAL_AIR * RIVAL_AIR)
     ENDR
 
+; A frame of the explosion: noise for its tile in wBoomBuf, thinning out as it ages (VBlank
+; copies it in: TILE_BOOM).  Made here, not in VBlank, which has room only for the copy.
+BoomNoise:
+    push bc
+    push hl
+    ldh a, [hRand]
+    or a                        ; (a shift register stuck at 0 makes no noise at all)
+    jr nz, .seeded
+    ld a, $A5
+.seeded
+    ld c, a
+    ld hl, wBoomBuf
+    ld b, 32
+.noise
+    ld a, c                     ; an 8-bit shift register for the noise
+    srl a
+    jr nc, .noTap
+    xor $B8
+.noTap
+    ld c, a
+    ldh a, [hBoom]
+    cp BOOM_TIME / 2
+    ld a, c
+    jr c, .dense
+    rrca
+    and c                       ; later: sparser
+    push af
+    ldh a, [hBoom]
+    cp BOOM_TIME - 8
+    jr c, .sparse
+    pop af
+    xor a                       ; last frames: gone
+    push af
+.sparse
+    pop af
+.dense
+    ld [hl+], a
+    dec b
+    jr nz, .noise
+    ld a, c
+    ldh [hRand], a
+    pop hl
+    pop bc
+    ret
+
 ; The car picked in the menu: its shape into the player's tiles (the screen must be off) and
 ; its numbers into wTop..wPush.
 LoadCar:
@@ -5733,7 +5751,7 @@ CarStats:
     dw PushScale76              ; throws it 40% harder than ARROW at 8
 
 ; a = the place needed by the end of the lap being raced, F-Zero's rank requirement: in a
-; race against rivals (not practice, not linked, not without rivals), 7th then 5th over
+; race against rivals (not practice, not linked, not LEARN, not without rivals), 7th then 5th over
 ; three laps, 7th, 6th, 5th, 4th over five; none on the last lap (8).  Uses bc, hl.
 RankNeeded:
     ldh a, [hMode]
@@ -6022,6 +6040,7 @@ wSteer:     db                  ; sideways speed, 1/16 pixel a frame
 wArmor:     db                  ; a hit costs this many quarters of its health
 wPush:      ds 2                ; its PushScale table: how hard bends throw it
 wHop:       db                  ; how high the rival being drawn flies off a ramp (pixels)
+wBoomBuf:   ds 32               ; the explosion's next frame, for VBlank to copy (BoomNoise)
 wFlying:    db                  ; how many rivals are in the air (0: none of that work at all)
 wRampChunk: db                  ; the chunk the track's ramp sits in ($FF: none)...
 wRampLanes: db                  ; ...and the lanes that take off from it (bits)
@@ -6086,7 +6105,7 @@ hBuiltScx:    db    ; high byte of the SCX buffer BuildLines just filled
 hFadeStep:    db    ; 0 = not fading, else 1..FADE_LENGTH-1
 hFadeLevel:   db    ; current darkness, 0..3
 hFadeTunnel:  db    ; which way the fade is taking us: 1 down into the tunnel, 0 back up
-hMode:        db    ; MODE_RACE, MODE_PRACTICE, MODE_LINK
+hMode:        db    ; MODE_RACE, MODE_PRACTICE, MODE_LINK, MODE_LEARN
 hPractice:    db    ; 1 in practice mode: no laps, no damage, bend the road by hand
 hLinked:      db    ; 0 no partner, LINK_MASTER, LINK_SLAVE
 hLinkTry:     db    ; we have called and are waiting for the answer
