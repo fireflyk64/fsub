@@ -123,7 +123,7 @@ DEF PAD_OBP_A   EQU %01010000   ; boost pad: dirt in the road's grey, arrows whi
 DEF PAD_OBP_B   EQU %01011100   ; ...then black
 DEF HEAL_OBP_A  EQU %10100000   ; recharge patch: dark, with white arrows...
 DEF HEAL_OBP_B  EQU %00001000   ; ...then light, with dark ones
-DEF RAMP_OBP    EQU %10001100   ; jump ramp: a white slab with black arrows up it
+DEF RAMP_OBP    EQU %01101100   ; jump ramp (the tunnel mouth's shape): light grey, dark stripes, black rim
 DEF BARRIER_D3  EQU 66          ; ground line from which a barrier is drawn at its biggest
 DEF BOOM_TILE   EQU SHADOW_TILE + 2  ; the small shadow's tile: the explosion is drawn into it
 DEF BOOM_TIME   EQU 70          ; frames the explosion lasts
@@ -2219,21 +2219,32 @@ UpdateObject:
     ld a, SFX_BOOST
     call Sfx
     jp .draw
-.onRamp                         ; a ramp: up into the air, with a push for the take-off.  Half
-    ldh a, [hVX]                ; the slide the car had carries on, with no grip up there to
-    sra a                       ; stop it: come down off the edge and the car is gone, so go
-    ldh [hVX], a                ; over it straight (or near its inner side)
+.onRamp                         ; a ramp (drawn as the tunnel mouth, in grey): only within
+    ld a, e                     ; 18 pixels of its middle (28 either side of the line), as
+    rra                         ; it looks; miss it and nothing happens
+    ld a, 28
+    jr nc, .rampRight
+    ld a, -28
+.rampRight
+    ld d, a
+    ldh a, [hX + 1]
+    sub d
+    add 18
+    cp 37
+    jp nc, .draw
+    ldh a, [hVX]                ; up into the air.  Half the slide the car had carries on, with
+    sra a                       ; no grip up there to stop it: come down off the edge and the
+    ldh [hVX], a                ; car is gone, so go over it straight
     ld a, 1
     ldh [hAir], a
     ld a, LOW(JUMP_RAMP)
     ldh [hVZ], a
     ld a, HIGH(JUMP_RAMP)
     ldh [hVZ + 1], a
-    ldh a, [hBoost]
-    or a
-    jp nz, .draw
-    ld a, DASH_TIME / 2
-    ldh [hBoost], a
+    ld a, DASH_TIME             ; and a full boost forward (with its surge and flash), which
+    ldh [hBoost], a             ; it keeps through the air: no drag up there
+    xor a
+    ldh [hBoostSeen], a
     ld a, SFX_BOOST
     call Sfx
     jp .draw
@@ -2387,6 +2398,8 @@ UpdateObject:
     jr z, .mouthSizes
     cp KIND_DIRT_L
     jr c, .barrierSizes
+    cp KIND_JUMP_L              ; a ramp: the tunnel mouth's shape, in grey (RAMP_OBP)
+    jr nc, .mouthSizes
     ld hl, DirtSize1
     ld a, c
     cp MOUTH_D2
@@ -3932,6 +3945,9 @@ Drive:
     ld de, -$0020
     jr .slow
 .coast
+    ldh a, [hAir]               ; in the air: no drag, no brakes
+    or a
+    jr nz, .speedSet
     bit 7, b                    ; PADF_DOWN
     jr nz, .braking
     ld de, -FRICTION

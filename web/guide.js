@@ -124,12 +124,18 @@ export function advise(rd, sym, lead = LEAD) {
   let wish = null;                                                             // a nice-to-have: pad, recharge, tunnel
   for (const o of objs) {
     if (o.kind >= 1 && o.kind <= 4) continue;
-    if (o.kind === 5 || o.kind === 6 || o.kind === 11 || o.kind === 12) {
-      // dirt, or a ramp: a ramp throws a sliding car off the edge, so keep off it
-      // (or take it dead straight, near its inner side, for its push)
-      const left = o.kind === 5 || o.kind === 11, onIt = left ? x < 10 : x > -10, what = o.kind <= 6 ? "dirt" : "a ramp (take it straight or not at all)";
-      if (!danger && onIt) { target = left ? 22 : -22; why = `${what} on the ${left ? "left" : "right"}`; danger = true; }
+    if (o.kind === 5 || o.kind === 6) {
+      const left = o.kind === 5, onIt = left ? x < 10 : x > -10;
+      if (!danger && onIt) { target = left ? 22 : -22; why = `dirt on the ${left ? "left" : "right"}`; danger = true; }
       else if (!danger) { target = x; danger = true; }
+    } else if (o.kind === 11 || o.kind === 12) {
+      // A ramp: a jump and a full boost, taken dead straight on its middle (a slide carries on
+      // in the air and can take the car over the rail).  Only if there is time to get there
+      // and straighten up first (about half a second besides the move); lined up, hold it;
+      // too late to line up, keep off it.
+      const c = o.kind === 11 ? -28 : 28, frames = (o.dist - PLAYER_Z) / Math.max(speed, 1);
+      if (Math.abs(x - c) <= 8 || frames > Math.abs(x - c) / STEER + 30) wish = wish || { target: c, why: "a jump ramp: dead straight onto its middle", dist: o.dist };
+      else if (!danger && Math.abs(x - c) < 24) { target = c < 0 ? c + 32 : c - 32; why = "a ramp you cannot line up for: keep off it"; danger = true; }
     } else if ((o.kind === 9 || o.kind === 10) && health < 48) wish = wish || { target: o.kind === 9 ? -24 : 24, why: "a recharge patch: slow over it for more", dist: o.dist };
     else if (o.kind === 7 || o.kind === 8) wish = wish || { target: o.kind === 7 ? -28 : 28, why: "a boost pad: its middle", dist: o.dist };
     else if (o.kind === 0) wish = wish || { target: -24, why: "the tunnel: a short cut", dist: o.dist };

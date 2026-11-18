@@ -87,7 +87,7 @@ TRACKS = [
                 20: PAD_L, 24: B1,
                 31: B0, 33: B3,                         # Barrier Straight
                 41: DIRT_L, 43: DIRT_R, 45: DIRT_L,     # Causeway Slalom
-                36: JUMP_R,                             # a ramp out of the sweeper: straight, or off
+                36: JUMP_L,                             # a ramp out of the sweeper (cross for it)
                 40: PAD_R,
                 48: PAD_R,
                 52: B1, 53: B2,                         # the Underpass: hug a wall
@@ -136,8 +136,8 @@ TRACKS = [
                                                         # (spent before the left at 16)
                 18: B3, 21: B0, 24: B3,                 # the Dock Chicane: a chunk past each exit
                 28: DIRT_R,                             # inside of the hairpin at 30
-                41: B2, 45: DIRT_L, 49: PAD_R, 50: B1, 52: PAD_R, 56: PAD_L,   # (pads on the
-                59: PAD_L},                                                     #  home straight)
+                41: B2, 45: DIRT_L, 49: PAD_R, 50: B1, 52: PAD_R,   # (pads on the home straight,
+                54: JUMP_L, 56: PAD_L, 59: PAD_L},                    #  a ramp onto one of them)
         bands=START_LINE),
 ]
 
@@ -196,6 +196,14 @@ def block(t):
     for where, what in {**RECHARGE, **t["things"]}.items():
         assert things[(where - LEAD) % 64] == 0
         things[(where - LEAD) % 64] = what        # it shows up LEAD chunks before it sits
+    # A ramp's flight takes the car on about two chunks with no steering: a bend there that
+    # throws it toward the ramp's side (outward: a right-hand bend throws it left) would put
+    # it over the rail whatever the player did.
+    for where, what in t["things"].items():
+        if what in (JUMP_L, JUMP_R):
+            for c in range(where, where + 3):
+                b = bends[c % 64] & 127
+                assert not (what == JUMP_L and b > 32 or what == JUMP_R and b < 32), f"ramp at {where}: a bend at {c} throws the car over its side"
     # The game has two slots for things on the road: none may come third in three chunks.
     at = [any(things[(c - LEAD) % 64] for _ in [0]) for c in range(64)]
     for c in range(64):
