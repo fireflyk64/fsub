@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Publish this write-up to <pages-repo>/makingfsub/, with the "EDIT:" notes stripped out.
+# Publish this write-up to <pages-repo>/makingfsub/, with every HTML comment stripped out
+# (the EDIT: notes, and any drafts or notes left in comments).
 # Only that subfolder is ever touched; other folders in the Pages repo are left alone.
 #
 # usage: ./publish.sh [--no-push] [pages-repo-dir]
@@ -20,8 +21,9 @@ git -C "$PAGES" pull --rebase -q
 rm -rf "$DEST"
 mkdir -p "$DEST/img"
 cp "$HERE"/img/* "$DEST/img/"
-perl -0pe 's/[ \t]*<!--\s*EDIT:.*?-->\n?//gs' "$HERE/index.html" > "$DEST/index.html"
-if grep -q 'EDIT:' "$DEST/index.html"; then echo "an EDIT: note survived the strip; not publishing" >&2; exit 1; fi
+# a comment alone on its line takes the line with it; one inside running text leaves the text as it was
+perl -0pe 's/^[ \t]*<!--(?:(?!-->).)*-->[ \t]*\n//gms; s/<!--(?:(?!-->).)*-->//gs' "$HERE/index.html" > "$DEST/index.html"
+if grep -q -e '<!--' -e '-->' -e 'EDIT:' "$DEST/index.html"; then echo "a comment survived the strip; not publishing" >&2; exit 1; fi
 
 cd "$PAGES"
 git add -A makingfsub

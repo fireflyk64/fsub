@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>fsub: porting F-Zero to the Game Boy</title>
+<title>F-Sub: porting F-Zero to the Game Boy</title>
 <meta name="description" content="How a 1989 handheld draws a bending perspective road, a moving city and seven rivals: per-scanline palette and scroll writes, a 54-cycle interrupt, and rivals that move every other frame.">
 <link rel="canonical" href="https://fireflyk64.github.io/makingfsub/">
 <meta name="author" content="danielrh">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://fireflyk64.github.io/makingfsub/">
-<meta property="og:title" content="fsub: porting F-Zero to the Game Boy">
+<meta property="og:title" content="F-Sub: porting F-Zero to the Game Boy">
 <meta property="og:description" content="Per-scanline raster tricks that fake Mode 7 on a Game Boy.">
 <meta property="og:image" content="https://fireflyk64.github.io/makingfsub/img/hero.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -25,7 +25,7 @@
     --link: #2e6b1f;
     --reuse: #3f7d22;
     --reuse-bg: #eef4e6;
-    /* the diagram colours (the SVGs use these names) */
+    /* the diagram colors (the SVGs use these names) */
     --cds-text-primary: #1d1f22;
     --cds-text-secondary: #5b6370;
     --cds-chart-axis: #8a8f98;
@@ -115,6 +115,33 @@
   nav.toc li { margin: .2em 0; break-inside: avoid; }
   nav.toc summary { cursor: pointer; font-weight: 600; }
   footer { border-top: 1px solid var(--rule); margin-top: 64px; padding-top: 16px; color: var(--muted); font-size: 14px; }
+  .map-key {
+    list-style: none;
+    padding: 0;
+  }
+
+  .map-key li {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    margin: 0.4em 0;
+  }
+
+  .map-key .number {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 1.6em;
+    height: 1.6em;
+    border: 1px solid #777;
+    border-radius: 4px;
+    font-weight: 700;
+    color: #111;
+  }
+
+  .map-key .value-0 { background: #1b2a41; color: #fff; }
+  .map-key .value-1 { background: #8d99ae; }
+  .map-key .value-2 { background: #2ec4b6; }
+  .map-key .value-3 { background: #ff9f1c; }
 </style>
 </head>
 <body>
@@ -131,11 +158,7 @@ EDIT: HOW TO USE THIS FILE
   captures from the ROM, not mock-ups: most from the October 9 build (9ca59dc), the corner figure
   from f01cb09, after the tracks were redrawn as straights and corners.
 
-EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
-- Turn each bullet list into two to four short paragraphs. Keep the numbers: they are the proof.
 - Give every section one "I" moment: what you expected, what actually happened, what you tried first.
-- Open sections with a scene (a frame that looked wrong, a number that surprised you), then the trick,
-  then the "To reuse" box. Keep those boxes short and imperative; they are what people screenshot.
 - Show a mistake or two. The dropped frames at 94-96% load and the link-cable bug are gifts.
 - Decide what you want to say about how it was made. The git log shows the racer went from proof of
   concept to four tracks, a menu and link play in a single day (23 commits, 13:42 to 23:49 on
@@ -151,34 +174,34 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
        (c) the question "can a 1989 handheld fake Mode 7?". Pick one and tell it in three or four
        sentences. Also explain the name in your own words. -->
   <p class="kicker">Game Boy · assembly · raster tricks</p>
-  <h1>fsub: porting F-Zero to the Game Boy</h1>
-  <p class="dek">fsub is an F-Zero-style racer for the original Game Boy that draws a bending perspective road, a moving city and seven rivals by rewriting three hardware registers on every scanline over a picture that never changes.</p>
+  <h1>F-Sub: an F-Zero Hover-Racer on the Game Boy</h1>
+  <p class="dek">F-Sub is an F-Zero-style racer for the original Game Boy. The race shows a perspective road that bends with the track, and a skyline in the distance, by rewriting hardware registers on every scanline. The Game Boy has just enough memory, CPU time and free sprites for 7 computer-controlled rivals, or a friend over the link cable plus 4 rivals.</p>
   <p class="byline">By <a class="author" rel="author" href="https://graphics.stanford.edu/~danielh">danielrh</a> · <time datetime="2026-10-19">October 2026</time></p>
   <p class="links"><a href="https://fireflyk64.github.io/fsub/">Play it in your browser</a><a href="https://github.com/fireflyk64/fsub">Source on GitHub</a></p>
   <a class="related" href="https://fireflyk64.github.io/wcmulti/">
     <img src="img/wcmulti-thumb.webp" width="128" height="80" alt="">
     <span>
-      <span class="related-kicker">Related: the making of Wing Commander Multiplayer</span>
+      <span class="related-kicker">Related: Wing Commander Multiplayer</span>
       <span class="related-title">An 11 year journey to play DOS Wing Commander together</span>
-      <span class="related-dek">From memory dumps in 2015 to a browser and a room code in 2026.</span>
+      <span class="related-dek">From memory dumps in 2015 to multiplayer in a browser.</span>
     </span>
   </a>
 </header>
 
 <figure class="wide">
   <img src="img/hero.png" alt="The starting grid with seven rivals, and a hard left bend with a dirt patch" width="1304" height="576">
-  <figcaption>The starting grid, and a hard left-hander with a dirt patch. Both are captures from the ROM (October 9 build).</figcaption>
+  <figcaption>The starting grid, and a hard left-hander with a dirt patch. (Captured from the October 9 build of the ROM.)</figcaption>
 </figure>
 
 <nav class="toc" aria-label="Contents">
   <details open>
     <summary>Contents</summary>
     <ol>
-      <li><a href="#what">What fsub is</a></li>
-      <li><a href="#picture">One picture that never moves</a></li>
+      <li><a href="#what">What F-Sub is</a></li>
+      <li><a href="#picture">A static picture that appears to rush by</a></li>
       <li><a href="#palettes">Speed from palettes (BGP)</a></li>
       <li><a href="#scroll">Bends from scroll (SCX)</a></li>
-      <li><a href="#sky">The skyline turns on the same layer</a></li>
+      <li><a href="#sky">The skyline</a></li>
       <li><a href="#frame">One frame, scanline by scanline</a></li>
       <li><a href="#handler">The interrupt handler</a></li>
       <li><a href="#window">The status bar is a window</a></li>
@@ -190,74 +213,128 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
       <li><a href="#link">A link cable with no interrupts</a></li>
       <li><a href="#toolchain">Python writes the tables, bots check the budget</a></li>
       <li><a href="#gallery">Screenshot gallery</a></li>
-      <li><a href="#code">Code map</a></li>
     </ol>
   </details>
 </nav>
 
 <section id="what">
-<h2>What fsub is</h2>
-<!-- EDIT: Why do you care? Did you play F-Zero as a kid, or own a Game Boy? If you have run the ROM on
-     real hardware (a flash cart), a phone photo of it here beats any screenshot. The "one-sentence
-     version" bullet below would make a good pull quote. -->
-<ul>
-  <li>F-Zero (SNES, 1990) was the showcase for Mode 7: a background layer the console itself rotates and scales, re-aimed on every scanline to fake a ground plane.</li>
-  <li>The Game Boy (1989) has none of that. One background layer of 8x8 tiles, four shades of grey, 160x144 pixels, a 4.19 MHz 8-bit CPU with no multiply, and no way to draw a pixel directly.</li>
-  <li>fsub is "F-Zero, sub-SNES": a from-scratch racer for that older machine, not a port of any SNES code. Bending road, a city streaming past, seven rivals in their own liveries, four tracks, a tunnel short cut, two-player link cable.</li>
-  <li>It runs at 60 frames a second with no dropped frames. The repo's own playtest bots measured peak CPU load of 74-81% across all four tracks (8 full races, 0 drops).</li>
-  <li>The whole game is a single assembly file of about 4,900 lines (<code>fzero.asm</code>, RGBDS) plus Python scripts that generate every tile and lookup table. The ROM is 256 KB.</li>
-  <li>The one-sentence version of the trick: nothing in video memory moves; three registers (BGP, SCX, OBP1) are rewritten during every horizontal blank, and all the motion comes from that.</li>
-  <li>Each section below is one technique, with a picture of what it does and a short "to reuse" recipe.</li>
-</ul>
+<h2>What F-Sub is</h2>
+
+<p>
+  I have played F-Zero since its debut on the Super Nintendo, but it always left two holes in my heart: it did not work on my Game Boy, and I could never race against real people. I would dream of plugging in a link cable to my Game Boy and challenging my friends. I recently learned the quirks of the Game Boy's Z80-like assembly language, and I was surprised by the uncommon power of the Game Boy's picture processing unit (PPU). Yet, a racing game seemed out of reach without the ability to scale or rotate the background.  Then one day I realized that an infinite road could be a single unchanging background image and that the game could change SCX, the register that sets the background's x-offset, by a different amount as each scanline was drawn, curving the road. F-Sub, my dream of an F-Zero-style racer for the original Game Boy, was no longer impossible.
+</p>
+
+
+<p>
+When F-Zero was released in 1990 for the SNES, it was lauded for its extensive use of the <a href ="https://en.wikipedia.org/wiki/F-Zero_(video_game)#Development">Mode 7</a> graphics mode. F-Zero re-aimed the ground on every scanline to make an active ground plane for the player to hover over. The SNES had a 16-bit processor running at up to 3.58 MHz that took at least 2 cycles per instruction, plus a hardware multiplier that took 8 cycles.</p>
+
+<p>In contrast, the 8-bit Game Boy processor ran at 4.19 MHz, but took at least 4 clock cycles per instruction and had no multiply instruction. Because it worked on 8-bit words, it was substantially slower than the SNES. The Game Boy had a single scrolling background layer comprised of 8x8 tiles (plus the window, which comes up later), up to 40 sprites of 8x8 or 8x16 pixels, and no way to draw individual pixels.
+</p>
+<p>
+Despite these limitations, F-Sub (one less than F-0) is a homebrew racer written from scratch for the previous generation: the Game Boy. It manages the effects of bending roads, a city tearing past left and right, and other hovercraft with their own paint jobs, edging each other out for first place. On each of the four built-in race tracks, F-Sub runs at 60 fps with no dropped frames in eight test races, with peak CPU use of 78–83%.  In two-player link mode, each console drives two rivals of its own and shows the other console's two, so the field is you, your friend and four rivals. The whole game is fewer than 5,000 lines of assembly (4,974 today, plus the hUGEDriver music player) and fits on a 256 KB homebrew ROM.
+</p>
+<p>
+The main idea is that almost nothing in video memory changes: only the status bar, and one tile when the player crashes out. Instead, BGP, SCX and OBP1 are rewritten during the horizontal blank after each scanline is drawn on the LCD. The illusion of motion comes from how these registers change both the shape of the background image and the color of each pixel, so that the textures can move vertically at the same time as the overall shape is bending and arcing left to right.
+</p>
+<p>
+The individual techniques are discussed with more nuance below.
+</p>
 </section>
 
 <section id="picture">
-<h2>One picture that never moves</h2>
+<h2>A static picture that appears to rush by</h2>
 <!-- EDIT: This is the "aha" section. Tell the moment the first proof of concept (commit 4bdfaa4, the
      first fsub commit) showed the city moving while nothing in video memory changed. Analogy idea:
      a theatre set that never moves, where only the lighting changes. -->
 <figure class="wide">
-  <img src="img/tilemap.png" alt="The background tilemap as colour numbers, beside the screen it produces" width="1288" height="528" loading="lazy" decoding="async">
-  <figcaption>Left: everything in video memory, shown as colour numbers. Right: what the screen makes of it.</figcaption>
+  <img src="img/tilemap.png" alt="The background tilemap as color numbers, beside the screen it produces" width="1288" height="528" loading="lazy" decoding="async">
+  <figcaption>Left: everything in video memory, shown as color numbers. Right: what the screen makes of it.</figcaption>
 </figure>
-<ul>
-  <li>Video memory holds a single 256x144 picture (32x18 tiles): a straight road running to a vanishing point with city blocks either side. <code>tools/gen_gfx.py</code> draws it at build time; the ROM copies it in once.</li>
-  <li>Checked against captured memory: across 260 frames spanning a full three-lap race, 0 bytes of tile data and 0 bytes of the background tilemap changed. Only the 20 status-bar cells of the window's map are ever rewritten (and one spare sprite tile during a wreck).</li>
-  <li>The picture stores colour numbers, not shades. 0 is street or void, 1 is road, 2 is building set A (plus bumpers and centre dashes), 3 is building set B. What shade each number shows is decided separately on every scanline.</li>
-  <li>Perspective is baked into the art. Ground row d (1 at the horizon, 104 at the bottom) shows the world at depth 16640 / d, sampled at 104 / d world units per pixel. Far rows are supersampled 7x and majority-voted so thin streets survive.</li>
-  <li>The map is 256 pixels wide and the screen shows 160. The spare 96 are what the road slides into when it bends or the camera moves sideways.</li>
-  <li>Tiles that can never scroll into view are simply not stored: the generator works out the furthest each row can slide and leaves the rest blank (the ragged dark corners in the picture).</li>
-  <li>Division of labour for everything that follows: BGP (background palette) makes forward motion, SCX (horizontal scroll) makes bends and steering, OBP1 (a sprite palette) paints the rivals.</li>
-  <li class="reuse"><strong>To reuse:</strong> if the camera keeps a fixed pose over a ground plane, draw the plane once in perspective and animate it with per-line register writes. It needs a console that lets you change palette and scroll between scanlines, which most tile-based ones do.</li>
+<p>In F-Sub, the background holds a single 256x144 picture (32x18 tiles). To display the illusion of driving, the only thing needed was a straight road running to a vanishing point with city blocks on either side, which seem to stream toward the camera, faster near the bottom of the screen. A simple Python script rendered the long road at build time to be saved out in the ROM.  During the whole race, only the 20 status-bar cells of the window&apos;s map are ever rewritten (and one spare sprite tile during a game-ending wreck).</p>
+<p>Instead of having the background picture store 4 shades of gray, the background stores the kind of object being painted at that part of the screen.
+This gives a textured paint-by-the-numbers design for the game to render. The numbers:</p>
+
+<ul class="map-key">
+  <li><span class="number value-0">0</span> is street or void</li>
+  <li><span class="number value-1">1</span> is road</li>
+  <li><span class="number value-2">2</span> is building set A (plus bumpers and roadway lane dashes)</li>
+  <li><span class="number value-3">3</span> is building set B</li>
 </ul>
+
+<p>During the drawing of each scanline, the numbers are painted to a particular shade of gray for that scanline. This lets depth and motion factor into the color being drawn.
+  The perspective divide is pre-computed into the art itself: background row d (1 at the horizon, 104 at the bottom) shows the world at depth 16640 / d, sampled at 104 / d world units per pixel. Far rows are supersampled 7x and majority-voted so thin streets are visible.</p>
+<p>Since the background, 256 pixels wide, is wider than the display area of just 160, there is room to allow leeway for the image to bend or contort. This is used to show the upcoming curves in the road ahead or the camera and hovercar sliding sideways. Note that the ragged dark corners in the picture are simply inaccessible for even the sharpest curve in any race track.</p>
+<p>Several of the registers are updated actively as the image is being scanned out. The BGP (background palette) synthesizes a forward motion effect. SCX (horizontal scroll) pushes the background left and right to draw bends in the road and allow the player to slide and steer. OBP1 (one of the two sprite palettes) paints the rival hovercars with the correct color for that car.</p>
+<p>This technique may be applicable to other consoles or legacy systems if the camera keeps a fixed pose over a ground plane.</p>
+<ul>
+  <li class="reuse"><strong>To reuse:</strong>  The plane may be drawn a single time in perspective and animated with per-line register writes. Since most tile-based consoles allow palette and scroll changes between scanlines, the technique may be applicable to consoles such as the Mega Drive, Master System, Game Gear and TurboGrafx-16. (The SNES and Game Boy Advance don't need it: they can rotate and scale a background in hardware.) Unfortunately, while the NES can scroll per line, it makes frequent palette changes difficult. Specifically the NES would require disabling and restoring the PPU state, and the horizontal blanking time is too short for the obvious approach.</li>
+</ul>
+
+<h3>How a port to the NES might look</h3>
+<p>For the NES, a promising approach could be to store recolored copies of the road tile data in CHR ROM and switch copies every scanline. That way, instead of changing the palette, it could simply be a mapper write. A 512-pixel-wide road, 104 scanlines tall, requires 208 KiB of CHR ROM in total: 13 KiB for each of the 16 combinations of the two animated building colors.</p>
+<pre>
+  phase[y]  = cityPalette[(distance + depth[y]) & 255]
+  bank[y]   = 16 * (y >> 3) + phase[y]
+  scroll[y] = 128 + bend[y] + cameraShear[y]
+</pre>
+<p>Then for each horizontal row:</p>
+<pre>
+.macro RASTER_LINE ncycles
+ lda (scroll_ptr),y     ; Load the horizontal scroll value set for row Y.
+ sta PPUSCROLL          ; Write it to $2005 to set horizontal scroll.
+ bit PPUSTATUS          ; Make the next write to $2005 actually set horizontal scroll again.
+ lda (bank_ptr),y       ; Load the bank number for the row's recolored background.
+ sta MMC3_DATA          ; Write it to $8001, selecting the bank supplying the background graphics.
+ iny                    ; Advance to the next Y row in the table
+ .if ncycles = 113      ; Pad the block with nop, so the macro burns the correct amount of time.
+    bit delay_dummy    ;
+    .repeat 43
+      nop            ; 86; padding total 89
+    .endrepeat
+ .elseif ncycles = 114
+    .repeat 45
+      nop             ; 90
+    .endrepeat
+ .endif
+.endmacro
+</pre>
 </section>
 
 <section id="palettes">
 <h2>Speed from palettes (BGP)</h2>
 <!-- EDIT: An analogy helps here: paint-by-numbers where the colour key changes on every row. The
-     space-time picture is the money shot; walk the reader through it slowly ("each column is a frame,
+     space-time picture is the key concept; walk the reader through it slowly ("each column is a frame,
      each row a scanline..."). If the band table slows your story down, fold it into a <details>
      element so the curious can open it. -->
 <figure class="wide">
-  <img src="img/bgp-equation.png" alt="Colour numbers times a per-line palette gives the picture" width="1276" height="492" loading="lazy" decoding="async">
-  <figcaption>Colour numbers that never change, times one palette byte per scanline, gives the picture.</figcaption>
+  <img src="img/bgp-equation.png" alt="Color numbers times a per-line palette gives the picture" width="1276" height="492" loading="lazy" decoding="async">
+  <figcaption>The background color illustrates the type of city object at that point, and the changing palette every scanline presents the illusion of advancing motion.</figcaption>
 </figure>
-<ul>
-  <li>BGP is one byte that says which of the four shades each colour number shows. Games normally set it once. fsub writes a different value on every scanline.</li>
-  <li>The road (colour 1) keeps one shade all the way down. The two building colours (2 and 3) get a shade that depends on the line, so the same orange stripe in the tilemap is roof on one line, wall on the next and street after that.</li>
-  <li>Each ground line has a fixed world depth, 16640 / d. The line's palette is one table read: <code>table[(distance driven + depth of this line) &amp; 255]</code>.</li>
-  <li>The table is a 256-unit strip of city along the direction of travel: 5 units of wall, 19 to 35 of roof, 8 of street, and a 24-unit cross avenue. Set B is staggered against set A so neighbouring blocks do not line up.</li>
-  <li>Driving forward only changes "distance driven". Every line's index advances by the same amount, but near lines are a unit or two apart in depth and far lines are hundreds apart, so buildings crawl at the horizon and rush past at the bottom. Perspective motion falls out of an addition.</li>
-  <li>Tables are page-aligned in ROM, so the index is just the low byte of the address: <code>ld a,c / add depth / ld l,a / ld a,[hl]</code>. No multiply, no 16-bit maths.</li>
-  <li>The fill is unrolled by the Python generator into 96 copies of that snippet with each line's depth as a literal constant: about 9 machine cycles a line.</li>
-</ul>
+
+<p>For the Game Boy, the entire palette is contained in the single 8-bit BGP register (2 bits for each of the four color numbers), which carries which of the four shades of gray each color maps to. Many games set it once per level, but F-Sub has a chosen value on every scanline. Roads (value 1) have the same shade on the entire map, but the two building colors (2 for set A and 3 for set B) depend on which horizontal row is being drawn. For example the orange stripe could be a roof on one line, a wall on the next, and a street after that. Each ground row d, counting down from the horizon (1 at the top), sits at a depth of 16640 / d from the camera.</p>
+<p>To look up the shades for 2 and 3 on a row, the game reads a predefined table: <code>table[(distance driven + depth of this line) &amp; 255]</code>. The table is a 256-unit strip of city along the direction of travel: 5 units of wall, 19 to 35 of roof, 8 of street, and a 24-unit cross avenue. Set B is staggered against set A so neighboring blocks do not line up. Driving forward at a certain speed only changes the "distance driven" variable. Every line's index advances by the same amount, but near lines are a unit or two apart in depth and far lines are hundreds apart, so buildings move slowly at the horizon and rush past at the bottom. This gives the illusion of perspective motion. Tables are page-aligned in ROM, so the index is just the low byte of the address. Each table lookup happens as follows</p>
+<pre>
+; once per distance band: H = that band's palette table (one 256-byte page)
+ldh a, [hBandBase + band]
+ld h, a
+; then for each line in the band (DEPTH_Y is a constant written into the code)
+ld a, c        ; Load in the distance traveled on the course.
+add DEPTH_Y    ; Add in the depth of the line.
+ld l, a        ; The lower byte of the memory address to read.
+ld a, [hl]     ; Load this line's palette value from the table.
+ld [de], a     ; Store it in the line buffer...
+inc e          ; ...and move on to the next line.
+</pre>
+<p>The Python generator writes the per-line part out 96 times, once for each ground line, with that line's depth as the DEPTH_Y constant.</p>
+
 <figure class="wide">
-  <img src="img/bgp-flow.png" alt="The shade of colour 2 on each ground line across the first 80 frames of a race" width="1090" height="494" loading="lazy" decoding="async">
-  <figcaption>The first 80 frames of a race, one column per frame: every stripe is a building on its way to the camera.</figcaption>
+  <img src="img/bgp-flow.png" alt="The shade of color 2 on each ground line across the first 80 frames of a race" width="1090" height="494" loading="lazy" decoding="async">
+  <figcaption>The first 80 frames of a race, one column per frame: every stripe is a building as it advances toward the camera.</figcaption>
 </figure>
-<ul>
-  <li>Reading the space-time picture: each column is one frame, each row one scanline. Stripes are flat while the car waits on the grid, then tilt as it accelerates. Every stripe is a building travelling from the horizon to the camera. No tile was written to draw any of it.</li>
-</ul>
+
+<p>In the above space-time figure: each column is one frame, each row one scanline. Stripes are flat while the player waits for the race to begin, then they tilt as the car accelerates. Every stripe is a single building moving slowly, and then faster, from the horizon to the racer.</p>
+
+
 <table>
   <thead><tr><th>Band</th><th>Screen lines</th><th>Depth (units)</th><th>One table entry</th><th>Blur window</th></tr></thead>
   <tbody>
@@ -270,78 +347,72 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
     <tr><td>Far2</td><td>40-42</td><td>5547-16640</td><td>static</td><td>haze</td></tr>
   </tbody>
 </table>
+
+<p>For very far parts of the city, each line covers so many units of distance that reading a sharp table would shimmer. This was analogous to the problem in 3D graphics where high resolution textures that covered a small number of pixels would shimmer and flicker as details somewhere within the texture were sampled rather than overall colors. To address this in 3D graphics, a technique called <a href="https://en.wikipedia.org/wiki/Mipmap">mipmapping</A> was invented. Effectively the texture itself was prescaled by each power of two, and the texture size with the best resolution for the size of the triangle was selected to render the triangle. The cost for using this was only 33% more texture memory due to the fact that both width and height were scaled by half for each texture, and it also resulted in much higher cache hit rates for rendering those distant triangles as nearby texels on the correctly-sized texture would be chosen for adjacent pixels on the smaller triangles. F-Sub employs a similar approach: the tables' bands use mipmapping for farther lines. Effectively the bands farther out read a pre-blurred copy of the strip. </p>
+<!-- the furthest count distance in steps of 16. -->
+<p>Markings painted across the entire road (the finish line, dash plates and jump plates) use the same idea on color 1. Fading out and back in is nearly free too: darker copies of every table sit right after it.</p>
+
+<!--<li>Scenery is nothing but a choice of tables. City, underpass, water and wheat fields all use the same tilemap; each band looks up the scenery of the stretch of track it is over, so a change of scenery arrives from the horizon.</li>-->
+
 <ul>
-  <li>The bands are mip-mapping for palettes. Far lines skip so many units per line that a sharp table would shimmer, so each band further out reads a pre-blurred copy of the same strip, and the furthest count distance in steps of 16.</li>
-  <li>Things painted across the road (finish line, dash plates, jump plates) are the same idea applied to colour 1: on the lines a stretch of track currently covers, two bits of that line's BGP are overwritten. No tiles, no sprites.</li>
-  <li>Fades cost nothing per frame. Every table is stored with two darker copies straight after it, and the fade level is added to the table's page number.</li>
-  <li>Scenery is nothing but a choice of tables. City, underpass, water and wheat fields all use the same tilemap; each band looks up the scenery of the stretch of track it is over, so a change of scenery arrives from the horizon.</li>
-  <li class="reuse"><strong>To reuse:</strong> decide which colour numbers animate, write a 1-D strip of what the world looks like along the travel axis, precompute each line's depth, and index with position + depth. The cost is one table read per scanline.</li>
+  <li class="reuse"><strong>To reuse:</strong> decide which color numbers animate, write a 1-D strip of what the world looks like along the travel axis, precompute each line's depth, and index with position + depth.</li>
 </ul>
 </section>
 
 <section id="scroll">
 <h2>Bends from scroll (SCX)</h2>
 <!-- EDIT: Venetian blinds are a good picture for per-line scroll: every slat slides on its own.
-     The corner kink has a real story behind it (commit f01cb09): "Playtesters remembered F-Zero: a
-     corner shows up as a bend on the horizon, arrives, you brake a little and turn, and it is gone
-     again. Long sweeping bends did not feel like that." Who were the playtesters, and what did they
-     say? That anecdote is better than any of these bullets. If you keep only one animation in the
-     whole post, keep the scan animation. -->
+     The corner bend has a real story behind it (commit f01cb09): "" 
+     If you keep only one animation in the whole post, keep the scan animation. -->
 <figure class="wide">
   <img src="img/scan.gif" alt="The frame being drawn top to bottom, with the slice of the tilemap each line reads" width="852" height="332" loading="lazy" decoding="async">
   <figcaption>One real frame being drawn. Left: the tilemap, lit where the screen has read it, the current line in orange. Right: the picture so far.</figcaption>
 </figure>
-<ul>
-  <li>SCX is the background's horizontal scroll. Like the palette, it is normally set once a frame; here every scanline gets its own value.</li>
-  <li>The animation shows one real frame being drawn. Left: the tilemap, lit where the screen has read from it, with the current line's 160-pixel slice in orange. Right: the picture so far.</li>
-  <li>The lit region is the "window" the screen cuts out of the map. On a straight it is a rectangle. In a bend it is a curved blade: each line starts reading a different number of pixels across.</li>
-</ul>
+<p>SCX is the background's horizontal scroll register. Like the palette, it is usually set once per frame; in F-Sub, every scanline gets its own value.
+The animation shows a frame as it is drawn. The left figure illustrates the tilemap, and the current line's 160-pixel slice in orange. The right figure shows the picture as it renders to the LCD.</p>
 <figure>
   <img src="img/scan-steps.png" alt="Four moments of the same frame: sky, upper ground, lower ground, status bar" width="852" height="1394" loading="lazy" decoding="async">
   <figcaption>Four moments of the same frame.</figcaption>
 </figure>
-<ul>
-  <li>Stills from the same frame (race frame 1620, a hard left). SCX is 24 for the whole sky, jumps to 98 on the first ground line, and eases back through 81 (line 63) and 63 (line 103) to 59 at the bottom. The last eight lines are not background at all (see the status bar section).</li>
-</ul>
+<p>Stills from the same race. SCX is 24 for the sky, jumps to 98 on the first ground line, and curves back to 59 at the bottom.</p>
 <figure>
   <img src="img/scx-states.png" alt="Tilemap, scroll offset and screen for a straight, a hard bend, pure steering, and both at once" width="1042" height="1456" loading="lazy" decoding="async">
   <figcaption>Where each line reads from, for a straight, the hardest bend, pure steering, and both at once.</figcaption>
 </figure>
-<ul>
-  <li>The scroll is deliberately not linear. Two tables are added per line, and they have opposite shapes.</li>
-  <li>Bend: zero at the bottom of the screen, largest at the horizon, falling off with the square of the distance up the screen. The near road stays under the car while the far end swings away, up to 80 pixels.</li>
-</ul>
+<p>The scroll is nonlinear. This is accomplished with a pair of tables. The bend table is zero at the bottom of the screen and grows with the square of the distance up the screen, so it is largest at the horizon. The near road stays under the car while the far end curves away.</p>
+
 <math display="block"><mrow><mi>bend</mi><mo stretchy="false">(</mo><mi mathvariant="normal" class="v">d</mi><mo stretchy="false">)</mo><mo>=</mo><mn>80</mn><mo>·</mo><mfrac><mi>level</mi><mn>32</mn></mfrac><mo>·</mo><msup><mrow><mo>(</mo><mfrac><mrow><mn>104</mn><mo>−</mo><mi mathvariant="normal" class="v">d</mi></mrow><mn>103</mn></mfrac><mo>)</mo></mrow><mn>2</mn></msup></mrow></math>
 <p class="math-note">d = 1 at the horizon, 104 at the bottom</p>
-<ul>
-  <li>Steering: the opposite. Moving the camera sideways slides near lines a lot and the horizon not at all, a straight slope. That is a shear, and it is all a sideways camera move is in this projection.</li>
-</ul>
+
+<p>For steering, the opposite case is true. Moving the camera sideways slides near lines a lot and the horizon not at all. That is a shear, and it is all a sideways camera move needs.</p>
+
 <math display="block"><mrow><mi>shear</mi><mo stretchy="false">(</mo><mi mathvariant="normal" class="v">d</mi><mo stretchy="false">)</mo><mo>=</mo><mi mathvariant="normal" class="v">s</mi><mo>·</mo><mfrac><mi mathvariant="normal" class="v">d</mi><mn>104</mn></mfrac></mrow></math>
 <p class="math-note">s = −20 … 20 pixels</p>
+<p><!--Both are precomputed: 65 bend tables and 45 shear tables of 104 bytes each (6,760 + 4,680 bytes). The camera uses the middle 41 shear tables; the outer four exist for the other player's car in link mode. Per frame the game picks a shear row and a bend row and adds them line by line, in one fully unrolled run of 96 lines.-->
+On a straight with no corner in sight, if neither the bend nor the camera has changed since a buffer was last filled, the fill is skipped. Each buffer keeps a two-byte note of what it was built for. The camera follows the car halfway, and the car's sprite moves the rest of the way by changing its x position in OAM. The sprites need to stay on the visual road, despite any curve. So rivals and road objects compute their screen x as <code>128 + lane offset on that line &minus; SCX of that line</code>.</p>
 <ul>
-  <li>Both are precomputed: 65 bend tables and 45 shear tables of 104 bytes each (6,760 + 4,680 bytes). The camera uses the middle 41 shear tables; the outer four exist for the other player's car in link mode. Per frame the game picks a shear row and a bend row and adds them line by line, in one fully unrolled run of 96 lines.</li>
-  <li>On a straight with no corner in sight, if neither the bend nor the camera has changed since a buffer was last filled, the fill is skipped. Each buffer keeps a two-byte note of what it was built for.</li>
-  <li>The squared falloff is not exact perspective for a circular arc. It reads as a curve, costs one table, and keeps the bottom line still so the car never appears to slide.</li>
-  <li>Past 48 pixels of bend the far rows wrap round the 256-pixel map. It shows only as one more street in the distant city (second row of the picture: the lit region leaves the left edge and comes back on the right).</li>
-  <li>The camera follows the car half way and the sprite shows the rest, which keeps the picture inside the tile budget.</li>
-  <li>Sprites have to agree with the bent road, so every rival and road object works out its screen x as <code>128 + lane offset on its line - SCX of that line</code>, read from the buffer just built.</li>
   <li class="reuse"><strong>To reuse:</strong> split a camera move into per-line offsets and precompute each as a small table (levels x lines). Curvature wants far lines to move most; lateral camera motion wants near lines to move most. Add them and write the sum to the scroll register each line.</li>
 </ul>
+
 <figure>
   <img src="img/corner-kink.png" alt="Three frames approaching a left-hand corner: above a dashed line the road already bends, and the line moves down the screen" width="1042" height="1090" loading="lazy" decoding="async">
-  <figcaption>A left-hand corner on its way. Above the dashed line the road is drawn with the corner's bend; the line comes down the screen as the car closes in. (Current build, f01cb09.)</figcaption>
+  <figcaption>A left-hand corner on its way. Above the dashed line the road is drawn with the corner's bend; the line comes down the screen as the car closes in. (Captured from build f01cb09.)</figcaption>
 </figure>
-<ul>
-  <li>Corners show up before they arrive. Looking up to eight chunks ahead, the game finds the first chunk whose bend differs from the one the car is in, and works out which screen line that boundary falls on.</li>
-  <li>Lines beyond the boundary are drawn with the corner's bend and the rest with the bend the car is in. The far part is then shifted sideways by the difference between the two on the boundary line, so the pieces join. The result is a kink far up the road, a couple of seconds early, that comes down the screen as the car closes on it.</li>
-  <li>The car feels only the bend of the chunk it is in, with no easing. All the warning is in the picture.</li>
-  <li>It costs no loop logic. The 96-line fill is one unrolled run that ends in <code>ret</code>, 6 bytes a line. To fill just the last n lines, the code pushes the address to come back to, works out the entry point n lines from the end, pushes that, and executes <code>ret</code> to jump in. The shift that joins the far part on is a second unrolled run, 3 bytes a line, entered the same way.</li>
+
+<p>When playing the version with gradual curves, my son remembered the SNES F-Zero and said a corner should show up as a bend on the horizon, arrive so you brake a little and turn, and then be gone again. Long sweeping bends didn't give that feeling. So now corners show up before they arrive. Looking up to eight chunks ahead, the game finds the first chunk whose bend differs from the one the car is in, and works out which screen line that boundary falls on.</p>
+<p>Lines beyond the boundary are drawn with the corner's bend and the rest with the bend the car is in. The far part is then shifted sideways by the difference between the two on the boundary line, so the pieces join.
+
+<!-- The result is a corner far up the road, a couple of seconds early, that comes down the screen as the car closes on it. -->
+  
+The physics only pushes the car according to the bend of the chunk it is in, but the player gets a warning as the corner comes down the screen.</p>
+<p>It doesn't need any loop logic either. The 96-line fill is one long unrolled run of code that ends in <code>ret</code>. To fill only the last n lines, the game pushes the address to come back to, computes where line n from the end starts, pushes that afterwards, and executes <code>ret</code> to jump in.</p>
+  <ul>
   <li class="reuse"><strong>To reuse:</strong> to draw two curves on one road, render each from its own table and offset the far one so the seam is continuous. Fully unrolled loops can serve any length if you can jump into the middle of them.</li>
 </ul>
 </section>
 
 <section id="sky">
-<h2>The skyline turns on the same layer</h2>
+<h2>The skyline</h2>
 <!-- EDIT: You asked exactly this while drafting ("is that a different background layer?"), and readers
      will too. Open the section with the question in your own words, then answer it.
      Fact check before publishing: a comment in tools/gen_gfx.py (STAR_ROWS) says the stars scroll at
@@ -349,17 +420,17 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
      that comment in the code or leave it out of the post; the bullets below describe the code. -->
 <figure>
   <img src="img/sky-heading.png" alt="Three frames through a bend: the sky's slice of the map slides and wraps while the ground's stays put" width="852" height="1020" loading="lazy" decoding="async">
-  <figcaption>Three frames through a bend. The cyan box is the sky's slice of the map; it slides and wraps while the ground's barely moves.</figcaption>
+  <figcaption>Three frames during a gradual curve. The cyan box is the sky's slice of the map; it slides and wraps.</figcaption>
 </figure>
-<ul>
-  <li>It is not a second layer. The Game Boy has one background, and the skyline is simply the top 40 lines of the same tilemap the road is in (tile rows 0-4; the ground is rows 5-16).</li>
-  <li>What makes it look separate is that those 40 lines get a different scroll from the 96 below. The sky's SCX is the high byte of a 16-bit "heading"; the ground's SCX comes from the bend and shear tables.</li>
-  <li>Each frame the heading gains (bend - 32) x speed, scaled so that a 90-degree corner swings the skyline a quarter of its width round. So the skyline swings while you are in a corner, swings faster the faster you go, stops on a straight and stays where it stopped. It behaves like a compass, not like the road.</li>
-  <li>The cyan box in the picture is the sky's slice of the map. Across the bend it slides from x = 58 to 29 to 243, wrapping off the left edge and back in on the right, while the ground's slice below barely moves.</li>
-  <li>The wrap is seamless because the skyline is built from stamps whose widths add up to exactly 256 pixels: a full panorama.</li>
-  <li>It is also the cheapest part of the frame. Lines 0-31 share one palette and one scroll, both loaded in VBlank, so no interrupt runs for them at all (next section).</li>
-  <li>Lines 32-39 still share the sky's scroll but get their own palette per line: that is the glow that brightens toward the horizon.</li>
-  <li>Each track loads its own skyline tiles into fixed "sky slots" and its own 40-line sky palette; the ground tiles never change between tracks.</li>
+<p>The Game Boy has a single background layer, so the skyline is simply the top 40 lines of the same tilemap the road is baked into.
+It only looks like a separate concept due to the discontinuity in the SCX scroll value for those top lines.</p>
+<p>The sky's scroll comes from a running "heading" value. Each frame the heading has <code>(bend - 32)·speed</code> added to it. It is scaled so that a 90-degree corner moves the skyline a quarter of its width.
+The skyline changes view while the hovercraft is turning and moves faster as the hovercraft accelerates. It's effectively a compass that helps players keep track of which way they are facing on the course. The cyan box in the picture is the sky's slice of the map. <!--Across the bend it slides from x = 58 to 29 to 243, wrapping off the left edge and back in on the right, while the ground's slice below barely moves.</li>-->
+<!--  <li>The wrap is seamless because the skyline is built from stamps whose widths add up to exactly 256 pixels: a full panorama.</li> -->
+<!--  <li>It is also the cheapest part of the frame. Lines 0-31 share one palette and one scroll, both loaded in VBlank, so no interrupt runs for them at all (next section).</li> -->
+<!--  <li>Lines 32-39 still share the sky's scroll but get their own palette per line: that is the glow that brightens toward the horizon.</li> -->
+Each track loads its own skyline tiles into fixed "sky slots" and its own 40-line sky palette; the ground tiles never change between tracks.</p>
+  <ul>
   <li class="reuse"><strong>To reuse:</strong> parallax does not need layers. Any band of scanlines can have its own scroll; give the far band a slow accumulated value and the near band the fast one.</li>
 </ul>
 </section>
@@ -372,19 +443,16 @@ EDIT: MAKING IT SOUND LIKE YOU (applies everywhere)
      A before and after clip of the stutter would be a great addition. -->
 <figure class="diagram">
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 622" role="img" aria-label="Interrupts run on 113 of the 154 lines in a frame; the top of the sky is free" font-size="13"><text x="24" y="30" font-size="15" font-weight="600" fill="var(--cds-text-primary)">Interrupts run on 113 of the 154 lines in a frame; the top of the sky is free</text><text x="24" y="50" font-size="11.5" fill="var(--cds-text-secondary)">One frame, top to bottom. Each blue tick is one run of the per-line handler.</text><g><rect x="104" y="84" width="84" height="96" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="104" y="180" width="84" height="24" fill="var(--cds-chart-reference-tint)" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="104" y="204" width="84" height="288" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="104" y="492" width="84" height="24" fill="var(--cds-chart-reference-tint)" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="104" y="516" width="84" height="30" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="146" y="136" text-anchor="middle" fill="var(--cds-text-primary)">sky</text><text x="146" y="196" text-anchor="middle" font-size="11.5" fill="var(--cds-text-primary)">horizon glow</text><text x="146" y="352" text-anchor="middle" fill="var(--cds-text-primary)">ground</text><text x="146" y="508" text-anchor="middle" font-size="11.5" fill="var(--cds-text-primary)">status bar</text><text x="146" y="535" text-anchor="middle" font-size="11.5" fill="var(--cds-text-primary)">VBlank</text></g><g font-size="11.5" text-anchor="end"><text x="94" y="93" fill="var(--cds-text-secondary)">line 0</text><text x="94" y="181" fill="var(--cds-text-secondary)">31</text><text x="94" y="213" fill="var(--cds-text-secondary)">40</text><text x="94" y="280" fill="var(--cds-text-secondary)">64</text><text x="94" y="496" fill="var(--cds-text-secondary)">136</text><text x="94" y="525" fill="var(--cds-text-secondary)">144</text><text x="94" y="548" fill="var(--cds-text-secondary)">153</text></g><g><line x1="196" x2="214" y1="178.5" y2="178.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="181.5" y2="181.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="184.5" y2="184.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="187.5" y2="187.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="190.5" y2="190.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="193.5" y2="193.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="196.5" y2="196.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="199.5" y2="199.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="202.5" y2="202.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="205.5" y2="205.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="208.5" y2="208.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="211.5" y2="211.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="214.5" y2="214.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="217.5" y2="217.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="220.5" y2="220.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="223.5" y2="223.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="226.5" y2="226.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="229.5" y2="229.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="232.5" y2="232.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="235.5" y2="235.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="238.5" y2="238.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="241.5" y2="241.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="244.5" y2="244.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="247.5" y2="247.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="250.5" y2="250.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="253.5" y2="253.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="256.5" y2="256.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="259.5" y2="259.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="262.5" y2="262.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="265.5" y2="265.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="268.5" y2="268.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="271.5" y2="271.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="274.5" y2="274.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="277.5" y2="277.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="280.5" y2="280.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="283.5" y2="283.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="286.5" y2="286.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="289.5" y2="289.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="292.5" y2="292.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="295.5" y2="295.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="298.5" y2="298.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="301.5" y2="301.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="304.5" y2="304.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="307.5" y2="307.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="310.5" y2="310.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="313.5" y2="313.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="316.5" y2="316.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="319.5" y2="319.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="322.5" y2="322.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="325.5" y2="325.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="328.5" y2="328.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="331.5" y2="331.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="334.5" y2="334.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="337.5" y2="337.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="340.5" y2="340.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="343.5" y2="343.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="346.5" y2="346.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="349.5" y2="349.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="352.5" y2="352.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="355.5" y2="355.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="358.5" y2="358.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="361.5" y2="361.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="364.5" y2="364.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="367.5" y2="367.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="370.5" y2="370.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="373.5" y2="373.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="376.5" y2="376.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="379.5" y2="379.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="382.5" y2="382.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="385.5" y2="385.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="388.5" y2="388.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="391.5" y2="391.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="394.5" y2="394.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="397.5" y2="397.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="400.5" y2="400.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="403.5" y2="403.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="406.5" y2="406.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="409.5" y2="409.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="412.5" y2="412.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="415.5" y2="415.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="418.5" y2="418.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="421.5" y2="421.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="424.5" y2="424.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="427.5" y2="427.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="430.5" y2="430.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="433.5" y2="433.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="436.5" y2="436.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="439.5" y2="439.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="442.5" y2="442.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="445.5" y2="445.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="448.5" y2="448.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="451.5" y2="451.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="454.5" y2="454.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="457.5" y2="457.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="460.5" y2="460.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="463.5" y2="463.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="466.5" y2="466.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="469.5" y2="469.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="472.5" y2="472.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="475.5" y2="475.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="478.5" y2="478.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="481.5" y2="481.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="484.5" y2="484.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="487.5" y2="487.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="490.5" y2="490.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="493.5" y2="493.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="496.5" y2="496.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="499.5" y2="499.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="502.5" y2="502.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="505.5" y2="505.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="508.5" y2="508.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="511.5" y2="511.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><line x1="196" x2="214" y1="514.5" y2="514.5" stroke="var(--cds-chart-categorical-1)" stroke-width="1.25"/><rect x="196" y="516" width="18" height="5" fill="var(--cds-text-primary)"/><text x="205" y="74" text-anchor="middle" font-size="11.5" fill="var(--cds-text-secondary)">IRQ</text><text x="146" y="74" text-anchor="middle" font-size="11.5" fill="var(--cds-text-secondary)">screen</text></g><g><line x1="188" y1="132" x2="262" y2="132" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><line x1="218" y1="178.5" x2="262" y2="178.5" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><line x1="218" y1="277.5" x2="262" y2="277.5" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><line x1="218" y1="372" x2="262" y2="372" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><line x1="218" y1="493.5" x2="262" y2="493.5" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><line x1="218" y1="518.5" x2="262" y2="518.5" stroke="var(--cds-chart-axis)" stroke-width="1.25"/></g><g><rect x="262" y="84" width="474" height="72" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="278" y="108" font-weight="600" fill="var(--cds-text-primary)">Lines 0-31: no interrupts</text><text x="278" y="124" font-size="11.5" fill="var(--cds-text-secondary)">One palette and one scroll, loaded in VBlank, serve all 32 lines.</text><text x="278" y="140" font-size="11.5" fill="var(--cds-text-secondary)">The CPU belongs to the main loop here.</text></g><g><rect x="262" y="166" width="474" height="56" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="278" y="190" font-weight="600" fill="var(--cds-text-primary)">Line 31: LY = LYC interrupt</text><text x="278" y="206" font-size="11.5" fill="var(--cds-text-secondary)">Loads the values for line 32, then re-arms STAT for HBlank instead.</text></g><g><rect x="262" y="250" width="474" height="56" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="278" y="274" font-weight="600" fill="var(--cds-text-primary)">Line 64: tile block switch</text><text x="278" y="290" font-size="11.5" fill="var(--cds-text-secondary)">The same handler flips one LCDC bit: tiles 0-127 now come from $9000.</text></g><g><rect x="262" y="336" width="474" height="72" rx="8" fill="var(--cds-chart-categorical-1)" fill-opacity="0.12" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><text x="278" y="360" font-weight="600" fill="var(--cds-text-primary)">Lines 31-143: HBlank interrupt on every line</text><text x="278" y="376" font-size="11.5" fill="var(--cds-text-primary)">Copies three bytes for the next line: BGP, SCX, OBP1.</text><text x="278" y="392" font-size="11.5" fill="var(--cds-text-primary)">54 machine cycles of the 114 in a scanline, about 35% of the CPU.</text></g><g><rect x="262" y="466" width="474" height="56" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="278" y="490" font-weight="600" fill="var(--cds-text-primary)">Line 136: the status bar takes over</text><text x="278" y="506" font-size="11.5" fill="var(--cds-text-secondary)">The hardware compares LY with WY and switches layer. No code runs.</text></g><g><rect x="262" y="534" width="474" height="72" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="278" y="558" font-weight="600" fill="var(--cds-text-primary)">Lines 144-153: VBlank interrupt, once</text><text x="278" y="574" font-size="11.5" fill="var(--cds-text-secondary)">Swap the line buffers, send the sprites by DMA, copy the status bar,</text><text x="278" y="590" font-size="11.5" fill="var(--cds-text-secondary)">load the three registers for line 0, arm LYC = 31.</text></g></svg>
-  <figcaption>One frame: 154 scanlines and 114 handler runs.</figcaption>
+  <figcaption>One frame: 154 scanlines, requiring 114 handler invocations.</figcaption>
 </figure>
-<ul>
-  <li>A frame is 154 scanlines: 144 drawn and 10 of vertical blank. A line lasts 114 machine cycles, so the whole frame is 17,556. Everything the game does has to fit in that.</li>
-  <li>The screen is divided into zones purely by when registers are written: sky (lines 0-39), ground (40-135), status bar (136-143). There is no other notion of "layers" in the road.</li>
-  <li>The per-line handler is the most expensive thing in the program. Its common path is 54 cycles, nearly half a scanline, on every line it runs.</li>
-  <li>The first version ran it on all 144 lines. That alone took about 40% of the CPU, peak load sat at 94-96% and frames were being dropped.</li>
-  <li>The fix was to stop running it where the picture does not need it. The top 32 lines of sky share one palette and one scroll, so VBlank loads those once and arms only the LY = LYC interrupt, for line 31.</li>
-  <li>That single LYC interrupt is the first of the frame. The handler notices it is on line 32's turn and switches the STAT interrupt source from "LY = LYC" to "HBlank" for the rest of the frame. VBlank switches it back.</li>
-  <li>The LYC call fires at the start of line 31, not in its HBlank, so it loads line 32's values a line early. That is safe by construction: the generator makes palette entries 0 to 32 identical.</li>
-  <li>Result from the commit that did it: peak load 94-96% down to 72-76% in single player, 98% down to 76-79% linked, and zero dropped frames again.</li>
-  <li>Today the handler runs 114 times a frame (1 LYC + 113 HBlank), about 35% of all CPU time, computed from the instruction timings.</li>
-  <li class="reuse"><strong>To reuse:</strong> per-line interrupts are a tax on every line they fire on. Use LYC to start them only where per-line values begin, and let the handler re-arm itself.</li>
+<p>A frame is 154 scanlines. 144 of these are drawn, and 10 of these consist of the vertical blank. Each line lasts 114 machine cycles, so the whole frame has 17,556 machine cycles for the simulation, the graphics and everything else in the game. For organization purposes, the screen is divided into zones purely based on when registers are written: sky (lines 0-39), ground (40-135), status bar (136-143).</p>
+<p>The per-line handler is the most expensive computational piece of F-Sub. Its common path is 54 cycles, nearly half a scanline. The first version ran the handler on all 144 lines, but that idea took 40% of the CPU available, leaving very little for the game itself. F-Sub bought back some time by skipping the top of the sky. Lines 0 to 31 share one palette and one scroll, so VBlank loads them once and sets up an LY = LYC interrupt for line 31; from there the handler runs on every line to the bottom of the screen.</p>
+<!--That single LYC interrupt is the first of the frame. The handler notices it is on line 32's turn and switches the STAT interrupt source from "LY = LYC" to "HBlank" for the rest of the frame. VBlank switches it back. -->
+<!-- The LYC call fires at the start of line 31, not in its HBlank, so it loads line 32's values a line early. That is safe by construction: the generator makes palette entries 0 to 32 identical. -->
+<!--  <li>Result from the commit that did it: peak load 94-96% down to 72-76% in single player, 98% down to 76-79% linked, and zero dropped frames again.</li> -->
+<!--  <li>Today the handler runs 114 times a frame (1 LYC + 113 HBlank), about 35% of all CPU time, computed from the instruction timings.</li> -->
+  <ul>
+  <li class="reuse"><strong>To reuse:</strong> per-line interrupts are a tax on every line for which they fire.</li>
 </ul>
 </section>
 
@@ -421,19 +489,21 @@ StatISR:
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 566" role="img" aria-label="The handler only copies: the main loop precomputes, VBlank swaps a pointer" font-size="13"><defs><marker id="buf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--cds-chart-axis)"/></marker></defs><text x="24" y="30" font-size="15" font-weight="600" fill="var(--cds-text-primary)">The handler only copies: the main loop precomputes, VBlank swaps a pointer</text><text x="24" y="50" font-size="11.5" fill="var(--cds-text-secondary)">Two identical buffers. One is on screen while the other is being filled.</text><g fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"><path d="M350 116H410" marker-end="url(#buf-arrow)"/><path d="M573 160V200" marker-end="url(#buf-arrow)"/><path d="M573 272V312" marker-end="url(#buf-arrow)"/><path d="M410 398H350" marker-end="url(#buf-arrow)"/><path d="M187 458V486" marker-end="url(#buf-arrow)"/></g><text x="380" y="106" text-anchor="middle" font-size="11.5" fill="var(--cds-text-secondary)">fills</text><text x="380" y="388" text-anchor="middle" font-size="11.5" fill="var(--cds-text-secondary)">3 bytes</text><g><rect x="24" y="72" width="326" height="88" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="40" y="96" font-weight="600" fill="var(--cds-text-primary)">Main loop, once a frame</text><text x="40" y="112" font-size="11.5" fill="var(--cds-text-secondary)">Works out all three values for every line,</text><text x="40" y="128" font-size="11.5" fill="var(--cds-text-secondary)">stages the sprites in a RAM copy of OAM,</text><text x="40" y="144" font-size="11.5" fill="var(--cds-text-secondary)">then sets hReady to say the frame is done.</text></g><g><rect x="410" y="72" width="326" height="88" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="426" y="96" font-weight="600" fill="var(--cds-text-primary)">Spare buffer</text><text x="426" y="112" font-size="11.5" fill="var(--cds-text-secondary)">Three 256-byte pages, indexed by line.</text><text x="426" y="128" font-size="11.5" fill="var(--cds-text-secondary)">Never on screen while it is being filled.</text></g><g><rect x="410" y="200" width="326" height="72" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="426" y="224" font-weight="600" fill="var(--cds-text-primary)">VBlank interrupt: hFront = hReady</text><text x="426" y="240" font-size="11.5" fill="var(--cds-text-secondary)">A one-byte swap, plus the sprite DMA.</text><text x="426" y="256" font-size="11.5" fill="var(--cds-text-secondary)">The old live buffer becomes the spare.</text></g><g><rect x="410" y="312" width="326" height="172" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="426" y="336" font-weight="600" fill="var(--cds-text-primary)">Live buffer: hFront is its high byte</text><rect x="426" y="350" width="294" height="22" rx="3" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1"/><rect x="426" y="378" width="294" height="22" rx="3" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1"/><rect x="426" y="406" width="294" height="22" rx="3" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1"/><rect x="620" y="346" width="14" height="86" rx="3" fill="var(--cds-chart-categorical-1)" fill-opacity="0.12" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><text x="436" y="365" font-size="11.5" fill="var(--cds-text-primary)">BGP page</text><text x="436" y="393" font-size="11.5" fill="var(--cds-text-primary)">SCX page</text><text x="436" y="421" font-size="11.5" fill="var(--cds-text-primary)">OBP1 page</text><text x="426" y="452" font-size="11.5" fill="var(--cds-text-secondary)">L = LY + 1 picks the column,</text><text x="426" y="468" font-size="11.5" fill="var(--cds-text-secondary)">INC H steps down one page.</text></g><g><rect x="24" y="338" width="326" height="120" rx="8" fill="var(--cds-chart-categorical-1)" fill-opacity="0.12" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><text x="40" y="362" font-weight="600" fill="var(--cds-text-primary)">HBlank handler, 113 times a frame</text><text x="40" y="378" font-size="11.5" fill="var(--cds-text-primary)">H = hFront, L = LY + 1</text><text x="40" y="394" font-size="11.5" fill="var(--cds-text-primary)">[HL] to BGP, then INC H</text><text x="40" y="410" font-size="11.5" fill="var(--cds-text-primary)">[HL] to SCX, then INC H</text><text x="40" y="426" font-size="11.5" fill="var(--cds-text-primary)">[HL] to OBP1</text><text x="40" y="442" font-size="11.5" fill="var(--cds-text-primary)">Nothing is computed here.</text></g><g><rect x="24" y="486" width="326" height="56" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="40" y="510" font-weight="600" fill="var(--cds-text-primary)">LCD registers</text><text x="40" y="526" font-size="11.5" fill="var(--cds-text-secondary)">Palette, scroll and sprite paint for the next line.</text></g></svg>
   <figcaption>Two buffers of three pages, swapped in VBlank.</figcaption>
 </figure>
-<ul>
-  <li>The handler computes nothing. It reads three bytes and writes three registers: 28 bytes of code, 54 machine cycles including the interrupt dispatch.</li>
-  <li>Page-aligned tables are what make it that short. A line buffer is three consecutive 256-byte pages (BGP, SCX, OBP1). The line number is the low byte of the address and <code>inc h</code>, one cycle, hops to the next register's table. No pointer maths, and only <code>af</code> and <code>hl</code> to save.</li>
-  <li>There are two such buffers (at $C100 and $C400). The main loop fills whichever is not on screen and posts its page number in <code>hReady</code>. VBlank copies that to <code>hFront</code>. This is double buffering, for registers instead of pixels.</li>
-  <li>A half-built frame can never be shown. If the main loop runs long, <code>hReady</code> is still zero at VBlank and the previous frame's values are used again.</li>
-  <li>Sprites are staged in a RAM copy of OAM and sent by DMA in the same VBlank, so a frame's sprites and its palettes always land together.</li>
-  <li>The handler lives at the interrupt vector itself ($0048) and runs straight on through the unused timer, serial and joypad vectors to $007F. That saves a 4-cycle <code>jp</code> on each of 114 calls a frame. The price: those three interrupts can never be enabled.</li>
-  <li>Both once-a-frame jobs hide behind one test. Of the lines the handler sees, only 32 (switch STAT to HBlank) and 64 (switch tile block) need extra work, and both have five low zero bits, so <code>and %00011111 / jr z</code> finds them. The generator picks the split row to make that true and an <code>ASSERT</code> guards it.</li>
-  <li>A DMG quirk is handled twice: writing STAT can itself raise a STAT interrupt. The mode switch checks it has not already been done, and the buffer keeps copies of line 0's values in entries 144-151 so a stray call during VBlank loads something harmless.</li>
-  <li>With interrupts this sparse, waiting for VBlank needs care. The main loop checks its flag with interrupts off, then <code>ei</code> + <code>halt</code>; <code>ei</code> takes effect one instruction late, so there is no gap in which VBlank can slip by and leave the CPU asleep until line 31.</li>
-  <li>A built-in load meter: when a frame's work is finished the main loop stores LY. The line the work ended on is the CPU load, and the headless playtest reads it every frame.</li>
+
+<p>The per-line handler doesn't compute anything, instead reading bytes from buffers and writing them to the associated BGP, SCX, and OBP1 registers.
+All the tables are 256-byte aligned. The 16-bit <code>hl</code> register holds separately writable high and low bytes.
+The line number is the low byte of the address, and <code>inc h</code> adds one to the high byte, which moves the address exactly 256 bytes on, to the next register's table. This avoids pointer arithmetic and saves compute on the critical path. There are two sets of these three buffers<!-- (at $C100 and $C400)-->. The main loop fills whichever is not on screen and writes its page number in the <code>hReady</code> global. VBlank copies the value to <code>hFront</code>. The analogy here is double buffering: we have a front and back buffer for registers instead of pixels.</p>
+<p>To avoid displaying half-ready frames, if the code was unable to complete in time, the <code>hReady</code> flag will remain zero at VBlank and the previous frame's values will be recycled for the next frame.</p>
+<p>The VBlank period is the narrow window in which F-Sub can update the sprites. The main loop stages them in a RAM copy of OAM during the frame, and VBlank sends them over by DMA.
+  </p>
+<p>A few more tricks keep the handler instruction count down. It is positioned right at the interrupt's own address and paves over the addresses of three interrupts F-Sub never uses (timer, serial and joypad), saving 4 cycles on each of its 114 runs a frame. It only has two once-a-frame jobs, switching to HBlank interrupts at line 32 and switching tile blocks at line 64, and both of those line numbers end in five zero bits. This allows a quick bit test to find them. And the original Game Boy has a quirk where writing to STAT can itself fire a STAT interrupt, so the handler checks it hasn't already switched, and the buffers keep harmless copies of line 0's values just past the bottom of the screen in case a stray interrupt reads them.</p>
+<p>
+  Waiting for VBlank needs care. The main loop checks its flag with interrupts off, then executes <code>ei</code> + <code>halt</code>. <code>ei</code> takes effect one instruction late, so VBlank can't slip in between the check and the <code>halt</code>. If it could, the CPU would sleep straight through it until the line-31 interrupt, and the frame would be lost.</p>
+<!--  <li>A built-in load meter: when a frame's work is finished the main loop stores LY. The line the work ended on is the CPU load, and the headless playtest reads it every frame.</li>-->
+  <ul>
   <li class="reuse"><strong>To reuse:</strong> move every decision out of the per-line handler. Precompute a table per register, page-align them, index by line, double-buffer, and swap in VBlank.</li>
 </ul>
+
 </section>
 
 <section id="window">
@@ -444,16 +514,7 @@ StatISR:
   <img src="img/window-layers.png" alt="The background, window and sprite layers of one frame, and the composite" width="984" height="968" loading="lazy" decoding="async">
   <figcaption>One frame taken apart: background, window, sprites, and all three together.</figcaption>
 </figure>
-<ul>
-  <li>The Game Boy's "window" is a second tilemap the hardware draws over the background from a chosen line (WY) and column (WX) onward. It has no scroll register: SCX does not touch it.</li>
-  <li>fsub sets WY = 136 and WX = 7 once at boot. From line 136 the LCD stops reading the road's tilemap and reads 20 tiles from the window's map instead. No handler code is involved; the hardware compares LY with WY by itself.</li>
-  <li>The picture is one captured frame taken apart: background (with its per-line scroll and palette), window, sprites, and the three together.</li>
-  <li>Why it matters here: the status bar started life on the background, where it needed scroll and palette handling of its own.</li>
-  <li>As a window it needs none, and the ground fill dropped from 104 lines to 96. The eight background lines under the bar are never seen, so the generator does not store tiles for them; the bar's digits took those tile slots.</li>
-  <li>Its palette still comes from the line buffer. Entries 136-143 of the BGP page hold the bar's own palette, and a new lap flashes the bar in negative for two seconds by inverting those eight bytes on alternate 8-frame beats. No tile is rewritten for the flash.</li>
-  <li>Updates are cheap by avoidance. The 20 tiles are staged in RAM and copied in VBlank only when a two-byte digest of everything the bar shows (place, lap, health, boosts, countdown) changes.</li>
-  <li class="reuse"><strong>To reuse:</strong> put anything that must not move in the window, start it at the line where your per-line effects end, and you have removed those lines from every per-frame loop.</li>
-</ul>
+<p>The Game Boy's "window" is a second tilemap the hardware draws over the background from a chosen line (WY) and column (WX) onward. The window has no scroll register. Starting at line 136 the LCD stops reading the road's tilemap and reads 20 tiles from the window's map instead. Its palette still comes from the line buffer.</p><p>Entries 136-143 of the BGP page hold the bar's own palette, and a new lap flashes the bar in negative for two seconds by inverting the eight bytes every 8 frames. No tile has to change for the flash: it is purely a palette effect. The status bar's 20 tiles are staged in RAM and copied over in VBlank only when something on it (place, lap, health, boosts or countdown) changes.</p>
 </section>
 
 <section id="alternate">
@@ -466,24 +527,13 @@ StatISR:
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 452" role="img" aria-label="Half the rivals move each frame; other work is spread out or skipped" font-size="13"><text x="24" y="30" font-size="15" font-weight="600" fill="var(--cds-text-primary)">Half the rivals move each frame; other work is spread out or skipped</text><text x="24" y="50" font-size="11.5" fill="var(--cds-text-secondary)">Eight consecutive frames, left to right. A filled cell means the job runs on that frame.</text><g><line x1="24" x2="732" y1="96" y2="96" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="126" y2="126" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="156" y2="156" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="186" y2="186" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="216" y2="216" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="246" y2="246" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="276" y2="276" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="306" y2="306" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="336" y2="336" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="366" y2="366" stroke="var(--cds-chart-grid)"/><line x1="24" x2="732" y1="396" y2="396" stroke="var(--cds-chart-grid)"/></g><g font-size="11.5" text-anchor="middle"><text x="288" y="86" text-anchor="end" fill="var(--cds-text-secondary)">frame</text><text x="327" y="86" fill="var(--cds-text-secondary)">0</text><text x="381" y="86" fill="var(--cds-text-secondary)">1</text><text x="435" y="86" fill="var(--cds-text-secondary)">2</text><text x="489" y="86" fill="var(--cds-text-secondary)">3</text><text x="543" y="86" fill="var(--cds-text-secondary)">4</text><text x="597" y="86" fill="var(--cds-text-secondary)">5</text><text x="651" y="86" fill="var(--cds-text-secondary)">6</text><text x="705" y="86" fill="var(--cds-text-secondary)">7</text></g><g><rect x="303" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="357" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="411" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="465" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="573" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="627" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="681" y="99" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="116" fill="var(--cds-text-primary)">Palette for the 96 ground lines</text></g><g><rect x="303" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="357" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="411" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="465" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="573" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="627" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="681" y="129" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="146" fill="var(--cds-text-primary)">Rival paint on its scanlines (OBP1)</text></g><g><rect x="303" y="159" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="411" y="159" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="159" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="627" y="159" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="176" font-weight="600" fill="var(--cds-text-primary)">Rivals 0, 2, 4, 6: move and redraw</text></g><g><rect x="357" y="189" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="465" y="189" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="573" y="189" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="681" y="189" width="48" height="24" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="206" font-weight="600" fill="var(--cds-text-primary)">Rivals 1, 3, 5: move and redraw</text></g><g><rect x="303" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="357" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="411" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="465" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="573" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="627" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="681" y="219" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="236" fill="var(--cds-text-primary)">Depth sort: compare one pair of rivals</text></g><g><rect x="303" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="357" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="411" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="465" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="573" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="627" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="681" y="249" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="266" fill="var(--cds-text-primary)">Scenery: look up one distance band</text><g font-size="11.5" text-anchor="middle"><text x="327" y="265" fill="var(--cds-text-primary)">far</text><text x="381" y="265" fill="var(--cds-text-primary)">2</text><text x="435" y="265" fill="var(--cds-text-primary)">3</text><text x="489" y="265" fill="var(--cds-text-primary)">4</text><text x="543" y="265" fill="var(--cds-text-primary)">5</text><text x="597" y="265" fill="var(--cds-text-primary)">6</text><text x="651" y="265" fill="var(--cds-text-primary)">near</text><text x="705" y="265" fill="var(--cds-text-primary)">roof?</text></g></g><g><rect x="303" y="279" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><rect x="519" y="279" width="48" height="24" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5" stroke="none" stroke-width="1.25" stroke-dasharray="none"/><text x="24" y="296" fill="var(--cds-text-primary)">Wreck: new noise in the spare tile</text></g><g><rect x="303" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="357" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="411" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="465" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="519" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="573" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="627" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="681" y="309" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="24" y="326" fill="var(--cds-text-primary)">Scroll for the 96 ground lines</text></g><g><rect x="303" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="357" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="411" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="465" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="519" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="573" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="627" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="681" y="339" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="24" y="356" fill="var(--cds-text-primary)">Sky palette, 40 lines</text></g><g><rect x="303" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="357" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="411" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="465" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="519" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="573" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="627" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><rect x="681" y="369" width="48" height="24" rx="4" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="24" y="386" fill="var(--cds-text-primary)">Status bar tiles</text></g><g font-size="11.5"><rect x="24" y="414" width="24" height="16" rx="4" fill="var(--cds-chart-categorical-1)" fill-opacity="0.85"/><text x="56" y="426" fill="var(--cds-text-secondary)">rivals, on alternate frames</text><rect x="250" y="414" width="24" height="16" rx="4" fill="var(--cds-chart-muted)" fill-opacity="0.5"/><text x="282" y="426" fill="var(--cds-text-secondary)">runs on that frame</text><rect x="430" y="414" width="24" height="16" rx="4" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25" stroke-dasharray="4 3"/><text x="462" y="426" fill="var(--cds-text-secondary)">runs only if its inputs changed</text></g></svg>
   <figcaption>Ten jobs over eight frames.</figcaption>
 </figure>
+<p>The per-line handler takes about 35% of the CPU, which leaves the main loop around 11,400 machine cycles a frame for everything else: the physics, 96 palette lookups, 96 scroll sums, seven rivals, two road objects, the status bar, the music and, in two-player mode, the link cable. Moving and drawing seven rivals 60 times a second did not fit.</p>
+<p>Instead, each rival is moved and redrawn only every other frame, covering two frames of travel in a single step. Even-numbered cars update on even frames and odd-numbered cars on odd frames, which comes down to testing bit 0 of <code>frame XOR car number</code>. This works because a sprite stays where it is in OAM, the hardware's list of sprites, until something moves it. A resting car costs nothing and simply holds its place for one more frame. The captured OAM shows it: cars 0, 2, 4 and 6 change on one frame, and cars 1, 3 and 5 on the next. It is hard to notice in play, because a rival's motion on screen comes from its speed relative to yours, which is small for most of a race.</p>
+<p>The one thing that can't rest is a rival's paint. Its sprite palette value lives in the line buffer, and the two buffers take turns, so a resting rival's paint is reapplied every frame from a single remembered byte: the line its sprite sits on.</p>
+<p>Once the rivals were split up, the same idea spread to the rest of the frame. Rivals are painted far to near, so the nearer car's paint wins on shared lines, and that order is kept by comparing only one neighboring pair each frame. It is a bubble sort spread out over time, and it only has work to do when someone overtakes. Scenery looks up one of its seven distance bands per frame and the eighth frame checks for a roof, so a change takes up to eight frames to settle, which nobody sees because it arrives from the horizon anyway. Work is skipped when nothing has changed: the scroll fill when the bend and camera match the note left in that buffer, the sky's 40 palette lines once three frames have passed since they changed (enough to reach both buffers), and the status bar unless something on it changed. The explosion's noise is only redrawn every fourth frame.</p>
+<p>Sprites were budgeted the same way. A full-size rival is three sprites rather than four, with a single piece of shadow under the middle, so seven rivals use 21 sprite entries. With the player's 4 and 10 for the two road objects, that comes to 35 of the hardware's 40, so nothing ever has to flicker. On the current ROM the peak load is 78–83% across the four tracks, with no dropped frames.</p>
 <ul>
-  <li>After the interrupts take their 35%, the main loop has about 11,400 machine cycles a frame for everything else: physics, 96 palette lookups, 96 scroll sums, seven rivals, two road objects, the status bar, music and (in two-player) the link cable.</li>
-  <li>Seven rivals at 60 Hz did not fit. So each rival is moved and redrawn only every other frame, covering two frames of travel in one step. Even-numbered cars go on even frames, odd on odd: the test is bit 0 of <code>frame XOR car number</code>.</li>
-  <li>It works because a sprite stays where it is in OAM until someone moves it. A resting car costs nothing and simply holds its place for one more frame.</li>
-  <li>Confirmed in captured OAM: cars 0, 2, 4, 6 change on one frame, cars 1, 3, 5 on the next, alternating throughout.</li>
-  <li>It is not visible in play. A rival's motion on screen comes from its speed relative to yours, which is small for most of a race, so halving its update rate is hard to see.</li>
-  <li>The one thing that cannot rest is paint. OBP1 values live in the line buffer, and the two buffers alternate, so a resting rival's paint is re-applied every frame from one remembered byte: the line its sprite sits on.</li>
-  <li>The same idea, applied everywhere else in the frame:
-    <ul>
-      <li>Depth order. Rivals are painted far to near so the nearer car's paint wins on shared lines. The order is maintained by comparing one neighbouring pair a frame, a bubble sort spread over time. It only changes when someone overtakes.</li>
-      <li>Scenery. One of the seven distance bands is looked up per frame and the eighth frame checks for a roof. A change takes up to eight frames to settle, which is hidden because it arrives from the horizon anyway.</li>
-      <li>Skip if unchanged. The scroll fill is skipped when bend and camera match the note left in that buffer. The sky's 40 palette lines are rewritten only for three frames after they change (enough to reach both buffers). The status bar is redrawn only when its digest changes.</li>
-      <li>Explosion noise is redrawn every fourth frame.</li>
-    </ul>
-  </li>
-  <li>Sprites were budgeted the same way. A full-size rival is three sprites, not four (one piece of shadow under the middle), so seven rivals use 21 entries; with the player's 4 and two road objects' 10 that is 35 of the 40 the hardware has, with no flicker needed.</li>
-  <li>Measured result on the current ROM: peak load 74-81% across the four tracks and no dropped frames.</li>
-  <li class="reuse"><strong>To reuse:</strong> ask of every job whether it needs 60 Hz. Stagger what can run at 30 Hz or slower, amortise sorting over frames, and remember what each buffer was built from so unchanged work can be skipped.</li>
+  <li class="reuse"><strong>To reuse:</strong> ask of every job whether it needs 60 Hz. Stagger what can run at 30 Hz or slower, amortize sorting over frames, and remember what each buffer was built from so unchanged work can be skipped.</li>
 </ul>
 </section>
 
@@ -499,11 +549,11 @@ StatISR:
   <li>The Game Boy gives sprites two palettes. The player's car uses OBP0, which is fixed. Every rival is flagged for OBP1, and OBP1 is the third register the per-line handler rewrites.</li>
   <li>So a rival's livery is not art. It is one byte written into the line buffer on the scanlines that car occupies. Seven liveries, one set of tiles, one palette register.</li>
   <li>Where two rivals overlap vertically, the shared scanlines take the nearer car's paint (they are painted far to near), so the further car shows the wrong livery on just those lines. That is the cost of the trick.</li>
-  <li>Colour 2 stays dark grey in every livery so the shadow under each car still looks like a shadow.</li>
+  <li>Color 2 stays dark gray in every livery so the shadow under each car still looks like a shadow.</li>
   <li>All the car art is half a car: one 8x16 sprite, drawn twice with the second copy mirrored. Leaning into a turn is free: the two halves are drawn one pixel apart vertically.</li>
-  <li>Distant rivals use 12, 8 and 4-pixel versions that the Python generator makes by shrinking the same drawing with a majority vote that favours the outline.</li>
+  <li>Distant rivals use 12, 8 and 4-pixel versions that the Python generator makes by shrinking the same drawing with a majority vote that favors the outline.</li>
   <li>Boost pads and recharge patches reuse the trick: they are the dirt patch's tiles under an OBP1 value that flickers or pulses on their lines.</li>
-  <li class="reuse"><strong>To reuse:</strong> if palette registers can change per line, anything separated vertically can have its own colours. Sort by depth so overlaps resolve the way the eye expects.</li>
+  <li class="reuse"><strong>To reuse:</strong> if palette registers can change per line, anything separated vertically can have its own colors. Sort by depth so overlaps resolve the way the eye expects.</li>
 </ul>
 </section>
 
@@ -574,18 +624,11 @@ StatISR:
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 344" role="img" aria-label="A 9-byte packet, moved along by polling up to 20 times a frame" font-size="13"><text x="24" y="30" font-size="15" font-weight="600" fill="var(--cds-text-primary)">A 9-byte packet, moved along by polling up to 20 times a frame</text><text x="24" y="50" font-size="11.5" fill="var(--cds-text-secondary)">Only the first byte has its top bit set, so a receiver can always find the start of a packet.</text><g font-size="11.5" text-anchor="middle"><text x="62" y="76" fill="var(--cds-text-secondary)">byte 0</text><text x="141" y="76" fill="var(--cds-text-secondary)">1</text><text x="220" y="76" fill="var(--cds-text-secondary)">2</text><text x="299" y="76" fill="var(--cds-text-secondary)">3</text><text x="378" y="76" fill="var(--cds-text-secondary)">4</text><text x="457" y="76" fill="var(--cds-text-secondary)">5</text><text x="536" y="76" fill="var(--cds-text-secondary)">6</text><text x="615" y="76" fill="var(--cds-text-secondary)">7</text><text x="694" y="76" fill="var(--cds-text-secondary)">8</text></g><g><rect x="24" y="84" width="76" height="76" rx="6" fill="var(--cds-chart-categorical-1)" fill-opacity="0.12" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><text x="32" y="108" font-weight="600" fill="var(--cds-text-primary)">sync</text><text x="32" y="126" font-size="11.5" fill="var(--cds-text-primary)">rival 0 or 1</text><text x="32" y="142" font-size="11.5" fill="var(--cds-text-primary)">restart bit</text></g><g><rect x="103" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="111" y="108" font-weight="600" fill="var(--cds-text-primary)">position</text><text x="111" y="126" font-size="11.5" fill="var(--cds-text-secondary)">bits 0-6</text></g><g><rect x="182" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="190" y="108" font-weight="600" fill="var(--cds-text-primary)">position</text><text x="190" y="126" font-size="11.5" fill="var(--cds-text-secondary)">bits 7-13</text></g><g><rect x="261" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="269" y="108" font-weight="600" fill="var(--cds-text-primary)">flags</text><text x="269" y="126" font-size="11.5" fill="var(--cds-text-secondary)">pos 14-15</text><text x="269" y="142" font-size="11.5" fill="var(--cds-text-secondary)">x 7, state</text></g><g><rect x="340" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="348" y="108" font-weight="600" fill="var(--cds-text-primary)">car x</text><text x="348" y="126" font-size="11.5" fill="var(--cds-text-secondary)">bits 0-6</text></g><g><rect x="419" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="427" y="108" font-weight="600" fill="var(--cds-text-primary)">rival</text><text x="427" y="126" font-size="11.5" fill="var(--cds-text-secondary)">dist 0-6</text></g><g><rect x="498" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="506" y="108" font-weight="600" fill="var(--cds-text-primary)">rival</text><text x="506" y="126" font-size="11.5" fill="var(--cds-text-secondary)">dist 7-13</text></g><g><rect x="577" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="585" y="108" font-weight="600" fill="var(--cds-text-primary)">rival</text><text x="585" y="126" font-size="11.5" fill="var(--cds-text-secondary)">lane 0-3</text></g><g><rect x="656" y="84" width="76" height="76" rx="6" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="664" y="108" font-weight="600" fill="var(--cds-text-primary)">check</text><text x="664" y="126" font-size="11.5" fill="var(--cds-text-secondary)">sum of 1-7</text><text x="664" y="142" font-size="11.5" fill="var(--cds-text-secondary)">low 7 bits</text></g><text x="24" y="214" font-weight="600" fill="var(--cds-text-primary)">Where the main loop looks at the serial port during one frame</text><g><rect x="24" y="236" width="96" height="40" rx="6" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="132" y="236" width="228" height="40" rx="6" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="372" y="236" width="160" height="40" rx="6" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="544" y="236" width="100" height="40" rx="6" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><rect x="656" y="236" width="80" height="40" rx="6" fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="72" y="261" text-anchor="middle" fill="var(--cds-text-primary)">physics</text><text x="246" y="261" text-anchor="middle" fill="var(--cds-text-primary)">palette and scroll for 96 lines</text><text x="452" y="261" text-anchor="middle" fill="var(--cds-text-primary)">seven rivals</text><text x="594" y="261" text-anchor="middle" fill="var(--cds-text-primary)">sprites, bar</text><text x="696" y="261" text-anchor="middle" fill="var(--cds-text-primary)">music</text></g><g><line x1="126" x2="126" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="144.67" x2="144.67" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="170" x2="170" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="195.33" x2="195.33" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="220.67" x2="220.67" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="246" x2="246" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="271.33" x2="271.33" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="296.67" x2="296.67" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="322" x2="322" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="347.33" x2="347.33" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="366" x2="366" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="383.43" x2="383.43" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="406.29" x2="406.29" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="429.14" x2="429.14" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="452" x2="452" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="474.86" x2="474.86" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="497.71" x2="497.71" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="520.57" x2="520.57" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="650" x2="650" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><line x1="740" x2="740" y1="282" y2="296" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/></g><text x="24" y="322" font-size="11.5" fill="var(--cds-text-secondary)">Each blue tick is one call to LinkPump: is a byte finished? then file it and load the next. No interrupt is used.</text></svg>
   <figcaption>A 9-byte packet, and the 20 points in a frame where the cable is polled.</figcaption>
 </figure>
-<ul>
-  <li>Two-player mode does not share a simulation. Each console runs its own car and two rivals and tells the other where they are; the other draws them a few frames late. Your own car is never delayed by the cable.</li>
-  <li>The serial port is polled, never interrupt-driven. A serial interrupt landing just before HBlank would delay the palette write and tear the picture, and its vector is under the HBlank handler anyway.</li>
-  <li>Polling means calling <code>LinkPump</code> often: after physics, once per distance band in the palette fill and twice in the scroll fill, once per rival, and after the status bar and the music. Linked consoles also skip <code>halt</code> and keep pumping while they wait for VBlank.</li>
-  <li>The master leaves 2 ms between bytes so the other side has time to notice one and load the next. It measures the gap with the hardware timer used as a stopwatch: set the counter to 248 when a byte completes, and send the next one once a plain read shows it has wrapped. The timer interrupt stays off.</li>
-  <li>Framing is self-healing. Data bytes carry 7 bits, so only the sync byte has bit 7 set and the slave re-aligns on it. A packet whose 7-bit checksum is wrong is dropped; 180 frames without a good one drops the link.</li>
-  <li>The player's position goes in every packet and that console's two rivals alternate, one per packet.</li>
-  <li>The other player is not in a lane, so its x has to be scaled for perspective. The camera's shear tables already hold x * d / 104 for every line, so they are reused as a multiplication table. They are generated two steps wider than the camera needs so they reach a car right at the rail, and a build-time assert keeps it that way.</li>
-  <li>One bit in the sync byte flips when a player restarts the race; the other console sees the flip and restarts too. The console that pressed Start chooses the track and the other loads it.</li>
-  <li>It is tested without hardware: <code>tools/linktest.c</code> runs two SameBoy cores joined by an emulated cable and checks that each console sees the other where it really is.</li>
-  <li class="reuse"><strong>To reuse:</strong> when one interrupt has a hard deadline, do not add a second. Poll everything else from known points in the main loop, and use a free-running timer as a stopwatch rather than as an interrupt source.</li>
-</ul>
+<p>Two-player mode doesn't share a simulation. Each console runs its own car and two rivals and tells the other console where they are, and the other console draws them a few frames late. Your own car is never delayed by the cable.</p>
+<p>The serial port is polled and never interrupt-driven. A serial interrupt that landed just before HBlank would delay the palette write and tear the picture, and its vector sits underneath the HBlank handler anyway. Polling means calling <code>LinkPump</code> often: after the physics, during the palette and scroll fills, once per rival, and after the status bar and the music. Linked consoles also skip <code>halt</code> and keep pumping while they wait for VBlank.</p>
+<p>The game host leaves 2 ms between bytes so the other side has time to notice each one and load the next. It times the gap with the hardware timer used as a stopwatch: it sets the counter to 248 when a byte completes, and sends the next one once a plain read shows the counter has wrapped. The timer interrupt stays off.</p>
+<p>Framing heals itself. Data bytes only carry 7 bits, so the sync byte is the only one with bit 7 set, and the game client can always realign on it. A packet with a bad 7-bit checksum is dropped, and 180 frames without a good one drops the link. Every packet carries the player's position, and that console's two rivals take turns, one per packet. One bit in the sync byte flips when a player restarts the race, so the other console sees the flip and restarts too. The console that pressed Start picks the track, and the other loads it.</p>
+<p>The other player isn't in a lane, so their x position has to be scaled for perspective. The camera's shear tables already hold x·d/104 for every line, so F-Sub reuses them as a multiplication table. They are generated two steps wider than the camera needs, so they reach a car right at the rail, and a check at build time keeps it that way. All of this is tested without hardware: <code>tools/linktest.c</code> runs two SameBoy emulator cores joined by an emulated cable and checks that each console sees the other where it really is.</p>
 </section>
 
 <section id="toolchain">
@@ -599,17 +642,7 @@ StatISR:
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 356" role="img" aria-label="Python writes the tables; bots in a headless emulator check the frame budget" font-size="13"><defs><marker id="tool-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--cds-chart-axis)"/></marker></defs><text x="24" y="30" font-size="15" font-weight="600" fill="var(--cds-text-primary)">Python writes the tables; bots in a headless emulator check the frame budget</text><text x="24" y="50" font-size="11.5" fill="var(--cds-text-secondary)">Top row: the build. Bottom row: how the frame budget and the balance are checked.</text><g fill="none" stroke="var(--cds-chart-axis)" stroke-width="1.25"><path d="M244 124H270" marker-end="url(#tool-arrow)"/><path d="M490 124H516" marker-end="url(#tool-arrow)"/><path d="M626 176V228" marker-end="url(#tool-arrow)"/><path d="M516 280H490" marker-end="url(#tool-arrow)"/><path d="M270 280H244" marker-end="url(#tool-arrow)"/></g><g><rect x="24" y="72" width="220" height="104" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="40" y="96" font-weight="600" fill="var(--cds-text-primary)">Python generators</text><text x="40" y="112" font-size="11.5" fill="var(--cds-text-secondary)">gen_gfx.py: art and tables</text><text x="40" y="128" font-size="11.5" fill="var(--cds-text-secondary)">gen_tracks.py: four tracks</text><text x="40" y="144" font-size="11.5" fill="var(--cds-text-secondary)">uge.py: tracker songs</text></g><g><rect x="270" y="72" width="220" height="104" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="286" y="96" font-weight="600" fill="var(--cds-text-primary)">Generated every build</text><text x="286" y="112" font-size="11.5" fill="var(--cds-text-secondary)">384 tiles and the tilemap</text><text x="286" y="128" font-size="11.5" fill="var(--cds-text-secondary)">palette, bend, shear tables</text><text x="286" y="144" font-size="11.5" fill="var(--cds-text-secondary)">four 512-byte tracks</text><text x="286" y="160" font-size="11.5" fill="var(--cds-text-secondary)">consts.inc: unrolled macros</text></g><g><rect x="516" y="72" width="220" height="104" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="532" y="96" font-weight="600" fill="var(--cds-text-primary)">rgbasm, rgblink, rgbfix</text><text x="532" y="112" font-size="11.5" fill="var(--cds-text-secondary)">fzero.gb: the 256 KB ROM</text><text x="532" y="128" font-size="11.5" fill="var(--cds-text-secondary)">fzero.sym: every address</text></g><g><rect x="516" y="228" width="220" height="104" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="532" y="252" font-weight="600" fill="var(--cds-text-primary)">Headless emulator</text><text x="532" y="268" font-size="11.5" fill="var(--cds-text-secondary)">binjgb as WebAssembly in Node,</text><text x="532" y="284" font-size="11.5" fill="var(--cds-text-secondary)">the same build the web page</text><text x="532" y="300" font-size="11.5" fill="var(--cds-text-secondary)">plays the game with</text></g><g><rect x="270" y="228" width="220" height="104" rx="8" fill="var(--cds-chart-categorical-1)" fill-opacity="0.12" stroke="var(--cds-chart-categorical-1)" stroke-width="2"/><text x="286" y="252" font-weight="600" fill="var(--cds-text-primary)">Three bots drive a race</text><text x="286" y="268" font-size="11.5" fill="var(--cds-text-primary)">masher, casual, expert</text><text x="286" y="284" font-size="11.5" fill="var(--cds-text-primary)">read RAM by symbol name</text><text x="286" y="300" font-size="11.5" fill="var(--cds-text-primary)">press buttons like a player</text></g><g><rect x="24" y="228" width="220" height="104" rx="8" fill="none" fill-opacity="1" stroke="var(--cds-chart-axis)" stroke-width="1.25"/><text x="40" y="252" font-weight="600" fill="var(--cds-text-primary)">Report per race</text><text x="40" y="268" font-size="11.5" fill="var(--cds-text-secondary)">place, lap times, hits</text><text x="40" y="284" font-size="11.5" fill="var(--cds-text-secondary)">peak CPU load, from hLoad</text><text x="40" y="300" font-size="11.5" fill="var(--cds-text-secondary)">dropped frames</text></g></svg>
   <figcaption>The build and the playtest loop.</figcaption>
 </figure>
-<ul>
-  <li>Almost nothing in the ROM is hand-typed data. <code>tools/gen_gfx.py</code> draws the road, the four skylines, the car and its smaller copies, and writes every per-line table. The assembly only includes the results.</li>
-  <li>It writes code too. The 96 unrolled palette lookups, each with its line's depth as a literal, are a macro the generator emits into <code>consts.inc</code>. Change the perspective constant and the art, the tables and that code all move together.</li>
-  <li>Budgets are checked at build time. If a skyline needs more tiles than there are free slots, the build stops with the numbers.</li>
-  <li>A track is a 512-byte block: bend, rival pace, hazards, scenery and crosswind for each of 64 chunks. It is copied into RAM when chosen, so the game code reads fixed addresses whatever the track.</li>
-  <li>Tracks are written as straights and corners: <code>("S", 6), ("R", 16, 1)</code> and so on. The generator refuses a lap that is not 64 chunks, does not turn exactly once round, or puts opposite corners back to back without a straight.</li>
-  <li>Rival pace is not hand-tuned per corner. <code>gen_tracks.py</code> works out how fast a good driver can take each corner from its bend and length, using the game's own push formula, and runs the field flat out on the straights.</li>
-  <li><code>tools/playtest.js</code> runs whole races headless at three skill levels and reports place, lap times, hits, peak load and dropped frames. "Zero dropped frames" in this post means that check: the game's frame counter advanced by exactly one on every emulated frame.</li>
-  <li>The figures in this post come from the same route. A script dumps RAM, VRAM and OAM from the emulator and redraws each layer from the line buffers; that redraw matched the emulator's own picture pixel for pixel on 260 frames of a race. Most were captured from the October 9 build (9ca59dc); the tracks have since been redrawn as straights and corners, and the corner figure comes from that newer build (f01cb09).</li>
-  <li class="reuse"><strong>To reuse:</strong> generate tables, and the unrolled code that reads them, from one script. Put a load meter in the game and let scripted players read it in a headless emulator on every change.</li>
-</ul>
+<p>A track is a 512-byte block holding the bend, rival pace, hazards, scenery and crosswind for each of its 64 chunks. It is copied into RAM when the track is chosen, so the game code reads the same addresses whatever the track may be. Tracks are written as straights and corners, like <code>("S", 6), ("R", 16, 1)</code>, and the generator refuses any lap that isn't 64 chunks, doesn't turn exactly once around, or puts opposite corners back to back without a straight between them. Rival pace is customized to each track: <code>gen_tracks.py</code> computes how fast a good driver can take each corner from its bend and length, using the game's own push formula, and runs the field flat out on the straights.</p>
 </section>
 
 <section id="gallery">
@@ -635,12 +668,14 @@ StatISR:
   <li>Wrecked: the car's sprite is the noise tile; the status bar reads OUT.</li>
 </ul>
 </section>
-
+<!--
 <section id="code">
-<h2>Code map</h2>
+  <h2>Code map</h2>
+-->
 <!-- EDIT: End the post with what you learned or what comes next (a fifth track? Game Boy Color
      palettes? real-hardware testing?) and an invitation to fork it. The links below point at commit
      f01cb09 on GitHub, so they keep working when the code moves on. -->
+<!--
 <table>
   <thead><tr><th>Technique</th><th>Where to read it</th></tr></thead>
   <tbody>
@@ -669,8 +704,9 @@ StatISR:
   <li>Every figure here was captured from the running ROM; the scripts that made them, and the source of this page, are in the repo's <a href="https://github.com/fireflyk64/fsub/tree/master/makingfsub"><code>makingfsub/</code></a> folder.</li>
 </ul>
 </section>
+-->
 <footer>
-  <p>fsub is released under the BSD 2-Clause licence. Music plays through hUGEDriver; the browser build runs on binjgb.</p>
+  <p>F-Sub is released under the BSD 2-Clause license. Music plays through hUGEDriver; the browser build runs on binjgb.</p>
 </footer>
 </main>
 </body>
