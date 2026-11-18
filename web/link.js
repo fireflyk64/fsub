@@ -44,6 +44,7 @@ const MAX_QUEUE = 3;               // packets kept for our Game Boy; older ones 
 
 // Wire messages, first byte: a packet (best effort; seq u16), or control (reliable).
 const M_PACKET = 0x50, M_STATUS = 0x53, M_CALL = 0x43, M_ACCEPT = 0x41, M_REFUSE = 0x4e, M_BYE = 0x42;
+export const WIRE = { M_PACKET, M_STATUS, M_CALL, M_ACCEPT, M_REFUSE, M_BYE };   // (for a far end that is not a page: ghost.js)
 
 export class Cable {
   // m, e: the binjgb module and emulator.  send(bytes, reliable): to the other page.

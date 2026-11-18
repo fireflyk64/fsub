@@ -32,7 +32,7 @@ body.classic canvas{box-shadow:none;border-radius:0;background:#000}
 #guide[data-act=boost] .act{background:#f2f2f2;color:#111}
 #guide .steer{background:rgba(45,90,190,.92)}
 #guide .why{font-size:.66em;font-weight:normal;color:#fff;text-shadow:0 1px 3px #000,0 0 2px #000}
-#guideBtn.on{border-color:#fc6;color:#fc6}
+#guideBtn.on,#ghostBtn.on{border-color:#fc6;color:#fc6}
 #brake.cue,#gas.cue,#boost.cue{box-shadow:0 0 0 3px #fff,0 0 22px 6px rgba(255,255,255,.45)}
 #gas.cue-off{opacity:.35}
 #stick.cue-left::after,#stick.cue-right::after{position:absolute;top:50%;transform:translateY(-50%);font-size:44px;color:#8af}
@@ -51,7 +51,7 @@ button.on{background:#555;border-color:#aaa}
   #top{flex-wrap:wrap;gap:6px;padding:5px 6px 2px}
   #top button,#more{padding:7px 8px}
   #more .long{display:none} #more .short{display:inline}
-  #guideBtn{order:10}
+  #guideBtn,#ghostBtn{order:10}
   #msg{order:9;flex:1 1 220px;min-width:0;white-space:normal}
 }
 #gas{background:#243;border-color:#5a8} #gas.on{background:#4a7}
@@ -110,7 +110,7 @@ body.lobby #lobby{transform:none}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 </style></head><body>
 <div id="wrap">
-  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="guideBtn" title="The guide: what to press, and when, shown over the screen as you race. Key: G">GUIDE</button><button id="skinBtn" title="The screen's skin: LCD, Smooth (no lines between the dots) or Classic (the plain pixels). Key: L">SKIN</button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy"><span class="long">How it works</span><span class="short">How?</span></a></div>
+  <div id="top"><button data-k="select">SELECT</button><button data-k="start">START</button><span id="msg">Loading…</span><button id="lobbyBtn" title="Chat, and race somebody in another browser">LOBBY<span class="dot" hidden></span></button><button id="ghostBtn" title="Race your best time on this track: it comes back as the other car (set when you finish a race)">GHOST</button><button id="guideBtn" title="The guide: what to press, and when, shown over the screen as you race. Key: G">GUIDE</button><button id="skinBtn" title="The screen's skin: LCD, Smooth (no lines between the dots) or Classic (the plain pixels). Key: L">SKIN</button><button id="fs">FULL</button><a id="more" href="../makingfsub/" title="How fsub fakes F-Zero on a Game Boy"><span class="long">How it works</span><span class="short">How?</span></a></div>
   <canvas id="screen" width="160" height="144"></canvas>
   <div id="pads">
     <div id="stick">drag here, or on the picture, to steer<div id="knob"></div></div>
@@ -133,6 +133,7 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
 <p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's skin · G = the guide · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
 <p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out; for sharp ones let go of the gas a moment before and through the corner (off the gas the car slows and grips better, as in F-Zero), and for the sharpest add a dab of brake (the brake takes the edge off but never stops you, and cuts a boost short). What is on the road shows up a good second before you reach it. Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
+<p><b>Records and your ghost:</b> each track keeps your best lap and best race in this browser (the menu shows them). Press <b>GHOST</b> and your best race on the track comes back as the other car, frame for frame: the page sets MODE to LINK for it, so press GAS and race yourself (RIVALS NONE for just the two of you). Against the rivals you must also be in a place by the end of each lap (7th, then 5th; over five laps 7th, 6th, 5th, 4th), or you are OUT: your place blinks while you are behind it.</p>
 <p><b>Guide:</b> press <b>GUIDE</b> (or G) and the page reads the race out of the Game Boy's memory and shows what to press a moment before you need to: <b>LET GO OF GAS</b> before a corner (coasting slows the car and it grips the corner better), <b>BRAKE</b> when that will not be enough, <b>BOOST</b> on a clear straight, and which way to steer, round a barrier, off the dirt or onto the inside of a corner. On a touch screen it lights the buttons too.</p>
 <p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
 <p><b>Skin:</b> <button data-look="lcd">LCD</button><button data-look="smooth">Smooth</button><button data-look="classic">Classic</button> (or SKIN, or the L key). LCD is the original Game Boy's green screen: its dots, their shadows and its slow liquid crystal, which smears what moves and half-lights what flickers. Smooth is the same without the lines between the dots; Classic the plain grey pixels.</p>
@@ -144,6 +145,7 @@ import { Cable, EV_SERIAL, INFO_MENU, INFO_ALONE } from "./link.js";
 import { initLobby, LOBBY_SERVER } from "./lobby.js";
 import { createScreen, LOOKS, OLD_LOOKS } from "./lcd.js";
 import { advise, createGuide } from "./guide.js";
+import { RaceLog, GhostPartner, TRACKS, clock } from "./ghost.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
 const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
 const ac=new (window.AudioContext||window.webkitAudioContext)();
@@ -160,7 +162,7 @@ setLook(screen.look);
 // The line in the top bar: a passing note (say), else what a race asks of the player (amber),
 // else the keys for where the game is, the menu or a race (or the touch controls on a touch
 // screen); kept up to date every frame (showMsg).
-let note='', noteUntil=0, raceLine='', where=()=>null, toggleGuide=()=>{};
+let note='', noteUntil=0, raceLine='', ghostLine='', menuBest=()=>'', where=()=>null, toggleGuide=()=>{}, onGameFrame=()=>{};
 const say=(t,ms=2500)=>{note=t; noteUntil=performance.now()+ms;};
 const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
@@ -243,7 +245,8 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       : {menu:'Menu: ↑↓ pick a line · ←→ change it · X or Enter starts', race:'←→ steer · X or Space: gas · Z or ↓: brake · ↑ boost · Enter+Shift: menu'};
     const showMsg=()=>{const now=performance.now(); let t, act=false;
       if(now<noteUntil) t=note; else if(raceLine){t=raceLine; act=true;} else if(played&&ac.state!=='running') t=NOSOUND;
-      else {const g=where(); t=g&&!g.menu?HINTS.race:HINTS.menu;}
+      else if(ghostLine) t=ghostLine;
+      else {const g=where(); t=g&&!g.menu?HINTS.race:menuBest()+HINTS.menu;}
       if(msg.textContent!==t) msg.textContent=t; msg.classList.toggle('act',act);};
     const unlock=()=>{if(ac.state!=='running') ac.resume().catch(()=>{});};
     for(const t of ['pointerdown','pointerup','touchend','click','keydown']) addEventListener(t,unlock,true);
@@ -264,7 +267,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const linkStep=f=>{try{f();}catch(err){if(linkErrors++<5) console.error('link:',err);}};
     const runUntil=t=>{for(;;){const until=cable.plugged?Math.min(t,ticks()+SLICE):t, ev=m._emulator_run_until_f64(e,until);
       if(ev&EV_SERIAL) linkStep(()=>cable.serial());
-      if(ev&EV_FRAME) screen.frame(fb);
+      if(ev&EV_FRAME){screen.frame(fb); onGameFrame();}
       if(ev&EV_AUDIO) pushAudio();
       if(ev&EV_TICKS){linkStep(()=>cable.tick()); if(until>=t) break;}}};
     // Where our Game Boy is: in the menu (and whether MODE is LINK), or racing alone.
@@ -279,23 +282,25 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     //  - a Game Boy waiting in link mode with nobody to link with opens the lobby, once each time.
     let autoUntil=0, autoNext=0, aloneWas=false, menuSet=false, dirtyFrames=0;
     const linkHelp=ms=>{
-      const g=game(), paired=!!(lobby.race&&lobby.race.phase==='connected');
+      const g=game(), paired=!!(lobby.race&&lobby.race.phase==='connected')||!!ghost;
       if(g&&g.menu&&paired&&!menuSet){menuSet=true; if(!g.link){m._emulator_write_mem(e,sym.hMode,MODE_LINK); dirtyFrames=4;}}
       if(g&&!g.menu) menuSet=false;
       if(dirtyFrames>0&&sym.wMenuDirty!==undefined){dirtyFrames--; m._emulator_write_mem(e,sym.wMenuDirty,1);}   // (the menu redraws its lines)
       if(cable.autoCall()&&ms>autoNext){autoUntil=ms+100; autoNext=ms+2000;}
       const press=ms<autoUntil?1:0; if(src.auto.start!==press){src.auto.start=press; apply();}
-      const alone=!lobby.race&&cable.listening();
+      const alone=!lobby.race&&!ghost&&cable.listening();
       if(alone&&!aloneWas) openLobby(true);
       aloneWas=alone;};
     const raf=ms=>{requestAnimationFrame(raf); pollPad(); linkStep(()=>linkHelp(ms)); showMsg();
       if(guide.on) linkStep(()=>guide.show(known?advise(rd,sym):null,ms));
+      linkStep(ghostHelp);
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
       screen.draw();};
     // The link cable to another browser, and the lobby where the other browser is found.
-    const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l),
+    let ghost=null;   // the ghost (ghost.js) while it is plugged into the cable in place of another browser
+    const cable=new Cable({m,e,send:(b,r)=>ghost?ghost.receive(b):lobby.raceSend(b,r),log:l=>console.log(l),
       info:()=>{const g=game(); return g?(g.menu?INFO_MENU:0)|(g.alone?INFO_ALONE:0):0;}});
     const lobbyBtn=document.getElementById('lobbyBtn'), dot=lobbyBtn.querySelector('.dot');
     let news=0;
@@ -305,7 +310,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     lobbyBtn.addEventListener('click',()=>openLobby(!document.body.classList.contains('lobby')));
     document.getElementById('lobbyClose').addEventListener('click',()=>openLobby(false));
     const query=new URLSearchParams(location.search);
-    const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening(),game,log:l=>console.log(l),
+    const lobby=initLobby({cable,server:query.get('server')||LOBBY_SERVER,listening:()=>cable.listening()&&!ghost,game,log:l=>console.log(l),
       onNews:()=>{if(!document.body.classList.contains('lobby')){news++;dot.textContent=news>9?'9+':news;dot.hidden=false;}},
       onStatus:t=>{raceLine=t||'';}});
     if(lobby.race) openLobby(true);
@@ -321,6 +326,37 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     guideBtn.addEventListener('click',()=>toggleGuide());
     try{ if(localStorage.getItem('fsub:guide')==='1') toggleGuide(true);}catch(err){}
     window.__gb.guide=guide;
+    // Records and the ghost (ghost.js).  Only races against the rivals or a ghost count.
+    const lapsFor=lv=>lv>=4?5:3;
+    const raceLog=known?new RaceLog({rd,sym,kind:()=>lobby.race?'net':ghost?'ghost':rd(sym.hMode)===0?'solo':'other',
+      on:(ev,d)=>{ if(ev!=='finish') return;
+        ghostFor='';   // (a new record: the next visit to the menu plugs the new ghost in)
+        say(`Finished ${rd(sym.hRank)}${['st','nd','rd'][rd(sym.hRank)-1]||'th'} in ${clock(d.total)}, best lap ${clock(d.bestLap)}`+(d.record.race?' · a record: your new ghost':d.record.lap?' · a lap record':''),7000); }}):null;
+    menuBest=()=>{ if(!raceLog) return ''; const t=rd(sym.hTrackNo), r=raceLog.records(t), best=r['race'+lapsFor(rd(sym.hLevel))];
+      return best?`${TRACKS[t]} best ${clock(best)}${r.lap?', lap '+clock(r.lap):''} · `:''; };
+    const ghostBtn=document.getElementById('ghostBtn');
+    let ghostOn=false, ghostFor='', ghostText='';
+    const unplugGhost=()=>{ if(ghost){ cable.unplug(); ghost=null; } ghostFor=''; };
+    const setGhost=v=>{ ghostOn=v; ghostBtn.classList.toggle('on',v); try{localStorage.setItem('fsub:ghost',v?'1':'0');}catch(err){}
+      if(!v){ unplugGhost(); ghostLine=''; } };
+    ghostBtn.addEventListener('click',()=>{ setGhost(!ghostOn); say(ghostOn?'Ghost on: in the menu, your best race on the track comes back to race you':'Ghost off'); });
+    try{ if(localStorage.getItem('fsub:ghost')==='1') setGhost(true);}catch(err){}
+    // In the menu with the ghost on: the ghost of this track (and number of laps) plugged in.
+    const ghostHelp=()=>{
+      if(!raceLog) return;
+      if(!ghostOn||lobby.race){ if(ghost) unplugGhost(); ghostLine=''; ghostBtn.disabled=!!lobby.race; return; }
+      ghostBtn.disabled=false;
+      if(!rd(sym.hMenu)){ ghostLine=''; return; }   // (in a race the line says the keys)
+      const t=rd(sym.hTrackNo), laps=lapsFor(rd(sym.hLevel)), want=t+':'+laps;
+      if(want!==ghostFor){
+        unplugGhost(); ghostFor=want;
+        const data=raceLog.ghost(t,laps), best=raceLog.records(t)['race'+laps];
+        if(!data||!best) ghostText=`No ghost on ${TRACKS[t]} yet (${laps} laps): finish a race there, then race it`;
+        else { ghost=new GhostPartner({rd,sym,cable,data}); cable.plug(true,true); ghostText=`Your ghost on ${TRACKS[t]}: ${clock(best)}. Press GAS to race it`; }
+      }
+      ghostLine=ghostText;
+    };
+    onGameFrame=()=>linkStep(()=>{ if(raceLog) raceLog.frame(); if(ghost) ghost.frame(); });
 
   }catch(err){msg.textContent='Failed to start: '+err;console.error(err);}
 })();
