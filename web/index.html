@@ -9,7 +9,11 @@
 html,body{margin:0;background:#111;color:#ddd;font:14px sans-serif;text-align:center;overscroll-behavior:none}
 #wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;align-items:center;touch-action:none;background:#111;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#000;width:min(var(--gw),calc(52dvh*160/144));flex:none;touch-action:none}
+/* The screen (web/lcd.js draws it as an LCD) in a plain dark surround, drawn as rings of shadow
+   (--bz wide) that take no room of their own: the margins leave it room. */
+:root{--bz:9px}
+canvas{image-rendering:pixelated;aspect-ratio:160/144;background:#3e414c;width:min(calc(var(--gw) - 2*var(--bz) - 12px),calc(52dvh*160/144));flex:none;touch-action:none;
+  margin:var(--bz) 0;border-radius:3px;box-shadow:0 0 0 var(--bz) #3e414c,0 0 0 calc(var(--bz) + 1px) #2a2c33,0 6px 22px calc(var(--bz) - 2px) rgba(0,0,0,.65)}
 #top{display:flex;gap:8px;align-items:center;justify-content:center;width:100%;padding:6px;flex:none}
 #msg{flex:1;font-size:12px;color:#aaa;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #msg.act{color:#111;background:#fc6;font-weight:bold;border-radius:6px;padding:3px 7px}
@@ -34,7 +38,7 @@ button.on{background:#555;border-color:#aaa}
 @media (min-aspect-ratio: 11/10){
   #wrap{flex-direction:row;flex-wrap:wrap;justify-content:center;align-content:flex-start}
   #top{order:0;height:44px}
-  canvas{order:2;width:auto;height:calc(100dvh - 56px);max-width:calc(var(--gw)*.56)}
+  canvas{order:2;height:auto;width:min(calc((100dvh - 56px - 2*var(--bz))*160/144),calc(var(--gw)*.56 - 2*var(--bz)));margin:var(--bz)}
   #pads{display:contents}
   #stick{order:1;height:calc(100dvh - 68px);margin:6px;max-width:calc(var(--gw)*.22)}
   #acts{order:3;height:calc(100dvh - 68px);margin:6px;max-width:calc(var(--gw)*.22)}
@@ -77,6 +81,8 @@ body.lobby #lobby{transform:none}
   body.lobby #wrap{margin-right:var(--panel)}
   body.lobby #lobbyClose{display:none}
 }
+#help button{padding:6px 11px;font-size:12px;border-radius:8px;margin-right:4px}
+#help button.on{border-color:#8af;color:#8af}
 #help{padding:10px 14px;text-align:left;max-width:640px;margin:auto;-webkit-user-select:text;user-select:text}
 #help *{-webkit-user-select:text;user-select:text}
 summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
@@ -103,19 +109,28 @@ summary{font-weight:bold;padding:8px 0} p{margin:.5em 0} a{color:#8af}
 <details id="help"><summary>How to play</summary>
 <p><b>Touch:</b> drag left or right on the picture or the steering pad to steer (drag up or down to move in the menu); GAS, BRAKE and BOOST are under the other thumb. GAS also starts from the menu.</p>
 <p><b>Menu:</b> ↑↓ pick a line, ←→ change it, Enter (or X / Z) starts. Four tracks: Neo City, Blue Deep (the ocean), Gold Wind (a crosswind over the wheat) and Old Port (one very tight hairpin); five strengths of rival, or none (a time trial); race, practice or two-player link.</p>
-<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
+<p><b>Keys:</b> ←→ steer · X / Space = accelerate · Z or ↓ = brake, and with ←→ a skid turn · ↑ = boost (one per lap) · Shift = engine sound on/off · after a race, Enter = go again and Shift = menu · Enter + Shift together = menu · F = fullscreen · L = the screen's look · gamepads supported (bottom/left face button or right shoulder = accelerate, right/top face button or left shoulder = brake)</p>
 <p>Each track is a fixed lap of straights and short corners, the same every time, so you can learn it: a corner shows as a bend on the horizon a couple of seconds before you reach it, and is over in half a second. Corners throw you wide with the square of your speed: gentle ones you can steer through flat out, sharp ones want a dab of brake on the way in (the brake takes the edge off but never stops you, and cuts a boost short). Bouncing off the rail never slows you, but it costs health, and at zero the car is gone: brake for the worst corners, and cross the two pulsing patches on the left after the start line to recharge (the slower you cross them, the more they give). Only dirt (rough dark patches) slows you. Blocks are barriers, fast-flickering white patches are boost pads, the black strip is a jump. A mistake lets a rival pounce.</p>
 <p><b>Two players, two browsers:</b> pair up first: open the LOBBY and press <b>Race</b> next to somebody's name, or press <b>Invite a friend</b> and send them the link. Once you are paired, the menu's MODE is set to <b>LINK</b> for you: both press GAS, and the race starts by itself when you are both waiting (2P). Whoever asked, or invited, hosts: the host's TRACK and RIVALS count for both. Each Game Boy runs its own car and two rivals and shows the other player's too (a few frames late, as a link cable between two consoles would), so each of you races five others; with <b>RIVALS NONE</b> it is just the two of you, heads up. LINK without a partner is an empty track. Keep the page in front: a tab in the background stops, and the link drops.</p>
+<p><b>Screen:</b> <button data-look="lcd">LCD</button><button data-look="pocket">Pocket</button><button data-look="sharp">Sharp</button> (or press L). LCD is the original Game Boy's green screen, its dots, their shadows and its slow liquid crystal, which smears what moves and half-lights what flickers; Pocket the same in grey; Sharp the plain pixels.</p>
 <p><a href="fsub.gb">Download ROM</a> · emulator: <a href="https://github.com/binji/binjgb">binjgb</a> (MIT), with link-cable hooks · lobby: lobbylink</p>
 </details>
 <script src="binjgb.js"></script>
 <script type="module">
 import { Cable, EV_SERIAL, INFO_MENU, INFO_ALONE } from "./link.js";
 import { initLobby, LOBBY_SERVER } from "./lobby.js";
+import { createScreen, LOOKS } from "./lcd.js";
 const TICKS_PER_SEC=4194304, AUDIO_FRAMES=4096, MAX_SEC=5/60;
 const EV_FRAME=1, EV_AUDIO=2, EV_TICKS=4, SLICE=12288;   // (while a cable is plugged in, the emulator runs ~3 ms at a time: link.js)
 const ac=new (window.AudioContext||window.webkitAudioContext)();
-const cv=document.getElementById('screen'), ctx=cv.getContext('2d'), img=ctx.createImageData(160,144);
+const cv=document.getElementById('screen');
+// The screen's look (web/lcd.js), remembered in this browser: the LCD unless the player picked another.
+let look='lcd'; try{const v=localStorage.getItem('fsub:look'); if(LOOKS[v]) look=v;}catch(err){}
+const screen=createScreen(cv,{look});
+const lookButtons=document.querySelectorAll('[data-look]');
+const setLook=v=>{screen.look=v; for(const b of lookButtons) b.classList.toggle('on',b.dataset.look===v); try{localStorage.setItem('fsub:look',v);}catch(err){}};
+for(const b of lookButtons) b.addEventListener('click',()=>setLook(b.dataset.look));
+setLook(screen.look);
 const msg=document.getElementById('msg');
 const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',KeyZ:'A',Space:'B',KeyX:'B',Enter:'start',ShiftLeft:'select',ShiftRight:'select'};
 (async()=>{
@@ -147,6 +162,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     wrap.addEventListener('pointerdown',unfocus,true);
     addEventListener('keydown',ev=>{if(ev.key==='Escape'&&typing(ev)) unfocus();},true);
     addEventListener('keydown',ev=>{ac.resume(); if(typing(ev)) return; if(ev.code==='KeyF'&&!ev.repeat){toggleFS();ev.preventDefault();return;}
+      if(ev.code==='KeyL'&&!ev.repeat){const ks=Object.keys(LOOKS); setLook(ks[(ks.indexOf(screen.look)+1)%ks.length]); msg.textContent='Screen: '+LOOKS[screen.look].name; ev.preventDefault(); return;}
       const k=keyMap[ev.code];if(k){src.kb[k]=1;apply();ev.preventDefault();}});
     addEventListener('keyup',ev=>{const k=keyMap[ev.code];if(k&&src.kb[k]){src.kb[k]=0;apply();ev.preventDefault();}});
     // Touch.  Nothing here may select text, open a menu, scroll or zoom.
@@ -208,7 +224,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
     const linkStep=f=>{try{f();}catch(err){if(linkErrors++<5) console.error('link:',err);}};
     const runUntil=t=>{for(;;){const until=cable.plugged?Math.min(t,ticks()+SLICE):t, ev=m._emulator_run_until_f64(e,until);
       if(ev&EV_SERIAL) linkStep(()=>cable.serial());
-      if(ev&EV_FRAME) img.data.set(fb);
+      if(ev&EV_FRAME) screen.frame(fb);
       if(ev&EV_AUDIO) pushAudio();
       if(ev&EV_TICKS){linkStep(()=>cable.tick()); if(until>=t) break;}}};
     // Where our Game Boy is: in the menu (and whether MODE is LINK), or racing alone.
@@ -236,7 +252,7 @@ const keyMap={ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
       const s=ms/1000, d=Math.min(Math.max(s-(last||s),0),MAX_SEC); last=s;
       const target=m._emulator_get_ticks_f64(e)+d*TICKS_PER_SEC-left;
       runUntil(target); left=(m._emulator_get_ticks_f64(e)-target)|0;
-      ctx.putImageData(img,0,0);};
+      screen.draw();};
     // The link cable to another browser, and the lobby where the other browser is found.
     const cable=new Cable({m,e,send:(b,r)=>lobby.raceSend(b,r),log:l=>console.log(l),
       info:()=>{const g=game(); return g?(g.menu?INFO_MENU:0)|(g.alone?INFO_ALONE:0):0;}});
