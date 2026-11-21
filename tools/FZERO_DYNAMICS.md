@@ -37,18 +37,44 @@ frames, so every angular rate is F-Zero's as it is.
 | momentum (where it goes) | follows the facing at the grip rate, only with gas or steering held: otherwise it drifts | the same |
 | grip | 0x180 within 30 steps of slide; 0xA0 sliding or in the air; 0x20 on dirt; 0x280 below 5.5 | the same (each car its own normal grip) |
 | the road | 2D | turns under the car by its true curvature: a level-L corner turns L × 90 / 16 degrees in a 256-unit chunk |
+| across the road | speed × sin(slide) | three quarters of that: the road is drawn 168 wide but drives as wide as F-Zero's (see below) |
 | distance | where it goes | speed × cos(slide) × R / (R − x): the inside of a bend is the short way |
 | acceleration | the ROM's table: strong from rest, a trickle near the top | the same, × S, × the car's |
 | brakes | about 14/256 a frame near the top | the same × S |
 | coasting | 4/256 a frame | the same × S |
-| the wall | bounce: the velocity into it reverses; 10 frames without control; 192/2048 of the energy every 9 frames in contact; −0x10 speed a frame above 4 | the same (5/64 health a knock) |
+| the wall | bounce: the velocity into it reverses; 10 frames without control; 192/2048 of the energy every 9 frames in contact; −0x10 speed a frame above 4 | kinder (see below): a glance; 5/64 health a knock, not again for 9 frames |
 | dirt | top speed 3.0; turning halved | the same × S |
 | jump | up at speed / 2, 1 to 4.5 a frame; falls 25/256 a frame (much faster nose down); a hard landing bounces unless the nose is up | the same × S |
 
+## Where fsub is kinder than F-Zero
+
+Players found F-Zero's wall impossible on fsub: "bounced back and forth like a ping pong ball
+and explode".  Two things, measured with a person-like driver that hits the rail and then,
+0.2 s later, points back down the road (and one that takes a hairpin too fast):
+
+* **The road drives as wide as F-Zero's.** It is drawn 168 units wide, which is 185 of
+  F-Zero's units against F-Zero's 258. So the car crosses it at three quarters of its
+  speed × sin(slide): a glance or an overshoot has the room it would have in F-Zero. The
+  bot's adapter scales x the same way, so to the bot the road is F-Zero's width.
+* **The rail is a glance, not a rebound.** F-Zero mirrors the whole of the angle the car
+  hit at. A hit at 25 steps or more (about 47°) then crossed fsub's road into the other rail,
+  and again.
+  * Now the car leaves at a quarter of the angle, turned to run along the road.
+  * If the wheel was turned into the rail, it is straightened. If the player is already
+    steering away, as out of a bend, it is left alone.
+  * Only a hard hit (4 steps or more into it) takes control away, and then for 5 frames, not 10.
+
+  Result: one knock and back on the road, whatever the angle. Overcooking a hairpin costs one
+  or two knocks, not a row of them.
+
+The turning is F-Zero's as it is. The SNES logs show its counter-steer is as slow as fsub's:
+reversing from full lock, the turn rate takes about 10 frames to cross zero.
+
 ## What the courses had to change
 
-* **The road is F-Zero's width.** Its half width is 84 units (F-Zero's 258 to a top speed of
-  8.81, scaled). Rival lanes are at ±18 and ±54.
+* **The road drives as wide as F-Zero's.** It is drawn 84 units either side of the line (185
+  of F-Zero's units in all). The car crosses it at three quarters, so it drives 247 wide,
+  against the 258 of F-Zero's median road. Rival lanes are at ±18 and ±54.
 * **No corner is tighter than F-Zero's tightest.** fsub corners are level 8 or 16: a radius of
   326 or 163 units (360 or 180 of F-Zero's). The level-24 and level-32 corners (radius 109
   and 81) were tighter than anything in F-Zero. Each is now spread over more chunks: the same
@@ -97,9 +123,9 @@ fsub's adapter:
 | fsub | Place | Health left | Jumps | Dirt frames | Rail frames | Peak load |
 |---|---:|---:|---:|---:|---:|---:|
 | Neo City | 1st | 64 | 3 | 0 | 0 | 91% |
-| Blue Deep | 2nd | 62 | 3 | 29 | 0 | 91% |
-| Gold Wind | 2nd | 64 | (no ramp) | 87 | 0 | 96% |
-| Old Port | 2nd | 48 | 3 | 0 | 0 | 90% |
+| Blue Deep | 2nd | 64 | 3 | 0 | 0 | 86% |
+| Gold Wind | 2nd | 55 | (no ramp) | 174 | 0 | 94% |
+| Old Port | 2nd | 52 | 3 | 0 | 0 | 90% |
 
 SNES F-Zero, the same policy (BOT.md): Mute City I 1st, Mute City II 2nd, Death Wind I 2nd.
 

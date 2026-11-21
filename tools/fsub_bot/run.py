@@ -27,6 +27,8 @@ from racing.policy import (Course, DASH_PAD, DIRT, JUMP_PAD, OFF, ROAD, SAMPLE_S
                            Observation, Policy)
 
 S = 8.0 / 8.81                 # fsub units per F-Zero unit (gen_physics.py)
+LATERAL = 0.75                 # ...and across the road, three quarters of that again: the car crosses
+                               # it at 3/4 (fzero.asm Steer), so the road is as wide as F-Zero's
 STEP = 2 * math.pi / 192       # radians in an angle step
 CHUNK, CHUNKS = 256, 64
 LAP = CHUNK * CHUNKS
@@ -116,7 +118,7 @@ class FsubCourse(Course):
         i = self.nearest(point)
         offset = (np.asarray(point) - self.centre[i]) * S
         along = i * self.step + offset @ np.array([self.centre_normal[i][1], -self.centre_normal[i][0]])
-        return along, offset @ self.centre_normal[i]
+        return along, offset @ self.centre_normal[i] * LATERAL
 
     def thing_at(self, along):
         """What sits on the road here, or 0.  (The game tests a thing once, as the car meets
@@ -145,7 +147,7 @@ class FsubCourse(Course):
     def point(self, along, x):
         """F-Zero units, from fsub's along-the-race and across-the-road."""
         i = int(along / self.step) % len(self.centre)
-        return self.centre[i] + self.centre_normal[i] * (x / S)
+        return self.centre[i] + self.centre_normal[i] * (x / S / LATERAL)
 
     def heading_at(self, along):
         i = int(along / self.step) % len(self.centre)

@@ -87,7 +87,12 @@ def main():
             "OVER_SPEED": round(18 * S),            # ...and over the top speed (after a boost)
             "WALL_DRAG": round(16 * S),             # scraping the rail, above WALL_SLOW_ABOVE
             "WALL_SLOW_ABOVE": round(0x400 * S),
-            "WALL_NO_CONTROL": 10,                  # frames without control after hitting it
+            "WALL_NO_CONTROL": 5,                   # frames without control after a hard knock (F-Zero: 10)
+            "WALL_HARD": 4,                         # ...one at 4 steps or more into it (a brush: none)
+            # (F-Zero's wall mirrors the car's angle into it in full; on fsub's road, a third
+            # narrower, that sent a person ping-ponging rail to rail.  So: a glance)
+            "WALL_BOUNCE_SHIFT": 2,                 # it leaves at a quarter of the angle it came in at,
+                                                    # pointed that way, the wheel straight
             "WALL_HURT_EVERY": 9,                   # frames between knocks to health along it
             "DIRT_TOP": round(0x300 * S),           # top speed on dirt
             "AIR_TOP": round(0x900 * S),            # ...and in the air

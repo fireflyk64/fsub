@@ -55,7 +55,7 @@ The policy now lives in [tools/racing/policy.py](tools/racing/policy.py), shared
 - **SNES:** [driver.py](tools/fzero_snes/driver.py) reads work RAM and presses SNES buttons. A Mute City I race through it matches the original frame for frame.
 - **Fsub:** [tools/fsub_bot/run.py](tools/fsub_bot/run.py) runs the ROM in PyBoy. It converts Fsub's state to F-Zero units and presses Fsub's buttons.
 
-Fsub's driving was rebuilt as F-Zero's, scaled so that F-Zero's top speed is Fsub's 8. That covers the turn stage, grip and drift, the wall bounce, dirt, the jump, and the corners' true curvature and road width. The courses were adjusted so the same policy works unchanged, with no Fsub-specific tuning. [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, where each number comes from, and what changed.
+Fsub's driving was rebuilt as F-Zero's, scaled so that F-Zero's top speed is Fsub's 8. That covers the turn stage, grip and drift, dirt, the jump, and the corners' true curvature and road width. The rail is kinder than F-Zero's: a glance off it rather than a rebound across the road. The courses were adjusted so the same policy works unchanged, with no Fsub-specific tuning. [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, where each number comes from, and what changed.
 
 ```sh
 .venv/bin/python -m pip install pyboy
@@ -67,6 +67,6 @@ At NORMAL, against seven rivals:
 | Fsub course | Finish | Health left | Jump hits | Dash pad hits | Dirt frames |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Neo City | 1st | 64/64 | 3 | 24 | 0 |
-| Blue Deep | 2nd | 62/64 | 3 | 31 | 29 |
-| Gold Wind | 2nd | 64/64 | 0 | 14 | 87 |
-| Old Port | 2nd | 48/64 | 3 | 17 | 0 |
+| Blue Deep | 2nd | 64/64 | 3 | 30 | 0 |
+| Gold Wind | 2nd | 55/64 | 0 | 19 | 174 |
+| Old Port | 2nd | 52/64 | 3 | 18 | 0 |

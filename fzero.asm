@@ -6103,6 +6103,18 @@ Steer:
     ld d, h
     ld e, l
 .calm
+    ld h, d                     ; (three quarters of it: the road is as wide as F-Zero's, for
+    ld l, e                     ; the speed, though it is drawn as it was)
+    sra d
+    rr e
+    sra d
+    rr e
+    ld a, l
+    sub e
+    ld e, a
+    ld a, h
+    sbc d
+    ld d, a
     ldh a, [hX]
     add e
     ld l, a
@@ -6110,10 +6122,11 @@ Steer:
     adc d
     ld h, a
 
-    ; --- the rail: F-Zero's.  Hit it and the car bounces off: where it was going into the
-    ; rail is mirrored away from it (it leaves at the angle it came in, pointing as it was), a
-    ; moment without control, and it hurts, though not again for a few frames however it
-    ; rattles along.  (None in the air: come down outside it and the car is gone.)
+    ; --- the rail: F-Zero's, made kinder.  Hit it and the car glances off: where it was going
+    ; into the rail is turned away from it (by a fraction of the angle, not all of it: F-Zero's
+    ; full rebound sent a person ping-ponging from rail to rail), it is turned to run along
+    ; the road with the wheel straight, a moment without control, and it hurts, though not
+    ; again for a few frames however it rattles along.  (None in the air: come down outside it and the car is gone.)
     ld a, [wWallTick]           ; (the knock's cooldown runs down whatever happens)
     or a
     jr z, .cooled
@@ -6122,20 +6135,31 @@ Steer:
 .cooled
     ldh a, [hAir]
     or a
-    jr nz, .xOk
+    jp nz, .xOk
     ld a, h                     ; (at the rail: x past +-X_LIMIT; put back just inside it,
     add X_LIMIT                 ; so that a bounce off it, however slow, leaves it)
     cp X_LIMIT * 2
-    jr c, .offRail
+    jp c, .offRail
     bit 7, h
     ld hl, (X_LIMIT << 8) - 1
     jr z, .railSide
     ld hl, -(X_LIMIT << 8)
 .railSide
-    ld a, [wMomentum + 1]       ; going into it: mirrored, away from it
-    xor h
+    ld c, 0                     ; (c: a hard knock, not a brush)
+    ld a, [wMomentum + 1]       ; going into it: off it again, gently (a fraction of the angle
+    xor h                       ; it came in at, the other way: a glance, not a rebound across
+    bit 7, a                    ; the road)
+    jp nz, .away
+    ld a, [wMomentum + 1]
     bit 7, a
-    jr nz, .away
+    jr z, .intoAbs
+    cpl
+    inc a
+.intoAbs
+    cp WALL_HARD
+    jr c, .brush
+    inc c
+.brush
     ld a, [wMomentum]
     cpl
     ld e, a
@@ -6143,15 +6167,41 @@ Steer:
     cpl
     ld d, a
     inc de
+    REPT WALL_BOUNCE_SHIFT
+        sra d
+        rr e
+    ENDR
     ld a, e
     ld [wMomentum], a
     ld a, d
     ld [wMomentum + 1], a
+    ld a, [wFacing + 1]         ; pointed into it: now along the road, just off it, the way it
+    xor h                       ; is going: back in the player's hands
+    bit 7, a
+    jr nz, .faced               ; (pointed away already: as it was)
+    ld a, e
+    ld [wFacing], a
+    ld a, d
+    ld [wFacing + 1], a
+.faced
+    ld a, [wStage + 1]          ; the wheel turned into it: straight (turned away, as a player
+    xor h                       ; steering out of a bend does: left as it is)
+    bit 7, a
+    jr nz, .away
+    xor a
+    ld [wStage], a
+    ld [wStage + 1], a
+    ld a, LOW(TURN_ACC0)
+    ld [wStageAcc], a
+    ld a, HIGH(TURN_ACC0)
+    ld [wStageAcc + 1], a
 .away
     ld a, [wWall]
     or a
     jr nz, .scraping
-    ld a, [wNoControl]          ; a new knock: a moment without control
+    dec c                       ; a new knock, a hard one: a moment without control
+    jr nz, .scraping
+    ld a, [wNoControl]
     or a
     jr nz, .scraping
     ld a, WALL_NO_CONTROL
