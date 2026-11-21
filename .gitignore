@@ -2,3 +2,8 @@ build/
 fzero.gb
 fzero.sym
 __pycache__/
+# the SNES F-Zero ROM and its saves: yours, never committed
+fzero.smc
+fzero.spc
+fzero.srm
+.venv/

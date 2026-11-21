@@ -11,6 +11,11 @@ build/consts.inc: tools/gen_gfx.py
 	@mkdir -p build
 	python3 tools/gen_gfx.py build
 
+# the driving: F-Zero's, scaled to fsub (see tools/FZERO_DYNAMICS.md)
+build/physics.inc: tools/gen_physics.py
+	@mkdir -p build
+	python3 tools/gen_physics.py $@
+
 # the tracks themselves
 build/tracks.bin: tools/gen_tracks.py fzero.asm
 	@mkdir -p build
@@ -30,7 +35,7 @@ build/port.asm: music/port.uge tools/uge.py
 	@mkdir -p build
 	python3 tools/uge.py $< $@ --name port_song --bank 9
 
-build/fzero.o: fzero.asm build/consts.inc build/tracks.bin $(wildcard include/*)
+build/fzero.o: fzero.asm build/consts.inc build/physics.inc build/tracks.bin $(wildcard include/*)
 	rgbasm -I include -o $@ fzero.asm
 
 build/%.o: build/%.asm

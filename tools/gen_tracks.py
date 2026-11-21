@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The tracks.  Each becomes a 512-byte block that fzero.asm copies into RAM when it is chosen:
 
-    0    bend of each chunk (0 hard left .. 32 straight .. 64 hard right; +128 = "special
-         tight": drawn the same, felt half as hard again)
+    0    bend of each chunk (0 hard left .. 32 straight .. 64 hard right: level L turns the
+         road L * 90 / 16 degrees in the chunk; +128 = "special tight": drawn tighter)
     64   the same for the tunnel short cut
     128  pace of the field through each chunk (1/16 unit per frame; each rival adds its skill)
     192  what appears LEAD chunks ahead on entering each chunk (see the codes below)
@@ -42,7 +42,10 @@ def chunk(n, extra=0):
 # A course is straights and corners, in chunks:
 #   ("S", n)              n chunks of straight
 #   ("R", level, n)       a right-hand corner n chunks long; ("L", ...) a left-hand one
-#   ("RT", level, n)      the same, "special tight": felt half as hard again
+#   ("RT", level, n)      the same, "special tight": it looks tighter than it is
+# No corner is tighter than level 16 (90 degrees in a chunk, a radius of 163 units): F-Zero's
+# own courses are never tighter than that (tools/FZERO_DYNAMICS.md), and its driving is fsub's.
+# A sharper turn is spread over more chunks.
 # A corner turns level * n / 16 quarter-turns: level 16 for one chunk is 90 degrees, 32 for
 # one chunk is a 180-degree hairpin, 8 for two chunks a 90-degree sweeper.  A lap must turn
 # exactly once round (so three rights and a left come out even), and corners in opposite
@@ -58,7 +61,7 @@ def course(sections):
             last = None
             continue
         kind, level, n = s
-        assert level in (8, 16, 24, 32), s
+        assert level in (8, 16), f"{s}: no tighter than level 16 (F-Zero's tightest)"
         right = kind[0] == "R"
         assert last in (None, right), f"{s}: opposite corners need a straight between them"
         out += [(32 + level if right else 32 - level) | (TIGHT if kind.endswith("T") else 0)] * n
@@ -72,7 +75,7 @@ def course(sections):
 TRACKS = [
     dict(  # 0  NEO CITY: a bit of everything
         skyline=FUTURE, palset=SET_CITY, exit=28, skip=3,
-        course=[("S", 6), ("R", 8, 2), ("S", 3), ("L", 16, 1), ("S", 6), ("R", 32, 1), ("S", 3),
+        course=[("S", 6), ("R", 8, 2), ("S", 3), ("L", 16, 1), ("S", 6), ("R", 16, 2), ("S", 2),
                 ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 7), ("R", 8, 2),     # (sweepers to carve:
                 ("S", 2), ("L", 8, 2), ("S", 6), ("R", 16, 1), ("S", 3), ("L", 16, 1), ("S", 4),   # the inside
                 ("R", 16, 1), ("S", 2), ("R", 8, 2), ("S", 4)],                  # is the short way)
@@ -123,12 +126,13 @@ TRACKS = [
                 24: PAD_R, 42: PAD_L,                   # (the wind blows you off a pad's middle)
                 55: B1, 60: DIRT_L, 62: PAD_R},
         bands=START_LINE),
-    dict(  # 3  OLD PORT: sharp corners close together, and one tighter than anything else
+    dict(  # 3  OLD PORT: corners close together, and two hairpins
         skyline=OLDTOWN, palset=SET_CITY, exit=0, skip=0,
-        course=[("S", 4), ("R", 24, 1), ("S", 2), ("L", 24, 1), ("S", 3), ("RT", 32, 1), ("S", 4),
+        course=[("S", 4), ("R", 16, 1), ("R", 8, 1), ("S", 1), ("L", 16, 1), ("L", 8, 1), ("S", 2),
+                ("RT", 16, 2), ("S", 3),
                 ("L", 16, 1), ("S", 2), ("R", 16, 1), ("S", 2), ("L", 16, 1), ("S", 2),
-                ("R", 16, 1), ("S", 4), ("R", 32, 1), ("S", 3), ("L", 24, 1), ("S", 3),
-                ("R", 24, 1), ("S", 4), ("L", 16, 1), ("S", 3), ("R", 16, 1), ("S", 16)],
+                ("R", 16, 1), ("S", 4), ("R", 16, 2), ("S", 2), ("L", 16, 1), ("L", 8, 1), ("S", 2),
+                ("R", 16, 1), ("R", 8, 1), ("S", 3), ("L", 16, 1), ("S", 3), ("R", 16, 1), ("S", 16)],
         scenes=[(16, 0), (10, 1), (38, 0)],             # the dock chicane runs under the docks
         wind=[(64, 0)],
         things={9: B0,                                  # last marker before the Tight One (11)
@@ -150,19 +154,23 @@ def spread(sections, what):
     return out
 
 
-# how hard bends push the car, as the game has it
-PUSH_K = int(re.search(r"DEF PUSH_K +EQU +(\d+)", open(os.path.join(os.path.dirname(__file__), "..", "fzero.asm")).read())[1])
+sys.path.insert(0, os.path.dirname(__file__))
+import gen_physics                              # noqa: E402  (F-Zero's driving, in fsub's units)
 
-
-ACE_STRAIGHT = 8.4                              # the best rival's speed on the straight
+ACE_STRAIGHT = 7.9                              # the best rival's speed on the straight: just
+                                                # under the top speed (8), which the car only
+                                                # creeps up to (F-Zero's acceleration)
+STEP = 2 * math.pi / 192                        # radians in an angle step
 
 
 def corner_speed(b, n):
-    """The fastest a good driver takes n chunks of bend b, letting it throw the car no more
-    than 40 pixels out: the push is PUSH_K * 16/1024 * speed^2 * bend / 512 pixels a frame,
-    against 1.5 of steering (see PushScale in fzero.asm)."""
-    push, v = PUSH_K * 16 / 1024 / 512, 12.0
-    while v > 2 and (push * v * v * b - 1.5) * 256 * n / v > 40:
+    """The fastest a good driver takes n chunks of bend level b: where the most the car can
+    turn at that speed (full lock, F-Zero's turn factor for the speed: gen_physics.py) is what
+    the road turns under it (b * 3 / 256 steps a unit: a level of 16 turns 90 degrees in a
+    chunk).  (The same however long the corner: F-Zero's turning is steady.)"""
+    curvature = b * 3 / 256 * STEP
+    v = 12.0
+    while v > 2 and 14 * gen_physics.turn_factor(v / gen_physics.S) * 4 / 8 / 256 * STEP < curvature * v:
         v -= 0.05
     return v
 
@@ -172,7 +180,7 @@ def paces(bends):
     skill adds back: flat out on the straight, and each corner as a good driver takes it."""
     out = []
     for i, bend in enumerate(bends):
-        b = abs((bend & 127) - 32) * (1.5 if bend & TIGHT else 1)
+        b = abs((bend & 127) - 32)
         start, end = i, i + 1                     # the whole of the corner this chunk is in
         while bends[(start - 1) % 64] == bend and end - start < 8:
             start -= 1

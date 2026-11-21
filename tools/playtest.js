@@ -25,7 +25,7 @@ const fs = require('fs'), vm = require('vm'), path = require('path');
 const ROOT = path.join(__dirname, '..');
 vm.runInThisContext(fs.readFileSync(ROOT + '/web/binjgb.js', 'utf8') + '\nglobalThis.Binjgb = Binjgb;');
 const sym = {};
-for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { const m = l.match(/^00:([0-9a-f]{4}) (\w+)$/i); if (m) sym[m[2]] = parseInt(m[1], 16); }
+for (const l of fs.readFileSync(ROOT + '/fzero.sym', 'utf8').split('\n')) { const m = l.match(/^[0-9a-f]+:([0-9a-f]{4}) (\w+)$/i); if (m) sym[m[2]] = parseInt(m[1], 16); }
 const args = process.argv.slice(2);
 const KINDS = ['masher', 'casual', 'expert', 'human', 'lifter', 'guided'];
 let advise = null;                               // web/guide.js's, for the guided bot
@@ -37,7 +37,9 @@ const carAt = args.indexOf('--car'), car = carAt >= 0 ? +args[carAt + 1] : 0;   
 const modeAt = args.indexOf('--mode'), mode = modeAt >= 0 ? +args[modeAt + 1] : 0;   // (0 RACE, 3 LEARN: never ranked out)
 const gifAt = args.indexOf('--gif');
 const asmConst = name => +fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)'))[1];
-const PLAYER_Z = asmConst('PLAYER_Z'), PUSH = asmConst('PUSH_K') * 16 / 1024 / 2 / 256;
+const asmConstOr = (name, dflt) => { const m = fs.readFileSync(ROOT + '/fzero.asm', 'utf8').match(new RegExp('DEF ' + name + ' +EQU +(\\d+)')); return m ? +m[1] : dflt; };
+const PLAYER_Z = asmConst('PLAYER_Z');
+const BRAKING = 13 / 256;                        // F-Zero's brakes near the top speed (BrakeTab): speed lost a frame
 
 async function race(kind, record) {
   const wasm = fs.readFileSync(ROOT + '/web/binjgb.wasm');   // (instantiateWasm: newer Emscripten builds ignore wasmBinary)
@@ -46,11 +48,19 @@ async function race(kind, record) {
   const ptr = m._malloc(size); new Uint8Array(m.HEAP8.buffer, ptr, size).fill(0).set(rom);
   const e = m._emulator_new_simple(ptr, size, 44100, 4096, 2); m._emulator_set_default_joypad_callback(e, m._joypad_new());
   const rd = a => m._emulator_read_mem(e, a), s8 = v => (v << 24) >> 24, s16 = v => (v << 16) >> 16;
-  const carK = () => rd((rd(sym.wPush) | rd(sym.wPush + 1) << 8) + 32);   // (its PushScale at speed 8: its K)
+  // The fastest the car follows a bend of level b: its turning at full lock (14 stage steps x its
+  // turn table, the game's wTurnTab, / 4) against the road's turn under it (3b / 256 steps a unit).
+  const limit = (b) => { if (Math.abs(b) < 3) return 12; for (let v = 12; v > 2; v -= 0.05) { if (14 * rd(sym.wTurnTab + Math.min(63, Math.floor(v * 4))) / 4 / 256 >= 3 * Math.abs(b) / 256 * v) return v; } return 2; };
+  let lastFace = 0, lastX = 0;                    // (where the car pointed last frame, against the road, and where it was)
   const keys = {}; const set = (k, v) => { if (!!keys[k] !== !!v) { keys[k] = !!v; m['_set_joyp_' + k](e, v ? 1 : 0); } };
-  let ticks = 0; const step = () => { ticks += 70224; for (;;) { if (m._emulator_run_until_f64(e, ticks) & 4) break; } };
-  // a chunk's bend as the car feels it: the top bit marks a corner half as tight again
-  const felt = v => ((v & 127) - 32) * (v & 128 ? 1.5 : 1);
+  const inputLog = []; const replay = process.env.REPLAY_INPUTS ? JSON.parse(fs.readFileSync(process.env.REPLAY_INPUTS, 'utf8')) : null;
+  let ticks = 0; const step = () => {
+    if (replay && inputLog.length >= replay.length) throw new Error('Input replay ended before the race finished');
+    if (replay) { for (const k of ['up', 'down', 'left', 'right', 'start', 'select', 'A', 'B']) set(k, replay[inputLog.length].includes(k)); }
+    inputLog.push(Object.keys(keys).filter(k => keys[k]));
+    ticks += 70224; for (;;) { if (m._emulator_run_until_f64(e, ticks) & 4) break; } };
+  // a chunk's bend (its true curvature: the top bit, "special tight", only changes the look)
+  const felt = v => (v & 127) - 32;
   const bendAt = chunk => felt(rd(sym.wTrackBend + (chunk & 63)));
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
@@ -94,9 +104,10 @@ async function race(kind, record) {
       endAt = i; continue;
     }
     // ---- the bot
-    const x = s8(rd(sym.hX + 1)), bend = (rd(sym.hBend) - 32) * (rd(sym.wTight) ? 1.5 : 1), speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
+    const x = s16(rd(sym.hX) | rd(sym.hX + 1) << 8) / 256, bend = rd(sym.hTarget) - 32, speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
+    const face = s16(rd(sym.wFacing) | rd(sym.wFacing + 1) << 8) / 256;   // where the car points, against the road (steps)
     const pos = rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8, chunk = (pos >> 8) & 63, boosts = rd(sym.hBoosts), air = rd(sym.hAir);
-    let target = 0, gas = true, brake = false, boost = false, healing = false;
+    let target = 0, gas = true, brake = false, boost = false, healing = false, steer = null, dive = false, noseUp = false;
     const objs = [];
     for (let k = 0; k < 2; k++) { const a = sym.wObjSlots + k * 4; if (rd(a)) objs.push({ kind: rd(a + 1), dist: ((rd(a + 2) | rd(a + 3) << 8) - pos) & 0xffff }); }
     // (human, lifter: the objects as they were REACT frames ago, moved on by how far we came)
@@ -104,13 +115,13 @@ async function race(kind, record) {
     const late = seen.length > REACT ? seen[0] : null;
     const lateObjs = late ? late.objs.map(o => ({ ...o, dist: (o.dist - ((pos - late.pos) & 0xffff)) & 0xffff })).filter(o => o.dist < 0x8000) : [];
     const dodge = (reach, list = objs) => { for (const o of list) { if (o.dist > reach) continue;
-      if (o.kind === 0) { if (kind === 'expert') target = -24; else if (x < 0) target = 14; }       // tunnel mouth: left lane
-      else if (o.kind <= 4) { const lane = [-36, -12, 12, 36][o.kind - 1]; const at = target || x;
-        if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -38 : 38) : (lane > 0 ? lane - 30 : lane + 30); }   // a middle lane: go to the wall on our side
-      else if (o.kind <= 6) target = o.kind === 5 ? 22 : -22;                                       // dirt: other half
-      else if (o.kind <= 8) { if (kind !== 'masher') target = o.kind === 7 ? -28 : 28; }            // boost pad: go to its middle
-      else if (o.kind >= 11) { if (kind !== 'masher' && (o.kind === 11 ? x < -8 : x > 8)) target = o.kind === 11 ? 22 : -22; }   // a ramp: keep off it (it is 18 either side of 28)
-      else if (kind !== 'masher' && rd(sym.hHealth) < 52) { target = o.kind === 9 ? -24 : 24; healing = true; } } };   // recharge patch: go to it if hurt
+      if (o.kind === 0) { if (kind === 'expert') target = -36; else if (x < 0) target = 21; }       // tunnel mouth: left lane
+      else if (o.kind <= 4) { const lane = [-54, -18, 18, 54][o.kind - 1]; const at = target || x;
+        if (Math.abs(at - lane) < 22) target = (o.kind === 2 || o.kind === 3) ? (at < 0 ? -57 : 57) : (lane > 0 ? lane - 36 : lane + 36); }   // a middle lane: go to the wall on our side
+      else if (o.kind <= 6) target = o.kind === 5 ? 40 : -40;                                       // dirt (18 either side of the line, 24 wide each way): off it
+      else if (o.kind <= 8) { if (kind !== 'masher') target = o.kind === 7 ? -18 : 18; }            // boost pad: go to its middle
+      else if (o.kind >= 11) { if (kind !== 'masher' && Math.abs(x - (o.kind === 11 ? -18 : 18)) < 30) target = o.kind === 11 ? 40 : -40; }   // a ramp: keep off it
+      else if (kind !== 'masher' && rd(sym.hHealth) < 52) { target = o.kind === 9 ? -18 : 18; healing = true; } } };   // recharge patch: go to it if hurt
     if (kind === 'casual') {
       dodge(330);
       if (Math.abs(bend) > 16 && speed > 6.2 && Math.abs(x) > 20) brake = true;
@@ -120,8 +131,10 @@ async function race(kind, record) {
       // pointed to (steered for as a person would, watching the car).
       told.push(advise(rd, sym)); if (told.length > REACT + 1) told.shift();
       const a = told.length > REACT ? told[0] : null;
+      if (process.env.TRACE && a && out.frames % +process.env.TRACE === 0) console.log('  guide', a.act, a.target, a.why, a.actWhy);
       if (a && a.act) {
         gas = ['gas', 'boost', 'ready'].includes(a.act); brake = a.act === 'brake'; boost = a.act === 'boost';
+        dive = a.act === 'dive'; noseUp = a.act === 'level';
         if (typeof a.target === 'number') target = a.target;
       }
     } else if (kind === 'lifter') {
@@ -131,35 +144,44 @@ async function race(kind, record) {
       // (off the gas from a little before the corner to its end: lc is where it was REACT ago)
       const near = [0, 1].map(k => bendAt(lc + k)).find(b => Math.abs(b) >= 16);
       if ((near !== undefined || Math.abs(bendAt(lc)) >= 16) && speed > 4) gas = false;   // (lifting, not stopping)
-      if (Math.abs(bend) > 2) target = bend > 0 ? 30 : -30;
+      if (Math.abs(bend) > 2) target = bend > 0 ? 36 : -36;
       dodge(480, lateObjs);
     } else if (kind === 'expert' || kind === 'human') {
-      // A corner pushes the car outward by K * speed^2 * bend pixels a frame, against 1.5 of
-      // steering.  Take each corner ahead no faster than lets it drift 40 pixels before it
-      // ends, and start braking for it in time (the brake takes off 0.078 a frame).
-      const carPush = PUSH * carK() / 72, steer = 1.5 * rd(sym.wSteer) / 24;
-      const car = pos + PLAYER_Z, drift = (b, len) => { let v = 12; while (v > 2 && (carPush * v * v * Math.abs(b) - steer) * len / v > 40) v -= 0.05; return v; };
+      // Take each corner ahead no faster than the car can turn to follow it (F-Zero's turning at
+      // full lock against the road's turn under it), and start braking for it in time.
+      const car = pos + PLAYER_Z;
       let want = 12;
       // (human: plans from where it was REACT frames ago, and leaves itself a margin)
       const plan = kind === 'human' && late ? late.pos + PLAYER_Z : car, margin = kind === 'human' ? 0.35 : 0;
       for (let c = plan >> 8; c < (plan >> 8) + 4; c++) {
         const b = bendAt(c); if (Math.abs(b) < 2) continue;
         let end = c + 1; while (end < c + 4 && bendAt(end) === b) end++;
-        const from = Math.max(plan, c * 256), v = drift(b, end * 256 - from) - margin;
-        want = Math.min(want, Math.sqrt(Math.max(0, v * v + 2 * 0.07 * (from - plan))));
+        const from = Math.max(plan, c * 256), v = limit(b) - margin;
+        want = Math.min(want, Math.sqrt(Math.max(0, v * v + 2 * BRAKING * (from - plan))));
         c = end - 1;
       }
       const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
-      if (Math.abs(ahead) > 2) target = ahead > 0 ? 30 : -30;        // the inside: the short way round
+      if (Math.abs(ahead) > 2) target = ahead > 0 ? 36 : -36;        // the inside: the short way round
       if (kind === 'human') dodge(480, lateObjs); else dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
-      if (speed > want + 0.15) { gas = false; brake = speed > want + 0.5; }
+      if (speed > want + 0.15) { gas = false; brake = true; }       // (off the gas alone F-Zero's car barely slows)
+      if (process.env.TRACE && out.frames % +process.env.TRACE === 0) console.log('  want', want.toFixed(2), 'limits 8/16', limit(8).toFixed(2), limit(16).toFixed(2), 'tab', [0, 16, 32, 48].map(q => rd(sym.wTurnTab + q)), 'sym', sym.wTurnTab && sym.wTurnTab.toString(16), 'bends', [0, 1, 2, 3].map(k => bendAt((plan >> 8) + k)));
       const straight = [0, 1, 2].every(k => Math.abs(bendAt(chunk + k)) < 3) && Math.abs(bend) < 3;
       if (boosts && straight && speed > 7.6) boost = true;
     }
-    set('left', !air && x > target + 2); set('right', !air && x < target - 2);
-    set('B', gas); set('A', brake); set('up', boost && !keys.up);
+    // Steering, as F-Zero's car turns: point it at the target (a step of facing for each 6 pixels
+    // to go, up to 6), allowing for how fast the facing is already swinging (the turn carries on
+    // a moment after the d-pad is let go).  (guided: as the guide said.)
+    // (and for where it is going across the road, as a person sees it drift: a wind's push too)
+    const vx = Math.abs(x - lastX) < 8 ? x - lastX : 0;
+    if (steer === null) { const want = Math.max(-6, Math.min(6, (target - x - vx * 12) / 6)), err = want - face - (face - lastFace) * 8; steer = Math.abs(err) > 1 ? Math.sign(err) : 0; }
+    lastFace = face; lastX = x;
+    set('left', !air && steer < 0); set('right', !air && steer > 0);
+    if (process.env.TRACE && out.frames % +process.env.TRACE === 0) console.log('t', out.frames, 'chunk', ((pos + PLAYER_Z) >> 8) & 63, 'x', x.toFixed(1), 'face', face.toFixed(2), 'speed', speed.toFixed(2), 'target', target, 'steer', steer, 'gas', gas, 'brake', brake, 'hp', rd(sym.hHealth));
+    set('B', gas); set('A', brake); set('up', dive || (boost && !keys.up)); set('down', noseUp);
   }
+  if (process.env.RECORD_INPUTS) fs.writeFileSync(process.env.RECORD_INPUTS, JSON.stringify(inputLog));
+  if (process.env.RESULT_JSON) fs.writeFileSync(process.env.RESULT_JSON, JSON.stringify(out, null, 2) + '\n');
   if (record && frames.length) fs.writeFileSync(record[2] + '.rgba', Buffer.concat(frames));
   return out;
 }

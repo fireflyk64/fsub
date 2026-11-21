@@ -1,0 +1,18 @@
+[
+  {"frames": 180, "buttons": []},
+  {"frames": 1, "buttons": ["START"]},
+  {"frames": 40, "buttons": []},
+  {"frames": 1, "buttons": ["START"]},
+  {"frames": 60, "buttons": []},
+  {"frames": 1, "buttons": ["A"]},
+  {"frames": 60, "buttons": []},
+  {"frames": 1, "buttons": ["A"]},
+  {"frames": 120, "buttons": []},
+  {"frames": 1, "buttons": ["A"]},
+  {"frames": 200, "buttons": []},
+  {"frames": 1, "buttons": ["B"]},
+  {"frames": 150, "buttons": []},
+  {"frames": 1, "buttons": ["B"]},
+  {"frames": 250, "buttons": []},
+  {"frames": 500, "buttons": ["B"]}
+]

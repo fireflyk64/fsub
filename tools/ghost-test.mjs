@@ -51,12 +51,27 @@ function run(n, each) {
   }
 }
 const tap = (k, n = 3) => { key(k, 1); run(n); key(k, 0); run(n); };
-// A plain driver: the gas, the middle of the road, the inside of a bend; lift: let go of the
-// gas for that share of the frames (a slower run).
+// A plain driver for F-Zero's driving: it points the car back to the middle of the road (its
+// facing against the road's, damped by how fast that is changing: the turn carries on a moment
+// after the d-pad is let go), steps round a barrier or dirt met at the next chunk, and brakes
+// for a hairpin; lift: let go of the gas for that share of the frames (a slower run).
+const LANES = [-54, -18, 18, 54];
+let lastFace = 0;
 const drive = (lift) => () => {
-  const x = s8(rd(sym.hX + 1)), bend = rd(sym.hBend) - 32, target = Math.abs(bend) > 2 ? Math.sign(bend) * 20 : 0;
-  key("left", x > target + 3); key("right", x < target - 3);
-  key("B", !(lift && frame % 10 < lift * 10));
+  const x = s16(rd(sym.hX) | rd(sym.hX + 1) << 8) / 256, face = s16(rd(sym.wFacing) | rd(sym.wFacing + 1) << 8) / 256;
+  const speed = (rd(sym.hSpeed) | rd(sym.hSpeed + 1) << 8) / 256;
+  const chunk = ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + 175) >> 8;
+  const bend = (c) => Math.abs((rd(sym.wTrackBend + (c & 63)) & 127) - 32);
+  const next = rd(sym.wChunkSpawn + ((chunk - 2) & 63));    // (what is met at the start of the next chunk)
+  let target = 0;
+  if (next >= 2 && next <= 5) target = Math.abs(LANES[next - 2]) > 40 ? 0 : LANES[next - 2] < 0 ? 36 : -36;
+  else if (next === 6) target = 26;                          // (dirt on the left)
+  else if (next === 7) target = -26;
+  const want = Math.max(-6, Math.min(6, (target - x) / 6)), err = want - face - (face - lastFace) * 8;
+  lastFace = face;
+  const brake = Math.max(bend(chunk), bend(chunk + 1)) >= 16 && speed > 6.2;
+  key("right", err > 1); key("left", err < -1);
+  key("A", brake); key("B", !brake && !(lift && frame % 10 < lift * 10));
 };
 
 run(120);
@@ -64,7 +79,7 @@ tap("right"); tap("right"); tap("down"); tap("down"); for (let k = 0; k < 4; k++
 check("menu: Gold Wind, no rivals", rd(sym.hTrackNo) === 2 && rd(sym.hLevel) === 0, [rd(sym.hTrackNo), rd(sym.hLevel)]);
 tap("start");
 for (let k = 0; k < 9000 && rd(sym.hState) === 0; k++) run(1, drive(0));
-for (const k of ["B", "left", "right"]) key(k, 0);
+for (const k of ["A", "B", "left", "right"]) key(k, 0);
 run(30);
 const first = finishes[0];
 check("the race is finished and timed", !!first && first.laps === 3 && first.lapTimes.length === 3, first && { total: clock(first.total), laps: first.lapTimes.map(clock) });

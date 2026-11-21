@@ -69,6 +69,7 @@
 
 INCLUDE "include/hardware.inc"
 INCLUDE "build/consts.inc"
+INCLUDE "build/physics.inc"
 
 DEF GFX_BANK    EQU 2           ; per-line bend and shear tables, read every frame
 DEF TILE_BANK   EQU 4           ; tiles and tilemap, copied to VRAM once
@@ -111,7 +112,6 @@ DEF SKID_COST   EQU $000C       ; extra speed a skid turn scrubs off per frame
 DEF RAIL_BOUNCE EQU 20          ; sideways speed coming back off the rail
 DEF RAIL_COST   EQU 5           ; health lost hitting it
 DEF RAIL_COOL   EQU 45          ; frames before another hit can hurt again
-DEF PUSH_K      EQU 72          ; how hard bends throw the car outward (see PushScale)
 DEF CATCH_UP    EQU 6           ; extra pace for rivals just behind the player (1/16 unit)
 DEF CATCH_UP_FAR EQU 18         ; ...and for ones over two chunks behind: the field stays in
                                 ; touch whatever the level (ROOKIE's rivals are 16 slower)
@@ -172,16 +172,33 @@ DEF FREE_X        EQU %01000000 ; lane byte: not in a lane; x is in the skill by
 DEF HIDDEN        EQU -30000    ; a distance no car is ever seen at
 DEF OBJ_SPRITES EQU 5           ; OAM entries kept for each road object
 DEF OBJ_SLOTS   EQU 2           ; road objects that can be out at once
-DEF LANE_EDGE   EQU -6          ; left of this, the car is in the tunnel's lane
+DEF LANE_EDGE   EQU -9          ; left of this, the car is in the tunnel's lane
+DEF PATCH_X     EQU 18          ; the middle of a patch (dirt, a pad, a recharge strip, a ramp):
+                                ; this far either side of the line, in the inner rivals' lane
+                                ; (gen_gfx.py RIVAL_LANES: where they are drawn), so that the
+                                ; middle of the road crosses it, as F-Zero's line crosses its
+                                ; dirt and its plates
+DEF PATCH_HALF  EQU 24          ; ...and it is this wide either side of that, as it is drawn
+                                ; (DirtSize3: 40 pixels at the car's line): where it looks to be,
+                                ; and nowhere else
+    ASSERT PATCH_X == -INNER_LANE_X
 DEF SCX_STAMP   EQU 200         ; offset in an SCX page of its (bend, shear) note
 DEF FADE_LENGTH EQU 64          ; frames; the switch happens half way, in the dark
 DEF X_LIMIT     EQU ROAD_HALF - 12  ; how far from the centre line the car may go
-DEF STEER_MAX   EQU 24          ; sideways speed, 1/16 pixel per frame
+DEF STEER_MAX   EQU 24          ; (unused: see Steer)
+DEF KNOCK_SLIDE EQU 8           ; steps a rival's bump knocks where the car is going
+DEF BARRIER_SLIDE EQU 12        ; ...and a barrier
+DEF KNOCK_DAZE  EQU 4           ; frames without control after a bump
 DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
-DEF JUMP_RAMP   EQU $0300       ; take-off speed from a ramp: about 38 frames in the air
+DEF JUMP_RAMP   EQU $0300       ; (unused: a ramp throws the car up by its speed, JumpUp)
 DEF LAND_SLIDE  EQU 24          ; frames after landing that steering takes hold slowly
-DEF GRAVITY     EQU $28
+DEF JUMP_VZ_MAX  EQU $83        ; up off a ramp no faster than F-Zero's 4.5 units a frame (in
+                                ; 256ths of a pixel of height: its units x S / 8)
+DEF GRAVITY     EQU $03         ; F-Zero's fall (25/256 of its units), in pixels of height:
+                                ; its units x S / 8
+DEF GRAVITY_DIVE EQU $10        ; ...with the nose down (Up): five and a half times
+DEF LAND_BOUNCE EQU $49         ; landing faster than this bounces (F-Zero's 2.5)
 
 ; ---------------------------------------------------------------------------------------
 SECTION "vblank vector", ROM0[$40]
@@ -293,9 +310,11 @@ VBlankISR:
     ldh a, [hHudDirty]
     or a
     jr z, .noHud
+IF RESULT_BAR
     ld a, [wPainted]            ; (its tiles lent to the place painted on the road: blank)
     or a
     jr nz, .noHud
+ENDC
     ldh [hHudDirty], a
     push bc
     push de
@@ -445,6 +464,8 @@ EntryPoint:
     ldh [hFront], a
     ld a, LEVEL_START
     ldh [hLevel], a
+
+    call InitMaths
 
     ld de, note_table_rom       ; this driver plays from a RAM copy of the note table
     ld hl, wNoteTable
@@ -808,10 +829,10 @@ LoadTrackData:
     ld hl, wChunkSpawn
     add hl, de
     ld a, [hl]
-    ld b, %0011                 ; the left half: lanes 0 and 1
+    ld b, %0010                 ; a ramp on the left: the inner left lane (-PATCH_X) is on it
     cp JUMP_L
     jr z, .ramp
-    ld b, %1100
+    ld b, %0100
     cp JUMP_R
     jr nz, .notRamp
 .ramp
@@ -1242,7 +1263,7 @@ CornerAhead:
     ld hl, wTunnelBend
 .aheadTable
     ld b, 8                     ; look up to 8 chunks ahead
-    ldh a, [hBend]
+    ldh a, [hTarget]            ; (the road's own bend, not the view's)
     ldh [hNear], a
 .ahead
     ld a, e
@@ -1267,7 +1288,8 @@ CornerAhead:
     ld c, 0
     ret                         ; the same bend all the way to the horizon
 .found
-    ld a, d
+    ld a, d                     ; (swung with the view, as the near road is)
+    call SwingView
     ldh [hFar], a
     ld d, e                     ; how far ahead of the camera that chunk starts
     ldh a, [hPos + 1]
@@ -1586,6 +1608,7 @@ PlayerSprites:
     ; faster (2.25 pixels a unit of speed: standing still at the left, a boost at the right)
 .speedo
     ld hl, wOam + SPEEDO_OAM
+IF RESULT_BAR
     ld a, [wPainted]            ; (not while the bar is lent to the place painted on the road)
     or a
     jr z, .speedoOn
@@ -1593,6 +1616,7 @@ PlayerSprites:
     ld [hl], a
     ret
 .speedoOn
+ENDC
     ld a, HUD_LINE + 16 - 8     ; (an 8x16 sprite whose drawn rows are the bottom eight)
     ld [hl+], a
     ldh a, [hSpeed + 1]
@@ -2106,12 +2130,12 @@ UpdateRivals:
     add 13
     cp 27
     jr nc, .noHit
-    ld a, STEER_MAX             ; we bounce off...
+    ld a, KNOCK_SLIDE           ; we bounce off (where the car is going is knocked away)...
     bit 7, d
     jr z, .shove
-    ld a, -STEER_MAX
+    ld a, -KNOCK_SLIDE
 .shove
-    ldh [hVX], a
+    call Knocked
     ld h, HIGH(wRivals)         ; ...and it is knocked a lane away and stunned
     ldh a, [hRivalRec]
     add 4
@@ -2385,19 +2409,16 @@ UpdateObject:
     jp z, .mouth
     cp KIND_DIRT_L
     jp c, .barrier
-    ld e, a                     ; a patch over half the road (odd kinds left, even right):
-    rra                         ; are we on that half?
+    ld e, a                     ; a patch (odd kinds left, even right): are we on it?
+    rra
     ldh a, [hX + 1]
     jr nc, .patchRight
-    cp $FE                      ; left half: x of -3 or less
-    jp nc, .draw
-    cp $80
-    jp c, .draw
-    jr .onPatch
+    add PATCH_X * 2             ; (left: x + PATCH_X, less the right's - PATCH_X below)
 .patchRight
-    cp 3                        ; right half: x of 3 or more
-    jp c, .draw
-    cp $80
+    sub PATCH_X                 ; x from its middle
+    ld d, a
+    add PATCH_HALF
+    cp PATCH_HALF * 2 + 1
     jp nc, .draw
 .onPatch
     ld a, e
@@ -2470,15 +2491,7 @@ UpdateObject:
     ldh a, [hBoost]             ; a boost pad: a free burst, all of it within 12 pixels of
     or a                        ; the pad's middle, two thirds of it for its edge
     jp nz, .draw
-    ld a, e
-    rra
-    ld a, 28                    ; (the middle of a pad: 28 pixels either side of the line)
-    jr nc, .padRight
-    ld a, -28
-.padRight
-    ld d, a
-    ldh a, [hX + 1]
-    sub d
+    ld a, d                     ; (x from its middle)
     add 12
     cp 25
     ld a, DASH_TIME
@@ -2489,28 +2502,10 @@ UpdateObject:
     ld a, SFX_BOOST
     call Sfx
     jp .draw
-.onRamp                         ; a ramp (drawn as the tunnel mouth, in grey): only within
-    ld a, e                     ; 18 pixels of its middle (28 either side of the line), as
-    rra                         ; it looks; miss it and nothing happens
-    ld a, 28
-    jr nc, .rampRight
-    ld a, -28
-.rampRight
-    ld d, a
-    ldh a, [hX + 1]
-    sub d
-    add 18
-    cp 37
-    jp nc, .draw
-    ldh a, [hVX]                ; up into the air.  Half the slide the car had carries on, with
-    sra a                       ; no grip up there to stop it: come down off the edge and the
-    ldh [hVX], a                ; car is gone, so go over it straight
-    ld a, 1
-    ldh [hAir], a
-    ld a, LOW(JUMP_RAMP)
-    ldh [hVZ], a
-    ld a, HIGH(JUMP_RAMP)
-    ldh [hVZ + 1], a
+.onRamp                         ; a ramp (drawn as the tunnel mouth, in grey): on it, as it
+    call JumpUp                 ; looks; miss it and nothing happens                 ; up into the air, as fast as half the speed (F-Zero's).  The
+                                ; slide carries on up there, with little grip to stop it:
+                                ; come down off the edge and the car is gone
     ld a, DASH_TIME             ; and a full boost forward (with its surge and flash), which
     ldh [hBoost], a             ; it keeps through the air: no drag up there
     xor a
@@ -2534,12 +2529,12 @@ UpdateObject:
     call Damage
     ld a, SFX_CRUNCH
     call Sfx
-    ld a, STEER_MAX
+    ld a, BARRIER_SLIDE         ; (where the car is going knocked away)
     bit 7, e
     jr z, .knocked
-    ld a, -STEER_MAX
+    ld a, -BARRIER_SLIDE
 .knocked
-    ldh [hVX], a
+    call Knocked
     push bc
     call RivalPounce
     pop bc
@@ -2562,9 +2557,11 @@ UpdateObject:
     jr z, .laneFound
     cp KIND_DIRT_L
     jr c, .barrierLane
+    ld h, HIGH(RivalLanes)      ; patches: in the inner left rival lane (-PATCH_X)...
+    set 7, l
     rra
-    jr c, .laneFound            ; left-hand patches are where the tunnel mouth goes
-    ld a, [hl]                  ; right-hand ones: the same distance the other way
+    jr c, .laneFound
+    ld a, [hl]                  ; ...right-hand ones the same distance the other way
     cpl
     inc a
     jr .haveLane
@@ -2916,27 +2913,16 @@ RoadFeatures:
 .notDash
     cp FEATURE_DIRT
     jr nz, .notDirt
-    ldh a, [hSpeed + 1]         ; dirt: drags the car down to a crawl
-    cp DIRT_SPEED
-    jr c, .notOn
-    ldh a, [hSpeed]
-    sub LOW(DIRT_DRAG)
-    ldh [hSpeed], a
-    jr nc, .notOn
-    ldh a, [hSpeed + 1]
-    dec a
-    ldh [hSpeed + 1], a
+    ld a, 2                     ; dirt: a crawl's top speed while on it (Drive)
+    ldh [hDirt], a
     jr .notOn
 .notDirt
     cp FEATURE_JUMP
     jr nz, .notOn
-    xor a                       ; jump plate: thrown into the air, straight (any sideways
-    ldh [hVX], a                ; slide would otherwise carry on all the way to the landing)
-    ld a, 1
-    ldh [hAir], a
-    ld a, LOW(JUMP_PLATE)
-    ldh [hVZ], a
-    ld a, HIGH(JUMP_PLATE)
+    push bc                     ; jump plate: thrown into the air
+    call JumpUp
+    pop bc
+    ldh a, [hVZ + 1]
     ldh [hVZ + 1], a
 .notOn
     ; --- paint it: white, black for a jump plate; a dash plate flashes
@@ -4050,6 +4036,17 @@ InitRace:
     ldh [hX], a
     ldh [hX + 1], a
     ldh [hVX], a
+    ld hl, wFacing              ; pointing, going and turning straight along the road
+    ld b, wWallTick - wFacing + 1
+.straight
+    ld [hl+], a
+    dec b
+    jr nz, .straight
+    ld a, LOW(TURN_ACC0)
+    ld [wStageAcc], a
+    ld a, HIGH(TURN_ACC0)
+    ld [wStageAcc + 1], a
+    xor a
     ldh [hAir], a
     ldh [hZ], a
     ldh [hZ + 1], a
@@ -4261,16 +4258,11 @@ Drive:
     dec a
     ldh [hLapFlash], a
 .lapFlash
-    ldh a, [hDirt]              ; in the dirt: dragged down toward a crawl
-    or a
+    ldh a, [hDirt]              ; in the dirt: its top speed is a crawl (below), and the
+    or a                        ; car turns half as hard (Steer)
     jr z, .clean
     dec a
     ldh [hDirt], a
-    ld a, h
-    cp DIRT_SPEED
-    jr c, .clean
-    ld de, -DIRT_DRAG
-    add hl, de
 .clean
     ldh a, [hState]             ; a wreck: count its explosion along
     cp STATE_DEAD
@@ -4316,6 +4308,9 @@ Drive:
     call Sfx
 .noAlarm
     ; Up fires a boost if there is one
+    ldh a, [hAir]               ; (in the air, Up is the nose down instead)
+    or a
+    jr nz, .noFire
     ldh a, [hNewKeys]
     and PADF_UP
     jr z, .noFire
@@ -4352,62 +4347,126 @@ Drive:
     add hl, de
     ld a, h
     cp BOOST_MAX
-    jr c, .speedSet
+    jp c, .speedSet
     ld hl, BOOST_MAX << 8
-    jr .speedSet
+    jp .speedSet
 .cutBoost
     xor a
     ldh [hBoost], a
     ldh [hBoostSeen], a
 .noBoost
-    ld a, [wTop]                ; over the normal limit (after a boost): bleed back down
-    ld c, a
-    ld a, h
-    cp c
+    ; --- the speed: F-Zero's (gen_physics.py).  The top: the car's, or a crawl on dirt, or a
+    ; little less in the air
+    ld a, [wTop]
+    ld d, a
+    ld e, 0
+    ldh a, [hDirt]
+    or a
+    jr z, .topDirt
+    ld de, DIRT_TOP
+.topDirt
+    ldh a, [hAir]
+    or a
+    jr z, .topSet
+    ld a, d
+    cp HIGH(AIR_TOP)
+    jr c, .topSet
+    ld de, AIR_TOP
+.topSet
+    ld a, h                     ; over it (after a boost, or into dirt): bleed back down,
+    cp d                        ; with the brake on top if it is held
     jr c, .underLimit
-    ld de, -$0010
-    add hl, de
-    bit 7, b                    ; (with the brake on top)
+    jr nz, .overLimit
+    ld a, e
+    cp l
+    jr nc, .underLimit          ; (at the top exactly: under it)
+.overLimit
+    ld a, l
+    sub OVER_SPEED
+    ld l, a
+    jr nc, .overDone
+    dec h
+.overDone
+    bit 7, b
     jr nz, .braking
-    jr .speedSet
+    jp .speedSet
 .underLimit
+    ld a, [wWall]               ; at the rail, or bounced off it a moment ago (or knocked by a
+    or a                        ; car): no acceleration, and it slows the car
+    jr nz, .walled
+    ld a, [wNoControl]
+    or a
+    jr z, .offWall
+.walled
+    ld a, h
+    cp HIGH(WALL_SLOW_ABOVE)
+    jp c, .speedSet
+    ld de, -WALL_DRAG
+    add hl, de
+    jp .speedSet
+.offWall
     bit 1, b                    ; PADF_B
     jr z, .coast
-    ; the throttle: strong from rest, fading to nothing at top speed (the car's own curve)
-    ld a, [wTop]
-    sub h                       ; "gears" below the limit
-    ld c, a
-    ld a, [wGearK]
-    ld d, a
-    ld a, [wGrunt]
-.gear
-    add c
-    dec d
-    jr nz, .gear
+    ; the throttle: F-Zero's curve (strong from rest, a trickle near the top), times the car's
+    push de                     ; (the top)
+    ld a, h                     ; (the speed in quarters, 0..63)
+    cp 16
+    ld a, 63
+    jr nc, .quartered
+    ld a, h
+    add a
+    add a
+    ld e, a
+    ld a, l
+    rlca
+    rlca
+    and 3
+    or e
+.quartered
+    add LOW(wAccelTab)          ; (AccelTab x the car's accelMul / 4: LoadCar)
+    ld e, a
+    ld d, HIGH(wAccelTab)
+    ld a, [de]
     ld e, a
     ld d, 0
     add hl, de
-    ld a, [wTop]
-    ld c, a
-    ld a, h
-    cp c
+    pop de
+    ld a, h                     ; not past the top
+    cp d
     jr c, .throttled
-    ld h, c
-    ld l, 0
+    jr nz, .atTop
+    ld a, e
+    cp l
+    jr nc, .throttled
+.atTop
+    ld h, d
+    ld l, e
 .throttled
-    bit 7, b                    ; throttle and brake together: the brake wins a little
-    jr z, .speedSet
+    bit 7, b                    ; throttle and brake together: the brake wins a little...
+    jp z, .speedSet
+    ld a, b                     ; ...but with the steering too it is a lean into the turn
+    and PADF_LEFT | PADF_RIGHT  ; (F-Zero's L and R: Steer turns harder), not a brake
+    jp nz, .speedSet
 .braking                        ; the brakes take the edge off: they will not stop the car
     ld a, h
     cp BRAKE_FLOOR
     jr c, .speedSet
-    ld de, -BRAKE
-    ld a, b                     ; steering too: a skid turn, which scrubs speed itself
-    and PADF_LEFT | PADF_RIGHT  ; (SKID_COST): the brake bites half as hard, so a drift
-    jr z, .fullBrake            ; through a corner keeps more of its speed
-    ld de, -(BRAKE / 2)
+    call SpeedQuarters
+    ld e, a                     ; (BrakeTab starts a page)
+    ld d, HIGH(BrakeTab)
+    ld a, [de]
+    ld e, a
+    ld a, b                     ; steering too: a skid turn, which turns harder (Steer) and
+    and PADF_LEFT | PADF_RIGHT  ; brakes half as hard, so a drift through a corner keeps
+    jr z, .fullBrake            ; more of its speed
+    srl e
 .fullBrake
-    add hl, de
+    ld a, l
+    sub e
+    ld l, a
+    jr nc, .braked
+    dec h
+.braked
     ld a, h
     cp BRAKE_FLOOR
     jr nc, .speedSet
@@ -4428,7 +4487,7 @@ Drive:
 .rolling
     bit 7, b                    ; PADF_DOWN
     jr nz, .braking
-    ld de, -FRICTION
+    ld de, -COAST               ; off the gas: F-Zero's car barely slows
 .slow
     add hl, de
     jr c, .speedSet             ; no borrow
@@ -4600,26 +4659,103 @@ Drive:
     ldh [rAUD4GO], a
 .quiet
 
-    ; --- the racing line: in a bend the inside is the shorter way round, so the car covers
-    ; more of the course there and less on the outside: bend * speed * x / 4096 a frame,
-    ; 7% more on the usual inside line of a right angle, a third at the very inside of a
-    ; hairpin.  (Holding the inside at speed means fighting the bend's push: that is the
-    ; trade.)  The rivals are moved against this, not against the speed.
-    push hl
-    ld a, [wTurn]
-    ld e, a
-    ld a, [wTurn + 1]
+    ; --- how far along the course the car gets this frame (wAdvance): its speed, times the
+    ; cosine of its slide off the road's direction, times R / (R - x) (the inside of a bend
+    ; is the short way round; it also turns the car faster: Steer).  The rivals are moved
+    ; against this, not against the speed.
+    push bc                     ; (b: the keys, for later)
+    ldh a, [hSpeed + 1]         ; e = the speed in 16ths (it is under 16)
+    swap a
     ld d, a
-    ldh a, [hX + 1]
-    call MulSigned              ; hl = turn * x
+    ldh a, [hSpeed]
+    swap a
+    xor d
+    and $0F
+    xor d
+    ld e, a
+    ld a, [wMomentum + 1]
+    bit 7, a
+    jr z, .cosAbs
+    cpl
+    inc a
+.cosAbs
+    ld hl, 0
+    cp 48                       ; (across the road or back the way it came: no headway)
+    jr nc, .advanced
+    cp 3
+    ld h, e                     ; (pointing along the road, near enough: cos is 1)
+    jr c, .cosOne
+    cpl
+    add 48 + 1                  ; cos = sin(48 - |angle|), 1 .. 48 steps
+    ld l, a
+    ld h, HIGH(SinTab)
+    ld a, [hl]                  ; x 127
+    call MulU8                  ; hl = speed in 16ths x cos x 127
+    ld d, 0
+    add hl, de                  ; (x (cos x 127 + 1) / 128: 1 is 1)
+    add hl, hl
+.cosOne
+    ld a, [wTrackTurn]          ; on the straight, R / (R - x) is 1
+    or a
+    jr nz, .bend
+    ld l, h
+    ld h, a
     REPT 4
-        sra h
+        add hl, hl
+    ENDR                        ; 16ths -> 8.8
+    jr .advanced
+.bend
+    push hl                     ; h = speed x cos, in 16ths
+    ld a, [wTrackTurn]          ; kx, in 256ths: (T / 2) * x / 16 (4% shy, near enough), as a
+    ld e, a                     ; signed byte (out past that the car cannot hold the line anyway)
+    ldh a, [hX + 1]
+    xor e
+    push af                     ; (bit 7: its sign)
+    bit 7, e
+    jr z, .tAbs
+    xor a
+    sub e
+    ld e, a
+.tAbs
+    ldh a, [hX + 1]
+    bit 7, a
+    jr z, .xAbs
+    cpl
+    inc a
+.xAbs
+    call MulU8
+    REPT 4
+        srl h
         rr l
     ENDR
-    ld d, h
-    ld e, l
-    pop hl
-    add hl, de
+    ld a, h
+    or a
+    jr nz, .kxFar
+    ld a, l
+    cp $80
+    jr c, .kxNear
+.kxFar
+    ld a, $7F
+.kxNear
+    ld l, a
+    pop af
+    bit 7, a
+    ld a, l
+    jr z, .kxSigned
+    cpl
+    inc a
+.kxSigned                       ; (ReciprocalTab is indexed by the signed byte as it is)
+    ld l, a
+    ld h, HIGH(ReciprocalTab)
+    ld e, [hl]                  ; R / (R - x), in 64ths
+    pop af                      ; (the speed x cos)
+    call MulU8                  ; in 1024ths
+    srl h
+    rr l
+    srl h
+    rr l                        ; 8.8
+.advanced
+    pop bc
     ld a, l
     ld [wAdvance], a
     ld a, h
@@ -4661,6 +4797,10 @@ Drive:
     ldh [hX], a
     ldh [hX + 1], a
     ldh [hVX], a
+    ld [wFacing], a             ; (and straight along the road)
+    ld [wFacing + 1], a
+    ld [wMomentum], a
+    ld [wMomentum + 1], a
     ld [wObjSlots], a
     ld [wObjSlots + 4], a
     ldh a, [hFadeTunnel]
@@ -4850,392 +4990,23 @@ Drive:
     ldh [hTarget], a
 .haveTarget
 
-    ; --- corners are short and seen coming: the car feels each one the moment it is in it
-    ldh a, [hTarget]
-    ldh [hBend], a
+    ; --- the steering, the road turning under the car, the rail and the view: Steer
+    call Steer
 
-    ; --- de = bend * speed: how hard this bend is turning us this frame
-    ld hl, 0
-    ldh a, [hSpeed + 1]
-    or a
-    jr z, .noTurn
-    ld c, a
-    ldh a, [hBend]
-    sub BEND_LEVELS
-    ld e, a
-    add a                       ; sign extend into d
-    sbc a
-    ld d, a
-.turnAdd
-    add hl, de
-    dec c
-    jr nz, .turnAdd
-.noTurn
-    ld a, l                     ; (kept for next frame's distance: the racing line)
-    ld [wTurn], a
-    ld a, h
-    ld [wTurn + 1], a
-    ld d, h
-    ld e, l
-
-    ; the skyline swings round by that much: a quarter of its width for every 90 degrees
-    push hl
-    add hl, hl
-    add hl, hl
-    ld d, h
-    ld e, l
-    pop hl
-    ldh a, [hSkyX]
-    add e
-    ldh [hSkyX], a
-    ldh a, [hSkyX + 1]
-    adc d
-    ldh [hSkyX + 1], a
-
-    ; --- the push on the car in a bend goes with the SQUARE of the speed, so a corner that
-    ; is easy at 5 is a wall at 8: brake for it, or skid-turn into it
-    ldh a, [hSpeed]
-    rlca
-    rlca
-    and 3
-    ld e, a
-    ldh a, [hSpeed + 1]
-    add a
-    add a
-    or e
-    ld e, a                     ; speed in quarter units
-    ld d, 0
-    ld a, [wPush]               ; (the car's own table)
-    ld l, a
-    ld a, [wPush + 1]
-    ld h, a
-    add hl, de
-    ld c, [hl]
-    ldh a, [hBend]
-    sub BEND_LEVELS
-    ldh [hTurnSign], a
-    bit 7, a
-    jr z, .bendAbs
-    cpl
-    inc a
-.bendAbs
-    ld hl, 0                    ; hl = |bend| * scale
-    ld e, c
-    ld d, h
-    or a
-    jr z, .pushReady
-.pushMul
-    srl a
-    jr nc, .pushSkip
-    add hl, de
-.pushSkip
-    sla e
-    rl d
-    or a
-    jr nz, .pushMul
-.pushReady
-    srl h
-    rr l
-    ldh a, [hTurnSign]
-    bit 7, a
-    jr z, .pushSigned
-    xor a
-    sub l
-    ld l, a
-    sbc a
-    sub h
-    ld h, a
-.pushSigned
-    ld a, [wTight]              ; a "special tight" corner: half as hard again
-    or a
-    jr z, .notTight
-    ld d, h
-    ld e, l
-    sra d
-    rr e
-    add hl, de
-.notTight
-    bit 1, b                    ; off the gas the car grips: three quarters of the push.  Lift
-    jr nz, .onGas               ; for a corner and it holds the line, as in F-Zero
-    ld d, h
-    ld e, l
-    sra d
-    rr e
-    sra d
-    rr e
-    ld a, l
-    sub e
-    ld l, a
-    ld a, h
-    sbc d
-    ld h, a
-.onGas
-    ld d, h
-    ld e, l
-
-    ; --- the crosswind of this chunk, gusting: it pushes the car too (once it is moving)
-    ldh a, [hSpeed + 1]
-    or a
-    jr z, .calm
-    ldh a, [hChunk]
-    add LOW(wWind)
-    ld l, a
-    ld h, HIGH(wWind)
-    ld a, [hl]
-    or a
-    jr z, .calm
-    ld l, a
-    add a
-    sbc a
-    ld h, a
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    add hl, hl                  ; 1/16 pixel -> 8.8
-    ldh a, [hFrame]
-    bit 6, a
-    jr z, .steady
-    push de                     ; a gust: half as much again for a second, every other second
-    ld d, h
-    ld e, l
-    sra d
-    rr e
-    add hl, de
-    pop de
-    ldh a, [hFrame]
-    and 15
-    jr nz, .steady
-    ld a, SFX_SKID              ; (and you can hear it)
-    call Sfx
-.steady
-    ld a, e                     ; (the push is taken off x, so the wind is taken off the push)
-    sub l
-    ld e, a
-    ld a, d
-    sbc h
-    ld d, a
-.calm
-
-    ; --- steering: ease sideways speed toward what the d-pad asks for
-    ldh a, [hState]
-    cp STATE_DEAD
-    jr nz, .notWreck
-    xor a                       ; a wreck goes nowhere
-    ldh [hVX], a
-    ld b, a
-    ld d, a
-    ld e, a
-    jp .vxDone
-.notWreck
-    ldh a, [hAir]
-    or a
-    jr z, .onTheRoad
-    ldh a, [hVX]                ; no grip in the air: keep drifting the way we were
-    ld b, a
-    jp .vxDone
-.onTheRoad
-    ldh a, [hState]             ; the race is over: the car steers itself to the middle of the
-    or a                        ; road and coasts to a halt there (rather than drift from
-    jr z, .grounded             ; rail to rail with nobody steering)
-    ldh a, [hX + 1]
-    ld b, 0
-    add 4
-    cp 9
-    jr c, .grounded             ; within 4 pixels: straight on
-    sub 4
-    bit 7, a
-    ld b, PADF_LEFT
-    jr z, .grounded
-    ld b, PADF_RIGHT
-.grounded
-    ; braking while steering at speed is a skid turn: far more steering, less speed
-    xor a
-    ldh [hSkid], a
-    ld a, [wSteer]
-    ld h, a
-    ldh a, [hSpeed + 1]         ; (a hovercar cannot shuffle sideways at a standstill)
-    or a
-    jr nz, .moving
-    ld h, a
-.moving
-    ld a, b
-    and PADF_LEFT | PADF_RIGHT
-    jr z, .noSkid
-    bit 7, b                    ; PADF_DOWN
-    jr z, .noSkid
-    ldh a, [hSpeed + 1]
-    cp 3
-    jr c, .noSkid
-    ld h, STEER_SKID
-    ld a, 1
-    ldh [hSkid], a
-    ldh a, [hSpeed]
-    sub LOW(SKID_COST)
-    ldh [hSpeed], a
-    jr nc, .skidSound
-    ldh a, [hSpeed + 1]
-    dec a
-    ldh [hSpeed + 1], a
-.skidSound
-    ldh a, [hFrame]
-    and 7
-    jr nz, .noSkid
-    ld a, SFX_SKID
-    call Sfx
-.noSkid
-    ld c, 0
-    bit 5, b                    ; PADF_LEFT
-    jr z, .notLeft
-    ld a, h
-    cpl
-    inc a
-    ld c, a
-.notLeft
-    bit 4, b                    ; PADF_RIGHT
-    jr z, .notRight
-    ld c, h
-.notRight
-    ldh a, [hVX]
-    ld b, a
-    ld a, c
-    sub b                       ; wanted - current
-    jr z, .vxDone
-    ld l, a                     ; (de is the bend's push: kept for below)
-    ld a, [wSlide]              ; just landed from a ramp: a quarter of the grip
-    or a
-    jr z, .grip
-    dec a
-    ld [wSlide], a
-    bit 7, l
-    jr z, .slideUp
-    dec b
-    jr .vxSet
-.slideUp
-    inc b
-    jr .vxSet
-.grip
-    ld a, l
-    bit 7, a
-    jr z, .vxUp
-    dec b
-    dec b
-    dec b
-    dec b
-    dec b
-    dec b
-    dec b
-    dec b
-.vxUp
-    inc b
-    inc b
-    inc b
-    inc b
-    ld a, c                     ; (do not overshoot what was asked for)
-    sub b
-    add 3
-    cp 7
-    jr nc, .vxSet
-    ld b, c
-.vxSet
-    ld a, b
-    ldh [hVX], a
-.vxDone
-
-    ; --- X += sideways speed, and the bend throws the car toward the outside
-    ld a, b
-    ld l, a
-    add a
-    sbc a
-    ld h, a
-    add hl, hl
-    add hl, hl
-    add hl, hl
-    add hl, hl                  ; 1/16 px -> 8.8
-    ldh a, [hX]
-    add l
-    ld l, a
-    ldh a, [hX + 1]
-    adc h
-    ld h, a
-    ld a, l
-    sub e
-    ld l, a
-    ld a, h
-    sbc d
-    ld h, a
-    ldh a, [hAir]               ; there is no rail in the air: come down outside it and
-    or a                        ; the car is gone
-    jr nz, .xOk
-    ld a, h                     ; on the ground the rail keeps us in, at a price
-    add X_LIMIT
-    cp X_LIMIT * 2
-    jr c, .xOk
-    bit 7, h                    ; the rail: bounce back off it, at a price
-    ld hl, X_LIMIT << 8
-    ld b, -RAIL_BOUNCE
-    jr z, .bounce
-    ld hl, -(X_LIMIT << 8)
-    ld b, RAIL_BOUNCE
-.bounce
-    ld a, b
-    ldh [hVX], a
-    ldh a, [hRailCool]          ; (a second touch straight after the first does not hurt again)
-    or a
-    jr nz, .railHurt
-    ld a, RAIL_COST             ; it costs health, never speed: only dirt slows the car
-    call Damage
-    ld a, SFX_ROCK
-    call Sfx
-    ld a, RAIL_COOL
-    ldh [hRailCool], a
-.railHurt
-.xOk
-    ld a, l
-    ldh [hX], a
-    ld a, h
-    ldh [hX + 1], a
-
-    ; --- the camera follows half way (as far as the picture reaches); the car shows the rest
-    sra a
-    add SHEAR_MAX
-    bit 7, a
-    jr z, .camLow
-    xor a
-.camLow
-    cp SHEAR_MAX * 2 + 1
-    jr c, .camSet
-    ld a, SHEAR_MAX * 2
-.camSet
-    ldh [hShear], a
-    sub SHEAR_MAX
-    ld c, a
-    ld a, h
-    sub c
-    add CAR_X + 8
-    ldh [hCarX], a
-
-    ; --- lean into the turn
-    ld c, 0
-    ld a, b
-    add BANK_AT - 1
-    cp BANK_AT * 2 - 1
-    jr c, .leanDone             ; |speed| < BANK_AT
-    inc c                       ; left
-    bit 7, b
-    jr nz, .leanDone
-    inc c                       ; right
-.leanDone
-    ld a, c
-    ldh [hLean], a
-
-    ; --- in the air: the shadow stays on the road
+    ; --- in the air: F-Zero's.  It falls the slower with the nose up or level, a lot faster
+    ; with it down (Up); a hard landing bounces, unless the nose is up (Down) to meet the road
     ldh a, [hAir]
     or a
     jr nz, .inAir
-    jr .onGround                ; (only jump plates and barriers put the car in the air)
+    jr .onGround                ; (only ramps, jump plates and barriers put the car in the air)
 .inAir
+    ld e, GRAVITY
+    bit 6, b                    ; PADF_UP: nose down
+    jr z, .gravitySet
+    ld e, GRAVITY_DIVE
+.gravitySet
     ldh a, [hVZ]
-    sub GRAVITY
+    sub e
     ld e, a
     ldh [hVZ], a
     ldh a, [hVZ + 1]
@@ -5249,12 +5020,43 @@ Drive:
     add hl, de
     bit 7, h
     jr z, .stillUp
-    xor a                       ; touched down
+    ld a, e                     ; touched down: how hard?  (|vertical speed|)
+    cpl
+    ld e, a
+    ld a, d
+    cpl
+    ld d, a
+    inc de
+    ld a, d
+    or a
+    jr nz, .hard
+    ld a, e
+    cp LOW(LAND_BOUNCE)
+    jr c, .soft
+.hard
+    bit 7, b                    ; (nose up: met smoothly)
+    jr nz, .soft
+    srl d                       ; a bounce: up again at a quarter of it, and it costs speed
+    rr e
+    srl d
+    rr e
+    ld a, e
+    ldh [hVZ], a
+    ld a, d
+    ldh [hVZ + 1], a
+    ldh a, [hSpeed + 1]
+    or a
+    jr z, .bounced
+    dec a
+    ldh [hSpeed + 1], a
+.bounced
+    ld hl, 1
+    jr .stillUp
+.soft
+    xor a
     ldh [hAir], a
     ld h, a
     ld l, a
-    ld a, LAND_SLIDE            ; still sliding the way it was: steering takes hold slowly
-    ld [wSlide], a
     ldh a, [hX + 1]             ; ...on the road?
     add X_LIMIT
     cp X_LIMIT * 2 + 1
@@ -5888,6 +5690,816 @@ BoomNoise:
     pop bc
     ret
 
+; ---------------------------------------------------------------------------------------
+; Steering, F-Zero's (tools/gen_physics.py, tools/FZERO_DYNAMICS.md).  b = the keys as
+; Drive reads them.  Angles in 8.8 steps, 192 to a turn, relative to the road's direction.
+;   * The d-pad builds a turn stage toward full lock, faster the longer it is held, and lets
+;     it fade when let go: the car turns on a moment after.
+;   * The facing turns by the stage times F-Zero's factor at this speed (half on dirt).
+;   * The road turns under the car by its corner's real curvature (gen_tracks.py: level L
+;     turns L * 90 / 16 degrees a chunk), faster on the inside (R / (R - x)): a car that does
+;     not turn with it drifts wide.  Nothing pushes.
+;   * Where the car goes follows where it points at the grip's rate, but only with the gas or
+;     the steering held: let go of both and it slides on as it was going.
+;   * The rail is scraped, not bounced off: held there, going along it, no acceleration
+;     (Drive), a knock to health every few frames and a moment without control.
+;   * The view swings with the facing: the road's far end and the skyline.
+Steer:
+    xor a
+    ldh [hSkid], a
+    ; --- the road under the car: how much it turns a unit (T / 2, 1/128 steps)
+    ldh a, [hTarget]
+    sub BEND_LEVELS
+    ld c, a
+    add a
+    add c                       ; 3L 256ths of a step a unit: L * 90 / 16 degrees a chunk
+    sra a
+    ld c, a
+    ld a, c                     ; (the true curvature, so that a lap closes: 360 degrees; a
+    ld [wTrackTurn], a          ; "special tight" corner only looks tighter now)
+
+    ; --- who drives: nobody in a wreck, the autopilot past the flag, and nobody for a moment
+    ; after the rail or a knock
+    ldh a, [hState]
+    cp STATE_DEAD
+    jr nz, .notWreck
+    ld b, 0
+    jr .driven
+.notWreck
+    or a
+    jr z, .racing
+    call Autopilot
+.racing
+    ld a, [wNoControl]
+    or a
+    jr z, .driven
+    dec a
+    ld [wNoControl], a
+    ld b, 0
+.driven
+    ld a, b
+    ld [wSteerKeys], a
+
+    ; --- the turn stage
+    ld a, [wStage]
+    ld l, a
+    ld a, [wStage + 1]
+    ld h, a
+    ld a, b
+    and PADF_LEFT | PADF_RIGHT
+    jr z, .letGo
+    ld de, TURN_LIMIT
+    bit 7, b                    ; braking too, at speed: a skid turn, leaning into it
+    jr z, .limit
+    ldh a, [hSpeed + 1]
+    cp 3
+    jr c, .limit
+    ld de, TURN_LIMIT_SKID
+    ld a, 1
+    ldh [hSkid], a
+.limit
+    bit 5, b                    ; PADF_LEFT
+    jr z, .toLimit
+    xor a
+    sub e
+    ld e, a
+    sbc a
+    sub d
+    ld d, a
+.toLimit
+    ld a, [wStageAcc]
+    ld c, a
+    ld a, [wStageAcc + 1]
+    ld b, a
+    ld a, l                     ; (held there already: only the step grows)
+    cp e
+    jr nz, .approachLimit
+    ld a, h
+    cp d
+    jr z, .atLimit
+.approachLimit
+    call Approach
+.atLimit
+    push hl
+    ld h, b
+    ld l, c
+    ld bc, TURN_ACC_STEP
+    add hl, bc
+    ld a, l
+    ld [wStageAcc], a
+    ld a, h
+    ld [wStageAcc + 1], a
+    pop hl
+    jr .staged
+.letGo
+    ld a, h
+    or l
+    jr z, .stageRest            ; (nothing to fade)
+    ld de, 0
+    ld bc, TURN_FADE
+    call Approach
+.stageRest
+    ld a, LOW(TURN_ACC0)
+    ld [wStageAcc], a
+    ld a, HIGH(TURN_ACC0)
+    ld [wStageAcc + 1], a
+.staged
+    ld a, l
+    ld [wStage], a
+    ld a, h
+    ld [wStage + 1], a
+
+    ; --- the facing's turn: |lock| x F-Zero's factor at this speed x the car's / 8
+    ld hl, 0
+    ld a, [wStage + 1]
+    bit 7, a
+    jr z, .lockAbs
+    cpl
+    inc a
+.lockAbs
+    or a
+    jr z, .turned
+    ld e, a
+    ldh a, [hSpeed + 1]         ; (the speed in quarters, 0..63)
+    cp 16
+    ld a, 63
+    jr nc, .quarters
+    ldh a, [hSpeed + 1]
+    add a
+    add a
+    ld l, a
+    ldh a, [hSpeed]
+    rlca
+    rlca
+    and 3
+    or l
+.quarters
+    add LOW(wTurnTab)           ; (TurnFactorTab x the car's turnMul (eighths) / 4: LoadCar)
+    ld l, a
+    ld h, HIGH(wTurnTab)
+    ld a, [hl]
+    call MulU8
+    srl h
+    rr l
+    srl h
+    rr l
+    ldh a, [hDirt]              ; on dirt: half
+    or a
+    jr z, .turnClean
+    srl h
+    rr l
+.turnClean
+    ld a, [wStage + 1]
+    bit 7, a
+    jr z, .turned
+    xor a
+    sub l
+    ld l, a
+    sbc a
+    sub h
+    ld h, a
+.turned
+    ld a, l
+    ld [wTurning], a
+    ld a, h
+    ld [wTurning + 1], a
+
+    ; --- the road's turn under the car this frame: T x how far along it the car got
+    ld bc, 0
+    ld a, [wTrackTurn]          ; (on the straight, none)
+    or a
+    jr z, .roadTurned
+    ld a, [wAdvance + 1]        ; (in 16ths, as a byte)
+    cp 16
+    ld a, $FF
+    jr nc, .farAdvance
+    ld a, [wAdvance + 1]
+    swap a
+    ld e, a
+    ld a, [wAdvance]
+    swap a
+    xor e
+    and $0F
+    xor e
+.farAdvance
+    ld e, a
+    ld a, [wTrackTurn]
+    call MulS8
+    REPT 3
+        sra h
+        rr l
+    ENDR                        ; 1/256 steps
+    ld b, h
+    ld c, l
+.roadTurned
+    ; facing += turning - the road's turn; momentum -= the road's turn
+    ld a, [wTurning]
+    ld e, a
+    ld a, [wTurning + 1]
+    ld d, a
+    or e
+    or b
+    or c
+    jr nz, .turnBoth
+    ld a, [wMomentum]           ; (nothing turns: as they were)
+    ld l, a
+    ld a, [wMomentum + 1]
+    ld h, a
+    jr .bothTurned
+.turnBoth
+    ld a, [wFacing]
+    ld l, a
+    ld a, [wFacing + 1]
+    ld h, a
+    add hl, de
+    ld a, l
+    sub c
+    ld l, a
+    ld a, h
+    sbc b
+    ld h, a
+    add 60                      ; (within +-60 steps: as it is)
+    cp 120
+    call nc, ClampAngle
+    ld a, l
+    ld [wFacing], a
+    ld a, h
+    ld [wFacing + 1], a
+    ld a, [wMomentum]
+    sub c
+    ld l, a
+    ld a, [wMomentum + 1]
+    sbc b
+    ld h, a
+    add 60
+    cp 120
+    call nc, ClampAngle
+.bothTurned
+
+    ; --- grip: where the car goes follows where it points, with the gas or steering held
+    ld a, [wSteerKeys]
+    and PADF_B | PADF_LEFT | PADF_RIGHT
+    jr z, .gripped              ; (neither: it slides on, the drift)
+    ld a, [wFacing]
+    cp l
+    jr nz, .slipping
+    ld a, [wFacing + 1]
+    cp h
+    jr z, .gripped              ; (it goes where it points: nothing to grip)
+.slipping
+    ld a, [wFacing + 1]
+    ld c, a
+    ld a, h
+    sub c
+    bit 7, a
+    jr z, .slideAbs
+    cpl
+    inc a
+.slideAbs
+    ld c, a                     ; c = the slide, steps
+    ldh a, [hAir]
+    or a
+    jr nz, .loose
+    ld a, c
+    cp GRIP_TOLERANCE
+    jr nc, .sliding
+    ld a, [wGrip]
+    ld c, a
+    ld a, [wGrip + 1]
+    ld b, a
+    jr .grip
+.sliding
+    ldh a, [hDirt]
+    or a
+    jr z, .notDirtSlide
+    ld a, c
+    cp 8
+    jr c, .notDirtSlide
+    ld bc, GRIP_DIRT
+    jr .grip
+.notDirtSlide
+    ldh a, [hSpeed + 1]
+    cp HIGH(GRIP_SLOW_BELOW)
+    jr nc, .loose
+    ld bc, GRIP_SLOW
+    jr .grip
+.loose
+    ld bc, GRIP_LOOSE
+.grip                           ; (Approach, here inline: momentum toward the facing by bc)
+    ld a, [wFacing]
+    sub l
+    ld e, a
+    ld a, [wFacing + 1]
+    sbc h
+    ld d, a                     ; de = facing - momentum
+    bit 7, d
+    jr nz, .gripDown
+    ld a, c                     ; (within a step: there)
+    sub e
+    ld a, b
+    sbc d
+    jr nc, .gripThere
+    add hl, bc
+    jr .gripped
+.gripDown
+    ld a, e
+    add c
+    ld a, d
+    adc b
+    jr c, .gripThere
+    ld a, l
+    sub c
+    ld l, a
+    ld a, h
+    sbc b
+    ld h, a
+    jr .gripped
+.gripThere
+    ld a, [wFacing]
+    ld l, a
+    ld a, [wFacing + 1]
+    ld h, a
+.gripped
+    ld a, l
+    ld [wMomentum], a
+    ld a, h
+    ld [wMomentum + 1], a
+
+    ; --- x += speed x sin(where it goes)
+    ldh a, [hSpeed + 1]         ; e = the speed in 16ths
+    swap a
+    ld d, a
+    ldh a, [hSpeed]
+    swap a
+    xor d
+    and $0F
+    xor d
+    ld e, a
+    ld a, h
+    ld hl, 0
+    or a                        ; (along the road, to the step: no step across it)
+    jr z, .stepped
+    bit 7, a
+    jr z, .sinIndex
+    add 192
+.sinIndex
+    ld l, a
+    ld h, HIGH(SinTab)
+    ld a, [hl]
+    call MulS8
+    REPT 3
+        sra h
+        rr l
+    ENDR                        ; hl = the step across the road (8.8)
+.stepped
+    ld d, h
+    ld e, l
+    ld a, e                     ; (hVX: 1/16 pixel a frame, for anyone watching)
+    swap a
+    and $0F
+    ld l, a
+    ld a, d
+    swap a
+    and $F0
+    or l
+    ldh [hVX], a
+
+    ; --- the crosswind of this chunk, gusting, blows the car across too (once it is moving)
+    ldh a, [hSpeed + 1]
+    or a
+    jr z, .calm
+    ldh a, [hChunk]
+    add LOW(wWind)
+    ld l, a
+    ld h, HIGH(wWind)
+    ld a, [hl]
+    or a
+    jr z, .calm
+    ld l, a
+    add a
+    sbc a
+    ld h, a
+    add hl, hl
+    add hl, hl
+    add hl, hl
+    add hl, hl                  ; 1/16 pixel -> 8.8
+    ldh a, [hFrame]
+    bit 6, a
+    jr z, .steady
+    push de                     ; a gust: half as much again for a second, every other second
+    ld d, h
+    ld e, l
+    sra d
+    rr e
+    add hl, de
+    pop de
+    ldh a, [hFrame]
+    and 15
+    jr nz, .steady
+    ld a, SFX_SKID              ; (and you can hear it)
+    call Sfx
+.steady
+    add hl, de
+    ld d, h
+    ld e, l
+.calm
+    ldh a, [hX]
+    add e
+    ld l, a
+    ldh a, [hX + 1]
+    adc d
+    ld h, a
+
+    ; --- the rail: F-Zero's.  Hit it and the car bounces off: where it was going into the
+    ; rail is mirrored away from it (it leaves at the angle it came in, pointing as it was), a
+    ; moment without control, and it hurts, though not again for a few frames however it
+    ; rattles along.  (None in the air: come down outside it and the car is gone.)
+    ld a, [wWallTick]           ; (the knock's cooldown runs down whatever happens)
+    or a
+    jr z, .cooled
+    dec a
+    ld [wWallTick], a
+.cooled
+    ldh a, [hAir]
+    or a
+    jr nz, .xOk
+    ld a, h                     ; (at the rail: x past +-X_LIMIT; put back just inside it,
+    add X_LIMIT                 ; so that a bounce off it, however slow, leaves it)
+    cp X_LIMIT * 2
+    jr c, .offRail
+    bit 7, h
+    ld hl, (X_LIMIT << 8) - 1
+    jr z, .railSide
+    ld hl, -(X_LIMIT << 8)
+.railSide
+    ld a, [wMomentum + 1]       ; going into it: mirrored, away from it
+    xor h
+    bit 7, a
+    jr nz, .away
+    ld a, [wMomentum]
+    cpl
+    ld e, a
+    ld a, [wMomentum + 1]
+    cpl
+    ld d, a
+    inc de
+    ld a, e
+    ld [wMomentum], a
+    ld a, d
+    ld [wMomentum + 1], a
+.away
+    ld a, [wWall]
+    or a
+    jr nz, .scraping
+    ld a, [wNoControl]          ; a new knock: a moment without control
+    or a
+    jr nz, .scraping
+    ld a, WALL_NO_CONTROL
+    ld [wNoControl], a
+.scraping
+    ld a, [wWallTick]           ; and it hurts, unless it did a moment ago
+    or a
+    jr nz, .railDone
+    ld a, WALL_HURT_EVERY
+    ld [wWallTick], a
+    push hl
+    ld a, RAIL_COST
+    call Damage
+    ld a, SFX_ROCK
+    call Sfx
+    pop hl
+.railDone
+    ld a, 1
+    ld [wWall], a
+    jr .xOk
+.offRail
+    xor a
+    ld [wWall], a
+.xOk
+    ld a, l
+    ldh [hX], a
+    ld a, h
+    ldh [hX + 1], a
+
+    ; --- the camera follows half way (as far as the picture reaches); the car shows the rest
+    sra a
+    add SHEAR_MAX
+    bit 7, a
+    jr z, .camLow
+    xor a
+.camLow
+    cp SHEAR_MAX * 2 + 1
+    jr c, .camSet
+    ld a, SHEAR_MAX * 2
+.camSet
+    ldh [hShear], a
+    sub SHEAR_MAX
+    ld c, a
+    ld a, h
+    sub c
+    add CAR_X + 8
+    ldh [hCarX], a
+
+    ; --- the view: swung by how far the car points off the road (2 bend levels a step: the
+    ; road's far end slides the other way, as a camera turning would show it)
+    ld a, [wFacing + 1]
+    add a
+    cpl
+    inc a
+    bit 7, a
+    jr nz, .yawNeg
+    cp BEND_LEVELS + 1
+    jr c, .yawSet
+    ld a, BEND_LEVELS
+    jr .yawSet
+.yawNeg
+    cp -BEND_LEVELS
+    jr nc, .yawSet
+    ld a, -BEND_LEVELS
+.yawSet
+    ld [wYawView], a
+    ld c, a                     ; (SwingView, here inline)
+    ldh a, [hTarget]
+    add c
+    bit 7, a
+    jr z, .swungUp
+    xor a
+.swungUp
+    cp BEND_LEVELS * 2 + 1
+    jr c, .swung
+    ld a, BEND_LEVELS * 2
+.swung
+    ldh [hBend], a
+
+    ; --- the skyline swings as the car turns: a quarter of its width for every 90 degrees
+    ; (48 steps): the turn x 4 / 3 pixels (x 5 / 4, near enough)
+    ld a, [wTurning]
+    ld l, a
+    ld a, [wTurning + 1]
+    ld h, a
+    ld d, h
+    ld e, l
+    sra d
+    rr e
+    sra d
+    rr e                        ; / 4 (x 1.25: near enough)
+    add hl, de
+    ldh a, [hSkyX]
+    add l
+    ldh [hSkyX], a
+    ldh a, [hSkyX + 1]
+    adc h
+    ldh [hSkyX + 1], a
+
+    ; --- lean into the turn
+    ld c, 0
+    ld a, [wStage + 1]
+    bit 7, a
+    jr z, .leanAbs
+    cpl
+    inc a
+.leanAbs
+    cp 7
+    jr c, .leanDone
+    inc c                       ; left
+    ld a, [wStage + 1]
+    bit 7, a
+    jr nz, .leanDone
+    inc c                       ; right
+.leanDone
+    ld a, c
+    ldh [hLean], a
+    ld a, [wSteerKeys]          ; (Drive's own key bits from here on: what drove)
+    ld b, a
+    ret
+
+; Past the flag: b = the d-pad (and the gas, for grip) to point the car back to the middle of
+; the road and keep it there.
+Autopilot:
+    ldh a, [hX + 1]
+    sra a
+    sra a
+    sra a
+    cpl
+    inc a                       ; aim to point -x / 8 steps
+    bit 7, a
+    jr nz, .aimNeg
+    cp 9
+    jr c, .aimed
+    ld a, 8
+    jr .aimed
+.aimNeg
+    cp -8
+    jr nc, .aimed
+    ld a, -8
+.aimed
+    ld c, a
+    ld a, [wFacing + 1]
+    sub c
+    ld b, PADF_B
+    ret z
+    cp -1
+    ret z
+    bit 7, a
+    ld b, PADF_B | PADF_LEFT
+    ret z
+    ld b, PADF_B | PADF_RIGHT
+    ret
+
+; hl moves toward de by bc (> 0), not past it.  Values within +-$3FFF.  Keeps bc, de.
+Approach:
+    push de
+    ld a, e
+    sub l
+    ld e, a
+    ld a, d
+    sbc h
+    ld d, a                     ; de = target - hl
+    bit 7, d
+    jr nz, .down
+    ld a, c
+    sub e
+    ld a, b
+    sbc d
+    jr c, .stepUp               ; (further than a step)
+    pop hl
+    push hl
+    jr .arrived
+.stepUp
+    add hl, bc
+    pop de
+    ret
+.down
+    xor a
+    sub e
+    ld e, a
+    ld a, 0
+    sbc d
+    ld d, a                     ; de = hl - target
+    ld a, c
+    sub e
+    ld a, b
+    sbc d
+    jr c, .stepDown
+    pop hl
+    push hl
+    jr .arrived
+.stepDown
+    ld a, l
+    sub c
+    ld l, a
+    ld a, h
+    sbc b
+    ld h, a
+    pop de
+    ret
+.arrived                        ; (hl = the target; restore de)
+    pop de
+    ret
+
+; hl kept within +-60 steps of the road's direction (beyond, the car is spun right round).
+ClampAngle:
+    bit 7, h
+    jr nz, .neg
+    ld a, h
+    cp 60
+    ret c
+    ld hl, 60 << 8
+    ret
+.neg
+    ld a, h
+    cp -60
+    ret nc
+    ld hl, -(60 << 8)
+    ret
+
+; a = sin(a steps) x 127, a signed byte within +-96 steps.  Keeps bc, de, hl.
+SinOf:
+    bit 7, a
+    jr z, .pos
+    add 192
+.pos
+    push hl
+    ld hl, SinTab
+    call ByteAt
+    pop hl
+    ret
+
+; a = the byte at hl + a.  Keeps bc, de.
+ByteAt:
+    add l
+    ld l, a
+    adc h
+    sub l
+    ld h, a
+    ld a, [hl]
+    ret
+
+; a = the speed in hl in quarter units, 0..63.  Keeps bc, de, hl.
+SpeedQuarters:
+    ld a, h
+    cp 16
+    jr nc, .top
+    push bc
+    add a
+    add a
+    ld c, a
+    ld a, l
+    rlca
+    rlca
+    and 3
+    or c
+    pop bc
+    ret
+.top
+    ld a, 63
+    ret
+
+; The bend level a, swung with the view (wYawView), kept to the tables' range.
+SwingView:
+    push bc
+    ld c, a
+    ld a, [wYawView]
+    add c
+    bit 7, a
+    jr z, .notNeg
+    xor a
+    jr .swung
+.notNeg
+    cp BEND_LEVELS * 2 + 1
+    jr c, .swung
+    ld a, BEND_LEVELS * 2
+.swung
+    pop bc
+    ret
+
+; Knocked by a rival or a barrier: where the car is going swings a steps, and a moment
+; without control.  Keeps all but a.
+Knocked:
+    push hl
+    push bc
+    ld b, a
+    ld a, [wMomentum + 1]
+    add b
+    ld h, a
+    ld a, [wMomentum]
+    ld l, a
+    call ClampAngle
+    ld a, l
+    ld [wMomentum], a
+    ld a, h
+    ld [wMomentum + 1], a
+    ld a, KNOCK_DAZE
+    ld [wNoControl], a
+    pop bc
+    pop hl
+    ret
+
+; Up off a ramp or a jump plate: as fast as half the speed, in F-Zero's units (in pixels of
+; height, its units x S / 8: the speed x 0.057), and it costs a little speed.
+JumpUp:
+    ld a, 1
+    ldh [hAir], a
+    ldh a, [hSpeed]
+    ld l, a
+    ldh a, [hSpeed + 1]
+    ld h, a
+    REPT 4
+        srl h
+        rr l
+    ENDR                        ; speed / 16
+    ld d, h
+    ld e, l
+    REPT 4
+        srl h
+        rr l
+    ENDR                        ; speed / 256
+    ld a, e
+    sub l
+    ld l, a
+    ld a, d
+    sbc h
+    ld h, a                     ; (h is 0: speeds are under 16)
+    ld a, l
+    cp JUMP_VZ_MAX              ; no faster than F-Zero's 4.5, however fast the car (a boost)
+    jr c, .vzSet
+    ld a, JUMP_VZ_MAX
+.vzSet
+    ldh [hVZ], a
+    xor a
+    ldh [hVZ + 1], a
+    ldh a, [hSpeed + 1]
+    cp 2
+    ret c
+    ldh a, [hSpeed]
+    sub $74
+    ldh [hSpeed], a
+    ret nc
+    ldh a, [hSpeed + 1]
+    dec a
+    ldh [hSpeed + 1], a
+    ret
+
 ; The car picked in the menu: its shape into the player's tiles (the screen must be off) and
 ; its numbers into wTop..wPush.
 LoadCar:
@@ -5908,9 +6520,8 @@ LoadCar:
     ld a, [wCar]
     ld l, a
     add a
-    add a
-    add a
-    sub l                       ; 7 bytes each
+    add l
+    add a                       ; 6 bytes each
     ld e, a
     ld d, 0
     ld hl, CarStats
@@ -5918,21 +6529,71 @@ LoadCar:
     ld d, h
     ld e, l
     ld hl, wTop
-    ld bc, 7
-    jp Copy
+    ld bc, 6
+    call Copy
+    ld hl, AccelTab             ; and its tables by speed: F-Zero's acceleration and turning,
+    ld de, wAccelTab            ; times its own (so that a frame need not multiply them)
+    ld a, [wAccelMul]
+    ld c, a
+    ld b, 2                     ; (/ 4)
+    call ScaleTab
+    ld hl, TurnFactorTab
+    ld de, wTurnTab
+    ld a, [wTurnMul]
+    ld c, a
+    ld b, 2                     ; (/ 4: turnMul is in eighths)
+    ; (fall through)
 
-; What each car does (gen_gfx.py CARS has what it looks like; the menu, its name):
-; top speed, the throttle's two numbers, steering, how hard a hit is taken (quarters), and
-; how hard bends throw it.  ARROW is the all-rounder, and the game was tuned with it.
+; 64 bytes at de = those at hl x c (1 or more), shifted right b times (1 or more).
+ScaleTab:
+    ld a, 64
+.entry
+    push af
+    push bc
+    push de
+    ld e, [hl]
+    inc hl
+    push hl
+    ld d, 0
+    ld hl, 0
+.times
+    add hl, de
+    dec c
+    jr nz, .times
+.shift
+    srl h
+    rr l
+    dec b
+    jr nz, .shift
+    ld a, l
+    pop hl
+    pop de
+    ld [de], a
+    inc de
+    pop bc
+    pop af
+    dec a
+    jr nz, .entry
+    ret
+
+; What each car does (gen_gfx.py CARS has what it looks like; the menu, its name), on top of
+; F-Zero's driving (gen_physics.py): top speed, acceleration (quarters of the Blue Falcon's)
+; and turning (eighths), grip (8.8 steps a frame) and how hard a hit is taken (quarters).
+; ARROW is the Blue Falcon, and the game is tuned with it.  (A car's speed through a hairpin
+; goes with its turning: F-Zero's car follows a bend as fast as it can turn.)
 CarStats:
-    db 8, 2, 3, 24, 4           ; ARROW
-    dw PushScale72
-    db 8, 3, 6, 28, 5           ; HORNET: quick off the mark and nimble, but fragile
-    dw PushScale62
-    db 8, 2, 3, 22, 2           ; BISON: heavy to steer and in a bend, but tough
-    dw PushScale76
-    db 9, 1, 2, 24, 4           ; COMET: the fastest, slow to get there, and at 9 a bend
-    dw PushScale76              ; throws it 40% harder than ARROW at 8
+    db 8, 4, 8                  ; ARROW
+    dw $0180
+    db 4
+    db 8, 6, 10                 ; HORNET: quick off the mark, nimble and grippy, but fragile
+    dw $01C0
+    db 5
+    db 8, 4, 7                  ; BISON: heavy to turn (a hairpin an eighth slower), but tough
+    dw $0160
+    db 2
+    db 9, 3, 8                  ; COMET: the fastest, slow to get there, and it slides
+    dw $0100
+    db 4
 
 ; a = the place needed by the end of the lap being raced, F-Zero's rank requirement: in a
 ; race against rivals (not practice, not linked, not LEARN, not without rivals), 7th then 5th over
@@ -5969,6 +6630,82 @@ RankNeeded5:
     db 7, 6, 5, 4
 
 ; hl = de * a, both signed (|a| small: one add per bit).  Keeps bc.
+; Quarter squares for MulU8: f(n) = n * n / 4, n = 0..511, at boot.
+InitMaths:
+    ld hl, QsqLo
+    ld de, 0                    ; f(n)
+    ld bc, 0                    ; n
+.square
+    ld [hl], e
+    inc h
+    inc h
+    ld [hl], d                  ; (QsqHi: 512 on)
+    dec h
+    dec h
+    inc hl
+    inc bc                      ; f(n + 1) = f(n) + (n + 1) / 2
+    push bc
+    srl b
+    rr c
+    ld a, e
+    add c
+    ld e, a
+    ld a, d
+    adc b
+    ld d, a
+    pop bc
+    ld a, b
+    cp 2
+    jr nz, .square
+    ret
+
+; hl = a x e, unsigned bytes: f(a + e) - f(|a - e|), f(n) = n * n / 4 (QsqLo, QsqHi).  Keeps e;
+; trashes a, b, c, d.  (About 45 cycles, where a loop of adds takes 100 or more.)
+MulU8:
+    ld d, a
+    sub e
+    jr nc, .difference
+    cpl
+    inc a
+.difference
+    ld c, a                     ; |a - e|
+    ld a, d
+    add e
+    ld l, a
+    ld a, HIGH(QsqLo)
+    adc 0
+    ld h, a                     ; -> f(a + e)
+    ld b, [hl]
+    add 2
+    ld h, a
+    ld d, [hl]
+    ld l, c
+    ld h, HIGH(QsqLo)
+    ld a, b
+    sub [hl]
+    ld b, a
+    ld h, HIGH(QsqHi)
+    ld a, d
+    sbc [hl]
+    ld h, a
+    ld l, b
+    ret
+
+; hl = a x e: a a signed byte, e unsigned.  Keeps e; trashes a, b, c, d.
+MulS8:
+    bit 7, a
+    jr z, MulU8
+    cpl
+    inc a
+    call MulU8
+    xor a
+    sub l
+    ld l, a
+    sbc a
+    sub h
+    ld h, a
+    ret
+
 MulSigned:
     ld hl, 0
     bit 7, a
@@ -6050,19 +6787,6 @@ DEF TILE_BOOM    EQU 2
 BoomTilePristine:               ; the small shadow's two tiles as they are in car.bin
     INCBIN "build/car.bin", 64, 32
 
-; How hard a bend pushes at each speed (index: speed in quarter units): K at 8, with the
-; square of the speed.  The push in pixels/256 per frame is this times the bend, halved.
-; One for each car's K (CarStats); PUSH_K is ARROW's.
-MACRO PUSH_SCALE                ; \1 = K
-PushScale\1:
-    FOR N, 48
-        db (\1 * N * N + 512) / 1024
-    ENDR
-ENDM
-    PUSH_SCALE 72
-    PUSH_SCALE 62
-    PUSH_SCALE 76
-    ASSERT PUSH_K == 72
 
 ; ---------------------------------------------------------------------------------------
 ; Page-aligned lookups: the low byte of the address is the index.
@@ -6218,12 +6942,24 @@ wPaintText: db                  ; which words: 0-7 the place, 8 OUT
 wPaintPtr:  ds 2                ; the next piece of its script (RESULT_BANK)
 wCar:       db                  ; the car picked in the menu (CarStats); as it goes:
 wTop:       db                  ; top speed (units a frame)
-wGearK:     db                  ; the throttle: (top - speed) * this + wGrunt, /256 a frame
-wGrunt:     db
-wSteer:     db                  ; sideways speed, 1/16 pixel a frame
+wAccelMul:  db                  ; F-Zero's acceleration times this, in quarters
+wTurnMul:   db                  ; ...its turning, in eighths
+wGrip:      ds 2                ; how fast where it goes follows where it points (8.8 steps)
 wArmor:     db                  ; a hit costs this many quarters of its health
-wPush:      ds 2                ; its PushScale table: how hard bends throw it
 wHop:       db                  ; how high the rival being drawn flies off a ramp (pixels)
+; Steering, F-Zero's (Steer).  Angles in 8.8 steps, 192 to a turn, relative to the road's
+; direction under the car (positive: to the right of it).
+wFacing:    ds 2                ; where the car points
+wMomentum:  ds 2                ; where it is going (follows the facing at the grip's rate)
+wStage:     ds 2                ; the turn stage: the d-pad's lock, building and fading
+wStageAcc:  ds 2                ; ...how fast it builds this frame
+wTurning:   ds 2                ; this frame's turn of the facing, 1/256 steps (the sky swings by it)
+wTrackTurn: db                  ; how much the road under the car turns a unit, 1/128 steps
+wYawView:   db                  ; bend levels the view is swung by (the facing, seen)
+wNoControl: db                  ; frames left without control (after the rail)
+wWall:      db                  ; scraping the rail this frame
+wWallTick:  db                  ; frames to the next knock to health along it
+wSteerKeys: db                  ; the keys driving this frame (after the autopilot, a daze)
 wBoomBuf:   ds 32               ; the explosion's next frame, for VBlank to copy (BoomNoise)
 wSfxPtr:    ds 2                ; the sound effect playing: its next step (0: none; Sfx)
 wSfxWait:   db                  ; ...frames until that step
@@ -6241,6 +6977,13 @@ wPaintBuf:  ds 32
 wScenePages: ds 21              ; palette table pages: 3 sceneries x 7 distance bands
 wSkyBgp:    ds HORIZON * 3      ; the sky's palettes, and two darker copies
 wSkyFlash:  ds HORIZON * 2      ; two brighter ones for the boost flash
+
+SECTION "quick multiply", WRAMX[$D000], BANK[1]  ; (a DMG's second 4K of work RAM: always there)
+QsqLo:        ds 512    ; n * n / 4 for n = 0..511, low bytes (InitMaths): MulU8's
+QsqHi:        ds 512    ; ...and high
+wAccelTab:    ds 64     ; the car's acceleration by speed in quarters: AccelTab x its accelMul / 4
+wTurnTab:     ds 64     ; ...and its turning: TurnFactorTab x its turnMul (eighths) / 4 (LoadCar)
+    ASSERT LOW(QsqLo) == 0 && QsqHi == QsqLo + 512 && HIGH(wTurnTab) == HIGH(wAccelTab)
 
 SECTION "track", WRAM0[$CA00]   ; the chosen track, copied here (see tools/gen_tracks.py)
 wTrack:

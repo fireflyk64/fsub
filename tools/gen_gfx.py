@@ -33,12 +33,13 @@ MAX_BEND = 80           # pixels the horizon end of the road can slide either wa
                         # one more street in the distant city
 LEVELS = 32             # bend steps each side (65 tables)
 SHEAR_MAX = 20          # pixels the bottom line can slide either way when the camera moves
-SHEAR_SPAN = 22         # ...and how far the shear tables go.  Further than the camera does:
+SHEAR_SPAN = 36         # ...and how far the shear tables go.  Further than the camera does:
                         # fzero.asm also places the other player's car with them, from half
                         # its x across the road, and that reaches half the road's X_LIMIT
 
-ROAD = 56               # road half width in world units
-BUMPER = 6              # bumper strip just inside the road edge
+ROAD = 84               # road half width in world units (F-Zero's proportions: 2.8 road
+                        # widths a second at top speed; see tools/FZERO_DYNAMICS.md)
+BUMPER = 9              # bumper strip just inside the road edge
 GAP = 10                # dark void between road and city
 
 
@@ -501,7 +502,7 @@ def hero_tiles():
 
 RIVAL_SIZES = (12, 8, 4)        # smaller copies of the car for rivals further up the road
 RIVAL_FROM = (80, 52, 30, 8)    # ground line d where the 16, 12, 8 and 4 pixel cars start
-RIVAL_LANES = (-36, -12, 12, 36)
+RIVAL_LANES = (-54, -18, 18, 54)
 
 
 def shrink(img, n):
@@ -605,7 +606,7 @@ def rival_lane_tables():
 # Road objects are sprites drawn at a few sizes and swapped as they come closer.
 MOUTH_SIZES = ((16, 8), (32, 12), (40, 16))              # tunnel mouth, width x height
 MOUTH_FROM = (0, 48, 80)                                 # ground line d each size starts at
-LANE = -28              # centre of the left lane, world units from the centre line
+LANE = -42              # centre of the left lane, world units from the centre line
 SPAWN_DIST = 768        # how far ahead road objects appear: three chunks (gen_tracks.py LEAD)
 CAR_D = 88              # ground line d where an object reaches the car
 
@@ -944,7 +945,8 @@ def slot_blobs(tiles, sky_slots):
 # are (fzero.asm Finale), the skyline left as it is.  The tiles for it are the status bar's
 # letters, digits and health cells (the bar is blank meanwhile), and the ground tiles of the
 # patch that are seen nowhere else, painted where they are.
-RESULT_ROW, RESULT_COL, RESULT_W, RESULT_H = 11, 12, 8, 3      # tile rows 11-13 (lines 88-111)
+RESULT_ROW, RESULT_COL, RESULT_W, RESULT_H = 10, 12, 8, 4      # tile rows 10-13 (lines 80-111)
+RESULT_BAR = 0
 RESULT_TEXTS = ["1ST", "2ND", "3RD", "4TH", "5TH", "6TH", "7TH", "8TH", "OUT"]
 SCRN0, SCRN1 = 0x9800, 0x9C00
 RESULT_MARGIN = 1                                              # pixels clear at the near edge
@@ -1026,8 +1028,14 @@ def result_scripts(art):
         for t in skymap:
             if t >= 128:
                 use_shared[t] = use_shared.get(t, 0) + 1
-    spare = [hud[n] for n in HUD_ORDER if n != "BLANK"]
-    assert all(t < 128 and t not in use_low for t in spare), "a status bar tile is ground too"
+    # Borrowed first: shared sky slots no skyline (nor the menu's lettering) ever fills, so
+    # nothing on screen uses them; then, if those run out, the status bar's tiles (the bar
+    # blank meanwhile).
+    used_sky = max([len(new) for new, _ in art["skies"].values()] + [len(MENU_CHARS)])
+    idle_sky = [t for t in art["sky_slots"][used_sky:] if t >= 128]
+    bar = [hud[n] for n in HUD_ORDER if n != "BLANK"]
+    assert all(t < 128 and t not in use_low for t in bar), "a status bar tile is ground too"
+    spare = idle_sky + bar
     lone = lambda t: (use_shared.get(t, 0) if t >= 128 else use_low.get(t, 0)) == 1 and t not in spare
 
     def vram(t):
@@ -1066,10 +1074,14 @@ def result_scripts(art):
                 ids.append(s_)
                 have[new] = s_
                 borrowed.append(record(vram(s_), new))
-        out = record(SCRN1, [hud["BLANK"]] * 20) + b"".join(borrowed)
+        out = b"".join(borrowed)
+        if set(bar) & set(spare) - set(free):          # (the bar's tiles borrowed: blank it first)
+            out = record(SCRN1, [hud["BLANK"]] * 20) + out
         for r in range(RESULT_H):
             out += record(SCRN0 + (RESULT_ROW + r) * 32 + RESULT_COL, ids[r * RESULT_W:(r + 1) * RESULT_W])
         scripts.append(out + b"".join(in_place) + bytes((0, 0, 0)))
+    global RESULT_BAR
+    RESULT_BAR = int(any(sc[:2] == bytes((SCRN1 & 255, SCRN1 >> 8)) for sc in scripts))
     table, at = bytearray(), 2 * len(scripts)
     for sc in scripts:
         table += bytes((at & 255, at >> 8))
@@ -1123,6 +1135,8 @@ def main():
         f.write(f"DEF BEND_LEVELS EQU {LEVELS}\nDEF VIEW_X EQU {VIEW_X}\n")
         f.write(f"DEF SPLIT_LINE EQU {SPLIT_ROW * 8}\nDEF CAR_TILE EQU {128 - OBJ_RESERVE}\n")
         f.write(f"DEF SHEAR_MAX EQU {SHEAR_MAX}\nDEF ROAD_HALF EQU {ROAD}\n")
+        f.write(f"DEF LANE_X EQU {LANE}\n")
+        f.write(f"DEF INNER_LANE_X EQU {RIVAL_LANES[1]}  ; where patches are drawn (RivalLanes, lane 1)\n")
         f.write(f"DEF SHEAR_SPAN EQU {SHEAR_SPAN}\n")
         f.write(f"DEF SKY_8000_FIRST EQU {sky_slots[0]}\n")
         f.write(f"DEF SKY_8800_FIRST EQU {next(s for s in sky_slots if s >= 128) - 128}\n")
@@ -1130,6 +1144,7 @@ def main():
         f.write(f"DEF RESULT_ROW EQU {RESULT_ROW}\nDEF RESULT_COL EQU {RESULT_COL}\n")
         f.write(f"DEF RESULT_W EQU {RESULT_W}\nDEF RESULT_H EQU {RESULT_H}\nDEF RESULT_TEXTS EQU {len(RESULT_TEXTS)}\n")
         f.write(f"DEF NUM_CARS EQU {len(CARS)}\n")
+        f.write(f"DEF RESULT_BAR EQU {RESULT_BAR}   ; the painted place borrows the status bar's tiles\n")
         for name in HUD_ORDER:
             f.write(f"DEF HUD_{name} EQU {hud[name]}\n")
         for i, ch in enumerate(MENU_CHARS):       # so that  db "TEXT"  gives menu tiles
