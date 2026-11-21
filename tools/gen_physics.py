@@ -1,23 +1,21 @@
 #!/usr/bin/env python3
-"""fsub's driving physics, made F-Zero's: tables and constants for fzero.asm (build/physics.inc).
+"""fsub's driving physics: tables and constants for fzero.asm (build/physics.inc).
 
-The model is SNES F-Zero's, with the Blue Falcon's numbers (read from the ROM's per-machine
-tables; tools/FZERO_DYNAMICS.md has where each comes from and what a race log shows):
+The numbers are SNES F-Zero's, with the Blue Falcon's tables read from the ROM: acceleration,
+brakes, coasting, the turn factor by speed, grip, dirt, the jump (tools/FZERO_DYNAMICS.md
+has where each comes from).  The handling is fsub's own:
 
-  * the d-pad drives a turn stage, which builds toward full lock while held and fades when
-    let go: the car keeps turning a moment after;
-  * the facing turns by the stage times a factor that depends on speed;
-  * the direction of travel ("momentum") follows the facing at the grip's rate, but only with
-    the gas or the steering held: let go of both and the car slides on as it was going;
-  * the road does not push: it turns under the car, by the corner's real curvature, and a car
-    that does not turn with it drifts wide;
-  * the rail is scraped, not bounced off; dirt caps the speed and halves the turning; a ramp
-    throws the car up at half its speed and the d-pad changes how fast it falls.
+  * the d-pad drives a turn stage, which builds while held and fades fast when let go;
+  * the facing turns by the stage times a factor that depends on speed, no further than
+    FACING_MAX off the road, and straightens up when the d-pad is let go;
+  * the direction of travel ("momentum") follows the facing at the grip's rate;
+  * a bend does not turn the car: its inside is the short way round, its outside is banked
+    (faster than the top speed, carried out of it);
+  * the rail is a glance; dirt caps the speed and halves the turning; a ramp throws the car
+    up at half its speed and the d-pad changes how fast it falls.
 
 Angles are F-Zero's: 192 steps to a turn, in 8.8.  Lengths and speeds are fsub's: F-Zero's
-times S (its top speed 8.8 is fsub's 8).  Frames are frames, so every angular rate is F-Zero's
-as it is, and every corner of fsub's tracks (gen_tracks.py: level L for one chunk turns
-L * 90 / 16 degrees) has its true curvature.
+times S (its top speed 8.8 is fsub's 8).  Frames are frames.
 
   usage: gen_physics.py OUT.inc
 """
@@ -75,9 +73,19 @@ def main():
         consts = {
             "TURN_LIMIT": 0x0E00,       # the turn stage at full lock ($02: TurnStage)
             "TURN_LIMIT_SKID": 0x1000,  # ...leaning into it (F-Zero's L/R; fsub: brake and steer)
-            "TURN_ACC0": 0x0100,        # its first step a frame, growing by
-            "TURN_ACC_STEP": 0x001E,    # ...this every frame held
-            "TURN_FADE": 0x0100,        # how fast it fades when let go
+            # (F-Zero's: 0x100, growing 0x1E a frame, fading 0x100.  Quicker here: fsub's
+            # steering is the driver's, and a turn that winds up and carries on was no fun)
+            "TURN_ACC0": 0x0200,        # its first step a frame, growing by
+            "TURN_ACC_STEP": 0x0040,    # ...this every frame held
+            "TURN_FADE": 0x0400,        # how fast it fades when let go
+            "FACING_MAX": 12,           # steps the car points off the road at most (22 degrees)
+            "CENTER_SHIFT": 3,          # let go, and it straightens by an eighth a frame
+            # The outside of a bend is banked: the car may go faster than its top by
+            # (steps out past BANK_FROM) x |T| >> BANK_SHIFT (256ths), pulled up BANK_ACCEL a frame
+            "BANK_FROM": 12,
+            "BANK_SHIFT": 1,
+            "BANK_ACCEL": 20,
+            "INSIDE_SHIFT": 0,          # the inside's short way round: R / (R - x), all of it
             "GRIP_LOOSE": 0x00A0,       # sliding (the slide past GRIP_TOLERANCE), or in the air
             "GRIP_DIRT": 0x0020,        # on dirt, sliding
             "GRIP_SLOW": 0x0280,        # below GRIP_SLOW_BELOW: a slow car grips

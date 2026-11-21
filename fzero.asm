@@ -4359,7 +4359,11 @@ Drive:
     ; little less in the air
     ld a, [wTop]
     ld d, a
-    ld e, 0
+    ld a, [wBank]               ; (and a bend's bank, from its outside)
+    ld e, a
+    ld a, [wBank + 1]
+    add d
+    ld d, a
     ldh a, [hDirt]
     or a
     jr z, .topDirt
@@ -4430,6 +4434,14 @@ Drive:
     ld e, a
     ld d, 0
     add hl, de
+    ld a, [wBank]               ; (on a bank, it pulls)
+    ld e, a
+    ld a, [wBank + 1]
+    or e
+    jr z, .unbanked
+    ld de, BANK_ACCEL
+    add hl, de
+.unbanked
     pop de
     ld a, h                     ; not past the top
     cp d
@@ -4741,9 +4753,13 @@ Drive:
     pop af
     bit 7, a
     ld a, l
-    jr z, .kxSigned
-    cpl
-    inc a
+    jr z, .kxInside
+    xor a                       ; the outside: banked, not the long way round (wBank pays)
+    jr .kxSigned
+.kxInside
+    REPT INSIDE_SHIFT           ; the inside: the short way round, by part of what the
+        srl a                   ; geometry would give
+    ENDR
 .kxSigned                       ; (ReciprocalTab is indexed by the signed byte as it is)
     ld l, a
     ld h, HIGH(ReciprocalTab)
@@ -5767,6 +5783,12 @@ Steer:
     sub d
     ld d, a
 .toLimit
+    ld a, h                     ; (turned the other way: straight at once, then this way)
+    xor d
+    bit 7, a
+    jr z, .sameWay
+    ld hl, 0
+.sameWay
     ld a, [wStageAcc]
     ld c, a
     ld a, [wStageAcc + 1]
@@ -5892,54 +5914,60 @@ Steer:
     ld b, h
     ld c, l
 .roadTurned
-    ; facing += turning - the road's turn; momentum -= the road's turn
+    ld a, c                     ; (the road's turn: the skyline swings by it, below)
+    ld [wRoadTurn], a
+    ld a, b
+    ld [wRoadTurn + 1], a
+    ; The car is the driver's: the bend does not turn it (it holds its line round, and the
+    ; inside or the outside pays: wAdvance, wBank); the d-pad turns it, no further than
+    ; FACING_MAX off the road; let go and it straightens up again.
     ld a, [wTurning]
     ld e, a
     ld a, [wTurning + 1]
     ld d, a
-    or e
-    or b
-    or c
-    jr nz, .turnBoth
-    ld a, [wMomentum]           ; (nothing turns: as they were)
-    ld l, a
-    ld a, [wMomentum + 1]
-    ld h, a
-    jr .bothTurned
-.turnBoth
     ld a, [wFacing]
     ld l, a
     ld a, [wFacing + 1]
     ld h, a
     add hl, de
+    ld a, [wSteerKeys]
+    and PADF_LEFT | PADF_RIGHT
+    jr nz, .steering
+    ld d, h                     ; (let go: an eighth of the way back to straight a frame)
+    ld e, l
+    REPT CENTER_SHIFT
+        sra d
+        rr e
+    ENDR
     ld a, l
-    sub c
+    sub e
     ld l, a
     ld a, h
-    sbc b
+    sbc d
     ld h, a
-    add 60                      ; (within +-60 steps: as it is)
-    cp 120
-    call nc, ClampAngle
+.steering
+    ld a, h
+    bit 7, a
+    jr nz, .faceLeft
+    cp FACING_MAX
+    jr c, .pointed
+    ld hl, FACING_MAX << 8
+    jr .pointed
+.faceLeft
+    cp -FACING_MAX
+    jr nc, .pointed
+    ld hl, -(FACING_MAX << 8)
+.pointed
     ld a, l
     ld [wFacing], a
     ld a, h
     ld [wFacing + 1], a
     ld a, [wMomentum]
-    sub c
     ld l, a
     ld a, [wMomentum + 1]
-    sbc b
     ld h, a
-    add 60
-    cp 120
-    call nc, ClampAngle
-.bothTurned
 
-    ; --- grip: where the car goes follows where it points, with the gas or steering held
-    ld a, [wSteerKeys]
-    and PADF_B | PADF_LEFT | PADF_RIGHT
-    jr z, .gripped              ; (neither: it slides on, the drift)
+    ; --- grip: where the car goes follows where it points
     ld a, [wFacing]
     cp l
     jr nz, .slipping
@@ -6231,6 +6259,46 @@ Steer:
     ld a, h
     ldh [hX + 1], a
 
+    ; --- the bank: on the outside of a bend the car can go faster than its top (wBank, used
+    ; by the speed block): the further out and the sharper the bend, the more
+    push hl
+    ld hl, 0
+    ld a, [wTrackTurn]
+    or a
+    jr z, .banked
+    ld e, a
+    ldh a, [hX + 1]
+    xor e
+    bit 7, a                    ; (outside: x the other side from the way it turns)
+    jr z, .banked
+    bit 7, e
+    jr z, .bankT
+    xor a
+    sub e
+    ld e, a
+.bankT
+    ldh a, [hX + 1]
+    bit 7, a
+    jr z, .bankX
+    cpl
+    inc a
+.bankX
+    sub BANK_FROM               ; (from a little way out)
+    jr c, .banked
+    push bc
+    call MulU8
+    pop bc
+    REPT BANK_SHIFT
+        srl h
+        rr l
+    ENDR
+.banked
+    ld a, l
+    ld [wBank], a
+    ld a, h
+    ld [wBank + 1], a
+    pop hl
+
     ; --- the camera follows half way (as far as the picture reaches); the car shows the rest
     sra a
     add SHEAR_MAX
@@ -6283,10 +6351,15 @@ Steer:
 
     ; --- the skyline swings as the car turns: a quarter of its width for every 90 degrees
     ; (48 steps): the turn x 4 / 3 pixels (x 5 / 4, near enough)
-    ld a, [wTurning]
+    ld a, [wTurning]            ; (the car's turn, and the road's that it follows)
     ld l, a
     ld a, [wTurning + 1]
     ld h, a
+    ld a, [wRoadTurn]
+    ld e, a
+    ld a, [wRoadTurn + 1]
+    ld d, a
+    add hl, de
     ld d, h
     ld e, l
     sra d
@@ -7004,6 +7077,8 @@ wMomentum:  ds 2                ; where it is going (follows the facing at the g
 wStage:     ds 2                ; the turn stage: the d-pad's lock, building and fading
 wStageAcc:  ds 2                ; ...how fast it builds this frame
 wTurning:   ds 2                ; this frame's turn of the facing, 1/256 steps (the sky swings by it)
+wRoadTurn:  ds 2                ; ...and the road's under it, which the car follows (the sky swings by it too)
+wBank:      ds 2                ; how far over its top speed the outside of this bend lets the car go
 wTrackTurn: db                  ; how much the road under the car turns a unit, 1/128 steps
 wYawView:   db                  ; bend levels the view is swung by (the facing, seen)
 wNoControl: db                  ; frames left without control (after the rail)

@@ -157,17 +157,21 @@ def spread(sections, what):
 sys.path.insert(0, os.path.dirname(__file__))
 import gen_physics                              # noqa: E402  (F-Zero's driving, in fsub's units)
 
-ACE_STRAIGHT = 7.9                              # the best rival's speed on the straight: just
+ACE_STRAIGHT = 8.1                              # the best rival's speed on the straight: just
                                                 # under the top speed (8), which the car only
                                                 # creeps up to (F-Zero's acceleration)
 STEP = 2 * math.pi / 192                        # radians in an angle step
 
 
+ACE_BEND = 0.5                                  # ...and how much better it does through a bend, on a
+                                                # good line (the driver's: a bend does not slow the
+                                                # car, its inside and outside pay: fzero.asm wBank)
+
+
 def corner_speed(b, n):
-    """The fastest a good driver takes n chunks of bend level b: where the most the car can
-    turn at that speed (full lock, F-Zero's turn factor for the speed: gen_physics.py) is what
-    the road turns under it (b * 3 / 256 steps a unit: a level of 16 turns 90 degrees in a
-    chunk).  (The same however long the corner: F-Zero's turning is steady.)"""
+    """(F-Zero's driving: the fastest a car follows n chunks of bend level b, where its most
+    turning at that speed is what the road turns under it.  Not the game's any more: the bend
+    does not turn the car, so it does not slow it.)"""
     curvature = b * 3 / 256 * STEP
     v = 12.0
     while v > 2 and 14 * gen_physics.turn_factor(v / gen_physics.S) * 4 / 8 / 256 * STEP < curvature * v:
@@ -187,7 +191,7 @@ def paces(bends):
         while bends[end % 64] == bend and end - start < 8:
             end += 1
         n = end - start
-        ace = ACE_STRAIGHT if b < 2 else min(ACE_STRAIGHT, corner_speed(b, n))
+        ace = ACE_STRAIGHT if b < 2 else ACE_STRAIGHT + ACE_BEND
         out.append(int(round(ace * 16)) - 25)
     return out
 

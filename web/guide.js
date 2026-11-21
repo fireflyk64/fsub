@@ -36,19 +36,6 @@ let ramp = { key: "", go: false };               // the ramp in view, and whethe
 let lastFace = 0, lastX = 0;                     // where the car pointed last frame, against the road, and where it was
 export const LEAD = 20;                          // frames: how far ahead of the car the advice looks
 
-// The fastest the car follows a bend of level b: where its turning at full lock (14 stage
-// steps x its turn table at that speed / 4, in 256ths of a step a frame) is the road's turn
-// under it (3b / 256 steps a unit).
-function limit(rd, sym, b) {
-  if (Math.abs(b) < 3) return 99;
-  for (let v = 12; v > 2; v -= 0.05) {
-    const q = Math.min(63, Math.floor(v * 4));
-    const turn = sym.wTurnTab === undefined ? 1.2 : 14 * rd(sym.wTurnTab + q) / 4 / 256;
-    if (turn >= 3 * Math.abs(b) / 256 * v) return v;
-  }
-  return 2;
-}
-
 export function advise(rd, sym, lead = LEAD) {
   if (rd(sym.hMenu)) { told = null; ramp = { key: "", go: false }; return null; }
   const state = rd(sym.hState);
@@ -63,21 +50,15 @@ export function advise(rd, sym, lead = LEAD) {
   const bendAt = (c) => (rd(bends + (c & 63)) & 127) - 32;
   const car = pos + PLAYER_Z, ahead = car + speed * lead;
 
-  // --- speed: the most pressing of the corners in the next few chunks
+  // --- speed: a bend does not throw the car (it is the driver's), so: the gas
   let act = "gas", corner = 0;
-  for (let c = car >> 8; c < (ahead >> 8) + 4; c++) {
-    const b = bendAt(c);
-    if (Math.abs(b) < 3) continue;
-    const v = limit(rd, sym, b) + 0.1, d = Math.max(0, c * 256 - ahead);
-    if (speed > v && d <= (speed * speed - v * v) / (2 * BRAKING)) { act = "brake"; corner = b; break; }   // (the road the brakes need)
-  }
 
   // --- steering: where on the road to be, and why
   let target = 0, why = "", danger = false;
   const hold = Math.max(-48, Math.min(48, x));    // (hold the line: here, but never by the rail, where a wind would pin it)
   const here = bendAt(car >> 8) || bendAt((car + 128) >> 8);
-  // (the inside is the short way round: the car covers more of the course there)
-  if (Math.abs(here) > 2) { target = here > 0 ? 36 : -36; why = "the inside: the short way round"; }
+  // (a bend pays its edges: the inside is the short way round, the outside is banked, faster)
+  if (Math.abs(here) > 2) { target = here > 0 ? 60 : -60; why = "hug the inside: the short way round"; }
   const objs = [];
   for (let k = 0; k < 2; k++) {
     const a = sym.wObjSlots + k * 4;
@@ -141,7 +122,7 @@ export function advise(rd, sym, lead = LEAD) {
   const swing = face - lastFace, vx = Math.abs(x - lastX) < 8 ? x - lastX : 0;   // (how fast it is crossing the road: a wind's push too)
   lastFace = face; lastX = x;
   const xThen = x + vx * lead, faceThen = face + swing * lead / 2;
-  const want = Math.max(-6, Math.min(6, (target - xThen) / 6)), err = want - faceThen;
+  const want = Math.max(-12, Math.min(12, (target - xThen) / 4)), err = want - faceThen;
   const steer = Math.abs(err) > 1.5 ? Math.sign(err) : 0;
   told = target;
 

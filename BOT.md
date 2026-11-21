@@ -48,25 +48,16 @@ Check that `track` matches `target_track`, `outcome` is `finished`, and `laps_co
 - `jump_pad_hits` and `dash_pad_hits` count game-state transitions triggered by the respective plates. `dirt_frames` counts grounded frames on dirt, so a single excursion can span many frames.
 - Compare the ROM hash, outcome, place and final screen hash when replaying. Replays run the recorded buttons and report the final frame. Driving counters come from the live policy run.
 
-## The same bot drives Fsub
+## The same bot and Fsub
 
-The policy now lives in [tools/racing/policy.py](tools/racing/policy.py), shared by both games. Each game has a thin adapter:
+The policy lives in [tools/racing/policy.py](tools/racing/policy.py), shared by both games. Each game has a thin adapter:
 
 - **SNES:** [driver.py](tools/fzero_snes/driver.py) reads work RAM and presses SNES buttons. A Mute City I race through it matches the original frame for frame.
 - **Fsub:** [tools/fsub_bot/run.py](tools/fsub_bot/run.py) runs the ROM in PyBoy. It converts Fsub's state to F-Zero units and presses Fsub's buttons.
 
-Fsub's driving was rebuilt as F-Zero's, scaled so that F-Zero's top speed is Fsub's 8. That covers the turn stage, grip and drift, dirt, the jump, and the corners' true curvature and road width. The rail is kinder than F-Zero's: a glance off it rather than a rebound across the road. The courses were adjusted so the same policy works unchanged, with no Fsub-specific tuning. [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, where each number comes from, and what changed.
+For one version (Fsub commit 870711e), Fsub's driving was F-Zero's, and this policy raced it unchanged: 1st, 2nd, 2nd, 2nd at NORMAL. Players found the corners threw them around, so Fsub's handling is now its own: a bend no longer turns the car, and hugging its inside or outside pays instead. The policy still finishes Fsub's races, but it brakes for bends that no longer need it, so it falls back (5th and 3rd, and ranked out twice). [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, what changed, and why.
 
 ```sh
 .venv/bin/python -m pip install pyboy
 .venv/bin/python tools/fsub_bot/run.py --track 0      # 0 Neo City, 1 Blue Deep, 2 Gold Wind, 3 Old Port
 ```
-
-At NORMAL, against seven rivals:
-
-| Fsub course | Finish | Health left | Jump hits | Dash pad hits | Dirt frames |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Neo City | 1st | 64/64 | 3 | 24 | 0 |
-| Blue Deep | 2nd | 64/64 | 3 | 30 | 0 |
-| Gold Wind | 2nd | 55/64 | 0 | 19 | 174 |
-| Old Port | 2nd | 52/64 | 3 | 18 | 0 |

@@ -1,8 +1,12 @@
-# fsub drives like SNES F-Zero
+# fsub's driving: F-Zero's numbers, the driver's car
 
-fsub's driving is SNES F-Zero's, its numbers and all, so that one bot drives both games:
-the SNES F-Zero bot's policy (`tools/racing/policy.py`) races fsub unchanged, through an
-adapter that only converts units (`tools/fsub_bot/run.py`).
+fsub's speeds, acceleration, brakes, grip, dirt and jumps are SNES F-Zero's, with the Blue
+Falcon's tables read from the game. The handling is fsub's own.
+
+For a day it was all F-Zero's, so that one bot could drive both games: the SNES F-Zero bot's
+policy (`tools/racing/policy.py`) raced fsub unchanged, 1st, 2nd, 2nd, 2nd (commit 870711e).
+But people playing it found the corners threw them about. So the car is now the driver's: a
+bend never turns it, and instead its edges pay.
 
 ## Where the numbers come from
 
@@ -14,141 +18,103 @@ adapter that only converts units (`tools/fsub_bot/run.py`).
 * **Race logs.** The SNES bot's Mute City I and II races, logged every frame (speed, facing,
   momentum, turn rate, height), check the model against the game:
   * the turn builds from 0.34 to 1.36 steps a frame over 13 frames;
-  * the turn dies away from a lean in 16 frames, falling 22/256 a frame;
+  * the turn dies away from a lean in 16 frames;
+  * reversing from full lock, the turn takes about 10 frames to cross zero;
   * a jump at 7.5 lasts about 82 frames;
-  * the road is 258 units wide at the median;
-  * the tightest bend has a radius of 95 units.
-* **A wall probe.** The Blue Falcon driven into Mute City I's wall shows the bounce: the part
-  of its velocity into the wall reverses, its facing stays, and it loses speed for a few
-  frames after. (F-Zero Forever has no bounce; the game does.)
+  * the road is 258 units wide at the median, and the tightest bend has a radius of 95.
+* **A wall probe.** The Blue Falcon driven into Mute City I's wall: the part of its velocity
+  into the wall reverses. (F-Zero Forever has no bounce; the game does.)
 
-## The scale
+F-Zero's top speed, 8.81 units a frame, is fsub's 8: every length and speed is F-Zero's times
+S = 8 / 8.81 = 0.908. Angles are F-Zero's (192 steps to a turn).
 
-F-Zero's top speed, 8.81 units a frame, is fsub's 8. So every length and speed is F-Zero's
-times S = 8 / 8.81 = 0.908. Angles are F-Zero's own (192 steps to a turn), and frames are
-frames, so every angular rate is F-Zero's as it is.
-
-## The model (fsub = F-Zero x S)
+## The model
 
 | | F-Zero | fsub |
 |---|---|---|
-| turn stage | ±14 steps at full lock, ±16 leaning (L/R); builds at 1/frame, growing 0x1E/frame; fades 1/frame | the same. Leaning is brake + steer at speed. With the gas held too it leans without braking |
-| facing turns | stage × turn factor(speed) / 2, in 256ths of a step a frame | the same, × the car's turning (eighths) |
-| momentum (where it goes) | follows the facing at the grip rate, only with gas or steering held: otherwise it drifts | the same |
-| grip | 0x180 within 30 steps of slide; 0xA0 sliding or in the air; 0x20 on dirt; 0x280 below 5.5 | the same (each car its own normal grip) |
-| the road | 2D | turns under the car by its true curvature: a level-L corner turns L × 90 / 16 degrees in a 256-unit chunk |
-| across the road | speed × sin(slide) | three quarters of that: the road is drawn 168 wide but drives as wide as F-Zero's (see below) |
-| distance | where it goes | speed × cos(slide) × R / (R − x): the inside of a bend is the short way |
-| acceleration | the ROM's table: strong from rest, a trickle near the top | the same, × S, × the car's |
+| acceleration | the ROM's table: strong from rest, a trickle near the top | the same × S, × the car's |
 | brakes | about 14/256 a frame near the top | the same × S |
 | coasting | 4/256 a frame | the same × S |
-| the wall | bounce: the velocity into it reverses; 10 frames without control; 192/2048 of the energy every 9 frames in contact; −0x10 speed a frame above 4 | kinder (see below): a glance; 5/64 health a knock, not again for 9 frames |
+| turn stage | builds to ±14 (±16 leaning) at 1/frame growing 0x1E/frame; fades 1/frame | builds at 2/frame growing 0x40/frame; fades 4/frame; turned the other way, straight at once |
+| facing | stage × turn factor(speed) / 2 a frame | the same × the car's turning (eighths); no more than 12 steps (22°) off the road; let go and it straightens by an eighth a frame |
+| the road in a bend | turns under the car (2D) | does not turn the car: it holds its line round |
+| momentum (where it goes) | follows the facing at the grip rate, only with gas or steering held (else a drift) | follows the facing at the grip rate, always |
+| grip | 0x180 within 30 steps; 0xA0 sliding or in the air; 0x20 on dirt; 0x280 below 5.5 | the same (each car its own) |
+| across the road | speed × sin(slide) | three quarters of that: drawn 168 wide, it drives as wide as F-Zero's road |
+| distance | where it goes | speed × cos(slide), × R / (R − x) on the inside of a bend: the short way round |
+| the outside of a bend | (the long way round) | banked: the car may go up to (x − 12) × \|T\| / 2 256ths over its top, pulled up 20/256 a frame, and it carries the speed out |
+| the wall | bounce: the velocity into it reverses; 10 frames without control | a glance: a quarter of the angle, the other way, turned along the road; a wheel turned into it straightened; a hard hit (4 steps) 5 frames without control; 5/64 health a knock, not again for 9 frames |
 | dirt | top speed 3.0; turning halved | the same × S |
-| jump | up at speed / 2, 1 to 4.5 a frame; falls 25/256 a frame (much faster nose down); a hard landing bounces unless the nose is up | the same × S |
+| jump | up at speed / 2, 1 to 4.5 a frame; falls 25/256 a frame (much faster nose down) | the same × S |
 
-## Where fsub is kinder than F-Zero
+## Why each departure
 
-Players found F-Zero's wall impossible on fsub: "bounced back and forth like a ping pong ball
-and explode".  Two things, measured with a person-like driver that hits the rail and then,
-0.2 s later, points back down the road (and one that takes a hairpin too fast):
+* **The road does not turn the car; the car straightens when let go; the turn is quicker.**
+  * In F-Zero's model a bend turns the road under the car. A car not turned to follow it
+    drifts wide, and the turn winds up and carries on for 16 frames after the d-pad.
+  * On fsub's screen that read as being thrown around. The user's words: "the way the
+    turns kinda throw you around isn't fun".
+* **The edges of a bend pay instead.** The user asked that "the curves give you basically just
+  speed boosts if you're hugging inside or outside".
+  * The inside is the short way round.
+  * The outside is banked: faster than top speed, carried out of the bend.
+  * The middle gets neither.
+  * The extreme lines run past the outer rival lanes' barriers, and the pads sit near the
+    middle: a choice of lines.
+  * Laps by line, no rivals (middle / inside / outside):
 
-* **The road drives as wide as F-Zero's.** It is drawn 168 units wide, which is 185 of
-  F-Zero's units against F-Zero's 258. So the car crosses it at three quarters of its
-  speed × sin(slide): a glance or an overshoot has the room it would have in F-Zero. The
-  bot's adapter scales x the same way, so to the bot the road is F-Zero's width.
-* **The rail is a glance, not a rebound.** F-Zero mirrors the whole of the angle the car
-  hit at. A hit at 25 steps or more (about 47°) then crossed fsub's road into the other rail,
-  and again.
-  * Now the car leaves at a quarter of the angle, turned to run along the road.
-  * If the wheel was turned into the rail, it is straightened. If the player is already
-    steering away, as out of a bend, it is left alone.
-  * Only a hard hit (4 steps or more into it) takes control away, and then for 5 frames, not 10.
+    | Track | Middle | Inside | Outside |
+    |---|---:|---:|---:|
+    | Neo City | 33.1 s | 31.7 s | 33.2 s |
+    | Blue Deep | 31.6 s | 32.1 s | 31.8 s |
+    | Gold Wind | 38.0 s | 37.5 s | 37.4 s |
+    | Old Port | 33.8 s | 32.3 s | 32.0 s |
 
-  Result: one knock and back on the road, whatever the angle. Overcooking a hairpin costs one
-  or two knocks, not a row of them.
+    These are a scripted driver's laps; a person who times the edges does better.
+* **Across at three quarters, and the glancing rail.** F-Zero's full rebound on fsub's
+  narrower road "bounced back and forth like a ping pong ball", then the car blew up.
+  * A person-like driver probe: it hits the rail at any angle, reacts 0.2 s later. It now
+    takes one knock and never crosses the middle.
+* **Rivals.** They hold their straight pace (8.1) through a bend, and a little more (+0.5) for
+  a good line.
+  * Following the guide a person's reaction late (`playtest.js guided`):
 
-The turning is F-Zero's as it is. The SNES logs show its counter-steer is as slow as fsub's:
-reversing from full lock, the turn rate takes about 10 frames to cross zero.
+    | Level | Neo City | Blue Deep | Gold Wind | Old Port |
+    |---|---|---|---|---|
+    | NORMAL | 1st | 2nd | 3rd | 1st |
+    | HARD | 1st | 3rd | 3rd | 2nd |
 
-## What the courses had to change
+## What the courses had to change (for F-Zero's model, and kept)
 
-* **The road drives as wide as F-Zero's.** It is drawn 84 units either side of the line (185
-  of F-Zero's units in all). The car crosses it at three quarters, so it drives 247 wide,
-  against the 258 of F-Zero's median road. Rival lanes are at ±18 and ±54.
-* **No corner is tighter than F-Zero's tightest.** fsub corners are level 8 or 16: a radius of
-  326 or 163 units (360 or 180 of F-Zero's). The level-24 and level-32 corners (radius 109
-  and 81) were tighter than anything in F-Zero. Each is now spread over more chunks: the same
-  turn, over a longer stretch.
-  * A level-16 bend is taken at about 6.4 (7.3 leaning).
-  * A level-8 bend is taken flat out.
+* **No corner is tighter than F-Zero's tightest** (level 16). The sharper ones are spread over
+  more chunks.
 * **Patches act where they are drawn.** Dirt, pads, recharge strips and ramps sit 18 units
-  either side of the line, and act 24 units either side of that: just where the sprites are.
-  * They used to act over the whole half of the road, while being drawn as a 47-unit patch
-    near the rail. So the car was dragged by dirt it could see it had missed.
-  * Meanwhile the middle six units of the road touched nothing.
-  * Now the middle of the road crosses them, as F-Zero's line crosses its dirt and plates.
-* **The rivals' pace is the physics'.** In a corner the best rival runs as fast as the car
-  can turn to follow it, and on the straight it runs at 7.9: just under a top speed the car
-  only creeps up to.
-* **A ramp's flight is long.** At a boost's speed it lasts about 3.5 chunks. A bend where it
-  lands calls for the nose down, as on Mute City II.
+  either side of the line, and act 24 units either side of that.
+  * They used to act over the whole half of the road, while drawn near the rail.
+* **A ramp's flight is long:** about 3.5 chunks at a boost's speed.
 
-## The bot, in both games
+## The bot
 
-`tools/racing/policy.py` is the SNES bot's driving logic, lifted out of
-`tools/fzero_snes/driver.py` unchanged. The SNES side is now a thin adapter:
-* a Mute City I race re-run through it matches the original frame for frame (9562 frames,
-  every button and position);
-* it was re-checked after the last change to the policy.
+`tools/racing/policy.py` is the SNES bot's driving logic. `tools/fzero_snes/driver.py` adapts
+it to SNES F-Zero: a Mute City I race through it matches the original frame for frame.
+`tools/fsub_bot/run.py` adapts it to fsub (PyBoy): fsub's course in F-Zero units, from the
+chunks' bends, laid out as the race's laps end to end.
 
-fsub's adapter:
-* **The course.** It builds fsub's course in F-Zero units from the chunks' bends (with their
-  true curvature), laid out as the race's laps end to end. A lap turns 360 degrees but need
-  not close, so nothing is bent to make it meet itself.
-* **Surfaces.** It answers the policy's surface lookups from fsub's things. A barrier counts
-  as off the road.
-* **The car.** It reports the car's state (position, facing, momentum, turn rate, height),
-  and the rivals' positions.
-* **Buttons.** It presses fsub's buttons for the policy's controls:
-
-  | Control | Button |
-  |---|---|
-  | gas | B |
-  | brake, lean | A |
-  | boost, nose down | Up |
-  | nose up | Down |
-
-`.venv/bin/python tools/fsub_bot/run.py --track N [--car N] [--level N]`, at NORMAL:
-
-| fsub | Place | Health left | Jumps | Dirt frames | Rail frames | Peak load |
-|---|---:|---:|---:|---:|---:|---:|
-| Neo City | 1st | 64 | 3 | 0 | 0 | 91% |
-| Blue Deep | 2nd | 64 | 3 | 0 | 0 | 86% |
-| Gold Wind | 2nd | 55 | (no ramp) | 174 | 0 | 94% |
-| Old Port | 2nd | 52 | 3 | 0 | 0 | 90% |
-
-SNES F-Zero, the same policy (BOT.md): Mute City I 1st, Mute City II 2nd, Death Wind I 2nd.
-
-By car, on Neo City and Old Port:
-* HORNET: 1st and 2nd.
-* BISON: 2nd and 3rd.
-* COMET: 4th; ranked out on Old Port. It is the fastest car, slow to get there, and it slides;
-  the bot plans its corners for ARROW.
-
-At EASY on Old Port it is 1st; at HARD, 3rd.
+It still finishes fsub's races. But it brakes for bends by F-Zero's turning, which fsub's car
+does not need, so it is no longer the yardstick. At NORMAL: Neo City 5th, Blue Deep 3rd; Gold
+Wind and Old Port ranked out. To have it race fsub well again, either:
+* teach the policy that a bend needs no slowing (a flag the fsub adapter passes); or
+* bring F-Zero's handling back as a menu option (commit 870711e has it).
 
 ## What it costs
 
-The new physics is more arithmetic every frame, and every cycle spent early in the frame
-pushes the rest into the part of it where the line interrupt takes half of each line. These
+The physics is more arithmetic every frame than fsub's first. Every cycle spent early in the
+frame pushes the rest into the part where the line interrupt takes half of each line. These
 keep it close to the old cost:
 
-* an 8-by-8 multiply by quarter squares, from a 1 KB table built in the D000 bank at boot
-  (about 45 cycles, against 120 for the loop it replaces);
+* an 8-by-8 multiply by quarter squares, from a 1 KB table built in the D000 bank at boot;
 * the car's acceleration and turning tables, built once when the car is chosen;
 * tables on page boundaries;
-* skipping the work that does nothing on a straight, or for a car going where it points.
+* skipping the work that does nothing on a straight.
 
-With the bot driving, mean load is 63–67% and the peak is 90–96%, with no dropped frames. The
-old ROM ran at 59–60%. `PEAK=1 node tools/playtest.js expert` still finds a frame of 152 lines
-on Neo City's last corner: two pads in play, and a corner in sight.
+With the bot driving, mean load is 69–72% and the peak is 91–97%, with no dropped frames.

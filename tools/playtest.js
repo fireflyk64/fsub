@@ -164,17 +164,17 @@ async function race(kind, record) {
       if (Math.abs(ahead) > 2) target = ahead > 0 ? 36 : -36;        // the inside: the short way round
       if (kind === 'human') dodge(480, lateObjs); else dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
-      if (speed > want + 0.15) { gas = false; brake = true; }       // (off the gas alone F-Zero's car barely slows)
+      if (healing && speed > want + 0.15) { gas = false; brake = true; }   // (a bend never needs the brakes now: only the pit)
       if (process.env.TRACE && out.frames % +process.env.TRACE === 0) console.log('  want', want.toFixed(2), 'limits 8/16', limit(8).toFixed(2), limit(16).toFixed(2), 'tab', [0, 16, 32, 48].map(q => rd(sym.wTurnTab + q)), 'sym', sym.wTurnTab && sym.wTurnTab.toString(16), 'bends', [0, 1, 2, 3].map(k => bendAt((plan >> 8) + k)));
       const straight = [0, 1, 2].every(k => Math.abs(bendAt(chunk + k)) < 3) && Math.abs(bend) < 3;
       if (boosts && straight && speed > 7.6) boost = true;
     }
-    // Steering, as F-Zero's car turns: point it at the target (a step of facing for each 6 pixels
-    // to go, up to 6), allowing for how fast the facing is already swinging (the turn carries on
-    // a moment after the d-pad is let go).  (guided: as the guide said.)
+    // Steering: point the car at the target (a step of facing for each 4 pixels to go, up to the
+    // 12 it turns to), allowing for how fast the facing is already swinging.  (guided: as the
+    // guide said.)
     // (and for where it is going across the road, as a person sees it drift: a wind's push too)
     const vx = Math.abs(x - lastX) < 8 ? x - lastX : 0;
-    if (steer === null) { const want = Math.max(-6, Math.min(6, (target - x - vx * 12) / 6)), err = want - face - (face - lastFace) * 8; steer = Math.abs(err) > 1 ? Math.sign(err) : 0; }
+    if (steer === null) { const want = Math.max(-12, Math.min(12, (target - x - vx * 10) / 4)), err = want - face - (face - lastFace) * 3; steer = Math.abs(err) > 0.7 ? Math.sign(err) : 0; }
     lastFace = face; lastX = x;
     set('left', !air && steer < 0); set('right', !air && steer > 0);
     if (process.env.TRACE && out.frames % +process.env.TRACE === 0) console.log('t', out.frames, 'chunk', ((pos + PLAYER_Z) >> 8) & 63, 'x', x.toFixed(1), 'face', face.toFixed(2), 'speed', speed.toFixed(2), 'target', target, 'steer', steer, 'gas', gas, 'brake', brake, 'hp', rd(sym.hHealth));
