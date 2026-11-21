@@ -33,7 +33,7 @@ S = 8 / 8.81 = 0.908. Angles are F-Zero's (192 steps to a turn).
 | | F-Zero | fsub |
 |---|---|---|
 | acceleration | the ROM's table: strong from rest, a trickle near the top | the same × S, × the car's |
-| brakes | about 14/256 a frame near the top | the same × S |
+| brakes | about 14/256 a frame near the top | the same × S, half while steering; braking through a bend charges a boost (below) |
 | coasting | 4/256 a frame | the same × S |
 | turn stage | builds to ±14 (±16 leaning) at 1/frame growing 0x1E/frame; fades 1/frame | builds at 2/frame growing 0x40/frame; fades 4/frame; turned the other way, straight at once |
 | facing | stage × turn factor(speed) / 2 a frame | the same × the car's turning (eighths); no more than 12 steps (22°) off the road; let go and it straightens by an eighth a frame |
@@ -75,14 +75,34 @@ S = 8 / 8.81 = 0.908. Angles are F-Zero's (192 steps to a turn).
   narrower road "bounced back and forth like a ping pong ball", then the car blew up.
   * A person-like driver probe: it hits the rail at any angle, reacts 0.2 s later. It now
     takes one knock and never crosses the middle.
-* **Rivals.** They hold their straight pace (8.1) through a bend, and a little more (+0.5) for
-  a good line.
-  * Following the guide a person's reaction late (`playtest.js guided`):
+* **Braking into a bend pays.** With nothing to slow for, braking had no point. The user:
+  "breaking for turns should be rewarded somehow".
+  * Braking through a bend (on the ground, above speed 4) charges a boost: a frame of charge a
+    frame, two in a hairpin, at most 30.
+  * Let go of the brake and it goes off: half a frame of boost per frame of charge, with the
+    boost's surge, flash and sound. Under 8 frames of charge fizzles.
+  * Brake too long and you only lose the speed. Laps by line and brake-in, no rivals:
+
+    | Track | Middle | Brake 10 | Brake 20 | Brake 40 | Inside | Inside, brake 15 |
+    |---|---:|---:|---:|---:|---:|---:|
+    | Neo City | 33.2 s | 32.3 s | 32.2 s | 33.9 s | 31.7 s | 30.3 s |
+    | Blue Deep | 31.6 s | 31.3 s | 31.0 s | 31.6 s | 32.2 s | 31.3 s |
+    | Gold Wind | 37.9 s | 36.9 s | 36.6 s | 37.4 s | 37.6 s | 35.9 s |
+    | Old Port | 33.8 s | 32.6 s | 32.1 s | 33.9 s | 32.3 s | 29.6 s |
+
+  * At a full frame of boost per frame of charge it was worth up to 4 s a lap: too much.
+  * The brake always brakes now. F-Zero's lean (gas + brake + steer, no braking) is gone; it
+    would have charged for free.
+* **Rivals.** They hold their straight pace (8.3) through a bend, and a little more (+0.7)
+  for a good line.
+  * Following the guide a person's reaction late (`playtest.js guided`: it brakes in when the
+    guide says, and lets go when it says):
 
     | Level | Neo City | Blue Deep | Gold Wind | Old Port |
     |---|---|---|---|---|
-    | NORMAL | 1st | 2nd | 3rd | 1st |
-    | HARD | 1st | 3rd | 3rd | 2nd |
+    | NORMAL | 1st | 2nd | 2nd | 1st |
+    | HARD | 1st | 2nd | 3rd | 1st |
+    | EXPERT | 1st | ranked out | ranked out | 3rd |
 
 ## What the courses had to change (for F-Zero's model, and kept)
 
@@ -100,9 +120,8 @@ it to SNES F-Zero: a Mute City I race through it matches the original frame for 
 `tools/fsub_bot/run.py` adapts it to fsub (PyBoy): fsub's course in F-Zero units, from the
 chunks' bends, laid out as the race's laps end to end.
 
-It still finishes fsub's races. But it brakes for bends by F-Zero's turning, which fsub's car
-does not need, so it is no longer the yardstick. At NORMAL: Neo City 5th, Blue Deep 3rd; Gold
-Wind and Old Port ranked out. To have it race fsub well again, either:
+It still drives fsub's races. But it brakes by F-Zero's turning, before a bend rather than
+through it, so it is no longer the yardstick. At NORMAL: Neo City 4th; the others ranked out. To have it race fsub well again, either:
 * teach the policy that a bend needs no slowing (a flag the fsub adapter passes); or
 * bring F-Zero's handling back as a menu option (commit 870711e has it).
 
@@ -117,4 +136,6 @@ keep it close to the old cost:
 * tables on page boundaries;
 * skipping the work that does nothing on a straight.
 
-With the bot driving, mean load is 69–72% and the peak is 91–97%, with no dropped frames.
+With the bot driving, mean load is 71–73% and the peak is 97–98%, with one dropped frame on Neo
+City: the bot runs mid-pack, with most of the rivals on screen. A person following the guide
+runs at 93–98% peak, with at most one dropped frame in a race.

@@ -52,6 +52,7 @@ async function race(kind, record) {
   // turn table, the game's wTurnTab, / 4) against the road's turn under it (3b / 256 steps a unit).
   const limit = (b) => { if (Math.abs(b) < 3) return 12; for (let v = 12; v > 2; v -= 0.05) { if (14 * rd(sym.wTurnTab + Math.min(63, Math.floor(v * 4))) / 4 / 256 >= 3 * Math.abs(b) / 256 * v) return v; } return 2; };
   let lastFace = 0, lastX = 0;                    // (where the car pointed last frame, against the road, and where it was)
+  let brakedHere = false;                         // (expert: this bend's brake-in done)
   const keys = {}; const set = (k, v) => { if (!!keys[k] !== !!v) { keys[k] = !!v; m['_set_joyp_' + k](e, v ? 1 : 0); } };
   const inputLog = []; const replay = process.env.REPLAY_INPUTS ? JSON.parse(fs.readFileSync(process.env.REPLAY_INPUTS, 'utf8')) : null;
   let ticks = 0; const step = () => {
@@ -162,6 +163,10 @@ async function race(kind, record) {
       }
       const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
       if (Math.abs(ahead) > 2) target = ahead > 0 ? 36 : -36;        // the inside: the short way round
+      // (into a bend: on the brakes until the charge is in, then off: it goes off as a boost)
+      const inBend = Math.abs(bendAt((car + 40) >> 8)) > 2, charge = rd(sym.wCharge);
+      if (!inBend) brakedHere = false;
+      else if (!brakedHere && !rd(sym.hBoost) && speed > 5) { if (charge < 18) { gas = false; brake = true; } else brakedHere = true; }
       if (kind === 'human') dodge(480, lateObjs); else dodge(480);
       if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
       if (healing && speed > want + 0.15) { gas = false; brake = true; }   // (a bend never needs the brakes now: only the pit)

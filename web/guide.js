@@ -34,6 +34,7 @@ let held = { key: "", target: null };            // the spot chosen for the barr
 let told = null;                                 // where the last advice sent the car
 let ramp = { key: "", go: false };               // the ramp in view, and whether to line up for it (decided once)
 let lastFace = 0, lastX = 0;                     // where the car pointed last frame, against the road, and where it was
+let braked = -1;                                 // the bend whose brake-in has been said (once a bend)
 export const LEAD = 20;                          // frames: how far ahead of the car the advice looks
 
 export function advise(rd, sym, lead = LEAD) {
@@ -50,8 +51,16 @@ export function advise(rd, sym, lead = LEAD) {
   const bendAt = (c) => (rd(bends + (c & 63)) & 127) - 32;
   const car = pos + PLAYER_Z, ahead = car + speed * lead;
 
-  // --- speed: a bend does not throw the car (it is the driver's), so: the gas
-  let act = "gas", corner = 0;
+  // --- speed: a bend does not throw the car (it is the driver's), so: the gas.  But braking into
+  // one charges a boost (wCharge) that goes off as the brake is let go: so BRAKE as a bend comes,
+  // and let go once there is enough (a hairpin charges twice as fast), once a bend.
+  let act = "gas", corner = 0, chargeWhy = "";
+  const bendNow = bendAt(ahead >> 8), bendStart = (c) => { while (bendAt(c - 1) === bendAt(c)) c--; return c & 63; };
+  if (Math.abs(bendNow) > 2 && sym.wCharge !== undefined && !rd(sym.hBoost) && speed > 5) {
+    const start = bendStart(ahead >> 8), charge = rd(sym.wCharge);
+    if (braked !== start && charge < 18) { act = "brake"; corner = bendNow; chargeWhy = "brake into the bend: let go for a boost"; }
+    else if (braked !== start) braked = start;
+  }
 
   // --- steering: where on the road to be, and why
   let target = 0, why = "", danger = false;
@@ -143,7 +152,7 @@ export function advise(rd, sym, lead = LEAD) {
   if (act === "gas" && rd(sym.hBoosts) && !rd(sym.hBoost) && straight && speed > 7 && !danger) act = "boost";
   // --- the pit: low on health, brake down to a crawl over the recharge patches for the most
   // (fzero.asm HEAL_CRAWL: about 60% of what is missing over both; flat out, a third)
-  let actWhy = "";
+  let actWhy = chargeWhy;
   if (health < 40) for (const o of objs) {
     if (o.kind !== 9 && o.kind !== 10) continue;
     const d = o.dist - PLAYER_Z - speed * lead;

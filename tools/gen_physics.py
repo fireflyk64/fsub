@@ -85,6 +85,12 @@ def main():
             "BANK_FROM": 12,
             "BANK_SHIFT": 1,
             "BANK_ACCEL": 20,
+            # Braking through a bend charges a boost: a frame of charge a frame braked (two in a
+            # hairpin), from CHARGE_FROM up, at most CHARGE_MAX; under CHARGE_MIN it fizzles
+            "CHARGE_FROM": 4,
+            "CHARGE_MIN": 8,
+            "CHARGE_MAX": 30,
+            "CHARGE_SHIFT": 1,          # ...and goes off as half that many frames of boost
             "INSIDE_SHIFT": 0,          # the inside's short way round: R / (R - x), all of it
             "GRIP_LOOSE": 0x00A0,       # sliding (the slide past GRIP_TOLERANCE), or in the air
             "GRIP_DIRT": 0x0020,        # on dirt, sliding

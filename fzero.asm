@@ -4324,6 +4324,30 @@ Drive:
     ld a, SFX_BOOST
     call Sfx
 .noFire
+    ; --- a bend braked through: let go of the brake and its charge goes off as a boost (half a
+    ; frame of it for each frame braked, a frame in a hairpin); too little and it fizzles
+    ld a, [wCharge]
+    or a
+    jr z, .uncharged
+    bit 7, b
+    jr nz, .uncharged           ; (still braking: still charging)
+    cp CHARGE_MIN
+    jr c, .spent
+    REPT CHARGE_SHIFT           ; (a frame of boost for every 2 frames charged)
+        srl a
+    ENDR
+    ld c, a
+    ldh a, [hBoost]
+    cp c
+    jr nc, .spent               ; (a longer boost on already)
+    ld a, c
+    ldh [hBoost], a
+    ld a, SFX_BOOST
+    call Sfx
+.spent
+    xor a
+    ld [wCharge], a
+.uncharged
     ldh a, [hBoost]
     ld c, a
     ldh a, [hBoostSeen]
@@ -4410,7 +4434,7 @@ Drive:
     jp .speedSet
 .offWall
     bit 1, b                    ; PADF_B
-    jr z, .coast
+    jp z, .coast
     ; the throttle: F-Zero's curve (strong from rest, a trickle near the top), times the car's
     push de                     ; (the top)
     ld a, h                     ; (the speed in quarters, 0..63)
@@ -4454,12 +4478,36 @@ Drive:
     ld h, d
     ld l, e
 .throttled
-    bit 7, b                    ; throttle and brake together: the brake wins a little...
+    bit 7, b                    ; throttle and brake together: the brake wins
     jp z, .speedSet
-    ld a, b                     ; ...but with the steering too it is a lean into the turn
-    and PADF_LEFT | PADF_RIGHT  ; (F-Zero's L and R: Steer turns harder), not a brake
-    jp nz, .speedSet
 .braking                        ; the brakes take the edge off: they will not stop the car
+    ld a, [wTrackTurn]          ; Braking through a bend charges a boost (a hairpin twice as
+    or a                        ; fast): let go of the brake and it goes off (.noFire)
+    jr z, .uncharging
+    bit 7, a
+    jr z, .chargeT
+    cpl
+    inc a
+.chargeT
+    cp 24
+    ld c, 1
+    jr c, .chargeRate
+    inc c
+.chargeRate
+    ldh a, [hAir]
+    or a
+    jr nz, .uncharging
+    ld a, h
+    cp CHARGE_FROM
+    jr c, .uncharging
+    ld a, [wCharge]
+    add c
+    cp CHARGE_MAX + 1
+    jr c, .charged
+    ld a, CHARGE_MAX
+.charged
+    ld [wCharge], a
+.uncharging
     ld a, h
     cp BRAKE_FLOOR
     jr c, .speedSet
@@ -7079,6 +7127,7 @@ wStageAcc:  ds 2                ; ...how fast it builds this frame
 wTurning:   ds 2                ; this frame's turn of the facing, 1/256 steps (the sky swings by it)
 wRoadTurn:  ds 2                ; ...and the road's under it, which the car follows (the sky swings by it too)
 wBank:      ds 2                ; how far over its top speed the outside of this bend lets the car go
+wCharge:    db                  ; frames of boost charged by braking through a bend (let go: it goes off)
 wTrackTurn: db                  ; how much the road under the car turns a unit, 1/128 steps
 wYawView:   db                  ; bend levels the view is swung by (the facing, seen)
 wNoControl: db                  ; frames left without control (after the rail)

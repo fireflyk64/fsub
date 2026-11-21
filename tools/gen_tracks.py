@@ -157,13 +157,13 @@ def spread(sections, what):
 sys.path.insert(0, os.path.dirname(__file__))
 import gen_physics                              # noqa: E402  (F-Zero's driving, in fsub's units)
 
-ACE_STRAIGHT = 8.1                              # the best rival's speed on the straight: just
+ACE_STRAIGHT = 8.3                              # the best rival's speed on the straight: just
                                                 # under the top speed (8), which the car only
                                                 # creeps up to (F-Zero's acceleration)
 STEP = 2 * math.pi / 192                        # radians in an angle step
 
 
-ACE_BEND = 0.5                                  # ...and how much better it does through a bend, on a
+ACE_BEND = 0.7                                  # ...and how much better it does through a bend, on a
                                                 # good line (the driver's: a bend does not slow the
                                                 # car, its inside and outside pay: fzero.asm wBank)
 

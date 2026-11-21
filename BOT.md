@@ -55,7 +55,7 @@ The policy lives in [tools/racing/policy.py](tools/racing/policy.py), shared by 
 - **SNES:** [driver.py](tools/fzero_snes/driver.py) reads work RAM and presses SNES buttons. A Mute City I race through it matches the original frame for frame.
 - **Fsub:** [tools/fsub_bot/run.py](tools/fsub_bot/run.py) runs the ROM in PyBoy. It converts Fsub's state to F-Zero units and presses Fsub's buttons.
 
-For one version (Fsub commit 870711e), Fsub's driving was F-Zero's, and this policy raced it unchanged: 1st, 2nd, 2nd, 2nd at NORMAL. Players found the corners threw them around, so Fsub's handling is now its own: a bend no longer turns the car, and hugging its inside or outside pays instead. The policy still finishes Fsub's races, but it brakes for bends that no longer need it, so it falls back (5th and 3rd, and ranked out twice). [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, what changed, and why.
+For one version (Fsub commit 870711e), Fsub's driving was F-Zero's, and this policy raced it unchanged: 1st, 2nd, 2nd, 2nd at NORMAL. Players found the corners threw them around, so Fsub's handling is now its own: a bend no longer turns the car, and hugging its inside or outside pays instead. The policy still drives Fsub, but by F-Zero's rules: it brakes before bends that no longer need it, rather than through them, where braking now charges a boost. So it falls back (4th on Neo City, ranked out on the others). [tools/FZERO_DYNAMICS.md](tools/FZERO_DYNAMICS.md) has the model, what changed, and why.
 
 ```sh
 .venv/bin/python -m pip install pyboy
