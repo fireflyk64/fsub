@@ -193,6 +193,7 @@ DEF BANK_AT     EQU 10          ; sideways speed at which the car visibly leans
 DEF JUMP_SPEED  EQU $0300       ; upward speed at take-off, 8.8 pixels per frame
 DEF JUMP_RAMP   EQU $0300       ; (unused: a ramp throws the car up by its speed, JumpUp)
 DEF LAND_SLIDE  EQU 24          ; frames after landing that steering takes hold slowly
+DEF HUD_LATE    EQU 128         ; the status bar is not redone when a frame's work gets this late
 DEF JUMP_VZ_MAX  EQU $83        ; up off a ramp no faster than F-Zero's 4.5 units a frame (in
                                 ; 256ths of a pixel of height: its units x S / 8)
 DEF GRAVITY     EQU $03         ; F-Zero's fall (25/256 of its units), in pixels of height:
@@ -915,8 +916,6 @@ EngineApply:
     ret
 
 MainLoop:
-    xor a
-    ldh [hVBlank], a
 .wait
     di                          ; checking the flag and going to sleep must not be split by
     ldh a, [hVBlank]            ; the VBlank interrupt, or the sleep would last until the
@@ -933,8 +932,10 @@ MainLoop:
     call LinkPump
     jr .wait
 .frame
-    ei
-    call UpdateKeys
+    xor a                       ; (the VBlank is taken here, not at the top of the loop: one
+    ldh [hVBlank], a            ; that came while the last frame's tail was still running -- the
+    ei                          ; music, after the frame was handed over -- starts this frame at
+    call UpdateKeys             ; once, a few lines late, rather than a whole frame later)
     call LinkIdle
     call Drive
     call LinkPump
@@ -945,11 +946,11 @@ MainLoop:
     call UpdateRivals
     call UpdateObject           ; (after the rivals: a boost pad's palette wins on its lines)
     call PlayerSprites
-    call UpdateHud
     call LinkPump
     ldh a, [hBuiltScx]          ; everything for this frame is staged: let VBlank show it
     dec a
     ldh [hReady], a
+    call UpdateHud              ; (after: the status bar is copied on its own, when it is built)
     call SongBank
     call hUGE_dosound
     call LinkPump
@@ -1049,13 +1050,7 @@ BuildLines:
     ld a, [wHitFlash]           ; a hit: the city flashes in negative
     and 2
     jr nz, .skyNegative
-.sky
-    ld a, [de]
-    ld [hl+], a
-    inc de
-    ld a, l
-    cp HORIZON
-    jr nz, .sky
+    call CopySky
     jp .bgpDone
 .skyNegative
     ld a, [de]
@@ -3243,17 +3238,35 @@ RoadBand:
 
 ; The status bar: place, lap, health.  Staged in wHud, copied to the tilemap in VBlank.
 UpdateHud:
+    ld d, 0                     ; d: the blink's phase, only when the place can blink (after
+    ldh a, [hState]             ; the flag, or behind the place the lap needs late in it: as
+    cp STATE_FINISHED           ; .place has it); else the bar is redone only for a change
+    jr z, .canBlink
+    or a
+    jr nz, .blinkSet
+    ldh a, [hPos + 2]
+    and CHUNK_MASK
+    cp 40
+    jr c, .blinkSet
+    call RankNeeded
+    ld b, a
+    ldh a, [hRank]
+    cp b
+    jr c, .blinkSet
+    jr z, .blinkSet
+.canBlink
+    ldh a, [hFrame]
+    and %00010000
+    add a
+    add a
+    ld d, a
+.blinkSet
     ldh a, [hRank]              ; anything on it changed?  (cheap to check, dear to redo)
     ld b, a
     ldh a, [hLap]
     swap a
     or b
-    ld b, a
-    ldh a, [hFrame]
-    and %00010000
-    add a
-    add a
-    or b
+    or d
     ld b, a
     ldh a, [hState]
     rrca
@@ -3295,13 +3308,26 @@ UpdateHud:
     cp c
     ret z
 .redo
+    ldh a, [rLY]                ; late in a heavy frame: leave it to the next one, or the next
+    cp HUD_LATE                 ; but one (a bar a frame late is never seen; a frame dropped is)
+    jr c, .inTime
+    cp SCRN_Y
+    jr nc, .inTime
+    ld a, [wHudPut]
+    cp 2
+    jr nc, .inTime
+    inc a
+    ld [wHudPut], a
+    ret
+.inTime
+    xor a
+    ld [wHudPut], a
     ld a, b
     ldh [hHudSeen], a
     ld a, c
     ldh [hHudSeen + 1], a
-    ld a, 1
-    ldh [hHudDirty], a
-    ld hl, wHud
+    ld hl, wHud                 ; (hHudDirty once it is all built, at the end: this runs after
+                                ; the frame is handed to VBlank, which may come in the middle)
 
     ldh a, [hMode]
     cp MODE_LINK
@@ -3478,6 +3504,8 @@ UpdateHud:
     ld [hl+], a
     dec b
     jr nz, .cell
+    ld a, 1                     ; built: VBlank may copy it
+    ldh [hHudDirty], a
     ret
 .digit                          ; a = 1..8
     push hl
@@ -4236,7 +4264,14 @@ Drive:
     jr z, .flashed
     dec a
     ldh [hFlash], a
-    ld a, 3
+    cp 7                        ; (the sky turns white at 7, grey at 4 and back at 0: only then
+    jr z, .flashStale           ; is it rewritten, in both line buffers)
+    cp 4
+    jr z, .flashStale
+    or a
+    jr nz, .flashed
+.flashStale
+    ld a, 2
     ldh [hSkyStale], a
 .flashed
     ld a, [wHitFlash]           ; a hit's flash: the sky lines are rewritten each time it
@@ -4741,7 +4776,7 @@ Drive:
 .cosAbs
     ld hl, 0
     cp 48                       ; (across the road or back the way it came: no headway)
-    jr nc, .advanced
+    jp nc, .advanced
     cp 3
     ld h, e                     ; (pointing along the road, near enough: cos is 1)
     jr c, .cosOne
@@ -4766,6 +4801,18 @@ Drive:
     jr .advanced
 .bend
     push hl                     ; h = speed x cos, in 16ths
+    ld a, [wTrackTurn]          ; (the same bend, the same lane: the same factor as last frame)
+    ld hl, wKxT
+    cp [hl]
+    jr nz, .kxNew
+    ldh a, [hX + 1]
+    inc l
+    cp [hl]
+    jr nz, .kxNew
+    inc l
+    ld e, [hl]                  ; (wKxR)
+    jr .kxHave
+.kxNew
     ld a, [wTrackTurn]          ; kx, in 256ths: (T / 2) * x / 16 (4% shy, near enough), as a
     ld e, a                     ; signed byte (out past that the car cannot hold the line anyway)
     ldh a, [hX + 1]
@@ -4812,6 +4859,13 @@ Drive:
     ld l, a
     ld h, HIGH(ReciprocalTab)
     ld e, [hl]                  ; R / (R - x), in 64ths
+    ld a, [wTrackTurn]          ; (kept, for the same bend and lane next frame)
+    ld [wKxT], a
+    ldh a, [hX + 1]
+    ld [wKxX], a
+    ld a, e
+    ld [wKxR], a
+.kxHave
     pop af                      ; (the speed x cos)
     call MulU8                  ; in 1024ths
     srl h
@@ -4921,6 +4975,17 @@ Drive:
     jp z, .sameChunk
     ld a, c
     ldh [hChunk], a
+    ld hl, wTrkExit             ; underground and at the tunnel's exit: back up to the surface
+    cp [hl]                     ; (first, whatever else happens here: a barrier appearing at
+    jr nz, .notExit             ; this chunk used to skip it, and the car stayed down there to
+    ldh a, [hTunnel]            ; the end of the race)
+    or a
+    jr z, .notExit
+    xor a
+    push bc
+    call StartFade
+    pop bc
+.notExit
     ldh a, [hPractice]
     ld e, a
     ldh a, [hState]
@@ -4997,15 +5062,6 @@ Drive:
     ld [hl], a
     jr .sameChunk
 .notMouth
-    ld hl, wTrkExit
-    ldh a, [hChunk]
-    cp [hl]
-    jr nz, .sameChunk
-    ldh a, [hTunnel]
-    or a
-    jr z, .sameChunk
-    xor a
-    call StartFade              ; back up to the surface
 .sameChunk
 
 
@@ -5904,6 +5960,23 @@ Steer:
     and 3
     or l
 .quarters
+    ld d, a                     ; (the same lock at the same speed as last frame: the same turn)
+    ld a, [wTurnS]
+    cp e
+    jr nz, .turnNew
+    ld a, [wTurnQ]
+    cp d
+    jr nz, .turnNew
+    ld a, [wTurnV]
+    ld l, a
+    ld a, [wTurnV + 1]
+    ld h, a
+    jr .turnHave
+.turnNew
+    ld a, e
+    ld [wTurnS], a
+    ld a, d
+    ld [wTurnQ], a
     add LOW(wTurnTab)           ; (TurnFactorTab x the car's turnMul (eighths) / 4: LoadCar)
     ld l, a
     ld h, HIGH(wTurnTab)
@@ -5913,6 +5986,11 @@ Steer:
     rr l
     srl h
     rr l
+    ld a, l
+    ld [wTurnV], a
+    ld a, h
+    ld [wTurnV + 1], a
+.turnHave
     ldh a, [hDirt]              ; on dirt: half
     or a
     jr z, .turnClean
@@ -5952,8 +6030,25 @@ Steer:
     and $0F
     xor e
 .farAdvance
-    ld e, a
+    ld e, a                     ; (the same bend, the same headway as last frame: the same turn)
+    ld a, [wSkyA]
+    cp e
+    jr nz, .skyNew
     ld a, [wTrackTurn]
+    ld d, a
+    ld a, [wSkyT]
+    cp d
+    jr nz, .skyNew
+    ld a, [wSkyD]
+    ld c, a
+    ld a, [wSkyD + 1]
+    ld b, a
+    jr .roadTurned
+.skyNew
+    ld a, e
+    ld [wSkyA], a
+    ld a, [wTrackTurn]
+    ld [wSkyT], a
     call MulS8
     REPT 3
         sra h
@@ -5961,6 +6056,10 @@ Steer:
     ENDR                        ; 1/256 steps
     ld b, h
     ld c, l
+    ld a, c
+    ld [wSkyD], a
+    ld a, b
+    ld [wSkyD + 1], a
 .roadTurned
     ld a, c                     ; (the road's turn: the skyline swings by it, below)
     ld [wRoadTurn], a
@@ -6115,6 +6214,24 @@ Steer:
     ld hl, 0
     or a                        ; (along the road, to the step: no step across it)
     jr z, .stepped
+    ld d, a                     ; (the same way at the same speed as last frame: the same step)
+    ld a, [wStepB]
+    cp d
+    jr nz, .stepNew
+    ld a, [wStepS]
+    cp e
+    jr nz, .stepNew
+    ld a, [wStepV]
+    ld l, a
+    ld a, [wStepV + 1]
+    ld h, a
+    jr .stepped
+.stepNew
+    ld a, d
+    ld [wStepB], a
+    ld a, e
+    ld [wStepS], a
+    ld a, d
     bit 7, a
     jr z, .sinIndex
     add 192
@@ -6127,6 +6244,10 @@ Steer:
         sra h
         rr l
     ENDR                        ; hl = the step across the road (8.8)
+    ld a, l
+    ld [wStepV], a
+    ld a, h
+    ld [wStepV + 1], a
 .stepped
     ld d, h
     ld e, l
@@ -6310,6 +6431,19 @@ Steer:
     ; --- the bank: on the outside of a bend the car can go faster than its top (wBank, used
     ; by the speed block): the further out and the sharper the bend, the more
     push hl
+    ld a, [wTrackTurn]          ; (the same bend and lane as last frame: the same bank)
+    ld hl, wBankT
+    cp [hl]
+    jr nz, .bankNew
+    ldh a, [hX + 1]
+    inc l
+    cp [hl]
+    jr z, .bankKept
+.bankNew
+    ld a, [wTrackTurn]
+    ld [wBankT], a
+    ldh a, [hX + 1]
+    ld [wBankX], a
     ld hl, 0
     ld a, [wTrackTurn]
     or a
@@ -6345,6 +6479,7 @@ Steer:
     ld [wBank], a
     ld a, h
     ld [wBank + 1], a
+.bankKept
     pop hl
 
     ; --- the camera follows half way (as far as the picture reaches); the car shows the rest
@@ -6542,28 +6677,6 @@ ClampAngle:
     cp -60
     ret nc
     ld hl, -(60 << 8)
-    ret
-
-; a = sin(a steps) x 127, a signed byte within +-96 steps.  Keeps bc, de, hl.
-SinOf:
-    bit 7, a
-    jr z, .pos
-    add 192
-.pos
-    push hl
-    ld hl, SinTab
-    call ByteAt
-    pop hl
-    ret
-
-; a = the byte at hl + a.  Keeps bc, de.
-ByteAt:
-    add l
-    ld l, a
-    adc h
-    sub l
-    ld h, a
-    ld a, [hl]
     ret
 
 ; a = the speed in hl in quarter units, 0..63.  Keeps bc, de, hl.
@@ -6801,8 +6914,30 @@ RankNeeded5:
     db 7, 6, 5, 4
 
 ; hl = de * a, both signed (|a| small: one add per bit).  Keeps bc.
-; Quarter squares for MulU8: f(n) = n * n / 4, n = 0..511, at boot.
+PUSHS                           ; (in a section of their own: a small one fits in a gap of ROM0)
+SECTION "sky copy", ROM0
+; The sky's lines' palettes, HORIZON bytes from de to hl: unrolled (BuildLines, when the sky
+; changes: in a boost's flash, in a heavy frame, every cycle counts).
+CopySky:
+    REPT HORIZON
+        ld a, [de]
+        inc de
+        ld [hl+], a
+    ENDR
+    ret
+
+SECTION "quick multiply code", ROM0
+; At boot: the physics tables into RAM (they are kept in a ROMX bank: ROM0 is full), and the
+; quarter squares for MulU8, f(n) = n * n / 4, n = 0..511.
 InitMaths:
+    ld a, BANK(PhysicsTablesRom)
+    ld [rROMB0], a
+    ld de, PhysicsTablesRom
+    ld hl, SinTab
+    ld bc, PhysicsTablesRomEnd - PhysicsTablesRom
+    call Copy
+    ld a, TILE_BANK             ; (as boot had it)
+    ld [rROMB0], a
     ld hl, QsqLo
     ld de, 0                    ; f(n)
     ld bc, 0                    ; n
@@ -6877,33 +7012,7 @@ MulS8:
     ld h, a
     ret
 
-MulSigned:
-    ld hl, 0
-    bit 7, a
-    jr z, .positive
-    cpl
-    inc a
-    push af
-    xor a
-    sub e
-    ld e, a
-    sbc a
-    sub d
-    ld d, a
-    pop af
-.positive
-    or a
-    ret z
-.bit
-    srl a
-    jr nc, .skip
-    add hl, de
-.skip
-    sla e
-    rl d
-    or a
-    jr nz, .bit
-    ret
+POPS
 
 Copy:
     ld a, [de]
@@ -7128,6 +7237,22 @@ wTurning:   ds 2                ; this frame's turn of the facing, 1/256 steps (
 wRoadTurn:  ds 2                ; ...and the road's under it, which the car follows (the sky swings by it too)
 wBank:      ds 2                ; how far over its top speed the outside of this bend lets the car go
 wCharge:    db                  ; frames of boost charged by braking through a bend (let go: it goes off)
+wKxT:       db                  ; the inside's factor last worked out: for this bend (T)...
+wKxX:       db                  ; ...and this lane (x)...
+wKxR:       db                  ; ...R / (R - x), in 64ths
+wBankT:     db                  ; the bank last worked out: for this bend and lane (wBank)
+wBankX:     db
+wTurnS:     db                  ; the turn last worked out: for this lock...
+wTurnQ:     db                  ; ...at this speed (quarters)...
+wTurnV:     ds 2                ; ...its size
+wSkyT:      db                  ; the road's turn last worked out (the sky's): for this bend...
+wSkyA:      db                  ; ...and this headway (16ths)...
+wSkyD:      ds 2                ; ...the turn
+wStepB:     db                  ; the step across last worked out: for this way (steps)...
+wStepS:     db                  ; ...at this speed (16ths)...
+wStepV:     ds 2                ; ...the step
+    ASSERT HIGH(wKxT) == HIGH(wKxR) && HIGH(wBankT) == HIGH(wBankX)   ; (walked with inc l)
+wHudPut:    db                  ; frames the status bar's redo has been put off, late in a frame (UpdateHud)
 wTrackTurn: db                  ; how much the road under the car turns a unit, 1/128 steps
 wYawView:   db                  ; bend levels the view is swung by (the facing, seen)
 wNoControl: db                  ; frames left without control (after the rail)

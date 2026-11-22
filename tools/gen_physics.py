@@ -114,23 +114,31 @@ def main():
         }
         for k, v in consts.items():
             f.write(f"DEF {k} EQU {v}\n")
-        # (laid out on page boundaries, so that a lookup is the page and the index: SinTab and
-        # AccelTab share one, ReciprocalTab has the next, BrakeTab and TurnFactorTab the third)
-        f.write("\nSECTION \"physics tables\", ROM0, ALIGN[8]\n")
-        f.write("SinTab:                         ; sin(steps) * 127, a turn of 192 steps\n")
+        # The tables live in RAM (the D000 bank, copied there at boot by InitMaths: ROM0 is
+        # full), laid out on page boundaries, so that a lookup is the page and the index:
+        # SinTab and AccelTab share one, ReciprocalTab has the next, BrakeTab and
+        # TurnFactorTab the third.  Their contents are kept in a ROMX bank.
+        f.write("\nSECTION \"physics tables, to copy\", ROMX\n")
+        f.write("PhysicsTablesRom:\n")
+        f.write("    ; SinTab: sin(steps) * 127, a turn of 192 steps\n")
         for i in range(0, STEPS, 16):
             f.write("    db " + ", ".join(f"${v:02X}" for v in sine[i:i + 16]) + "\n")
-        f.write("AccelTab:                       ; speed gained a frame on the gas, 1/256, by speed in quarters\n")
+        f.write("    ; AccelTab: speed gained a frame on the gas, 1/256, by speed in quarters\n")
         f.write("    db " + ", ".join(map(str, accel)) + "\n")
-        f.write("ReciprocalTab:                  ; R / (R - x) in 64ths, by kx in 256ths (a signed byte)\n")
+        f.write("    ; ReciprocalTab: R / (R - x) in 64ths, by kx in 256ths (a signed byte)\n")
         for i in range(0, 256, 16):
             f.write("    db " + ", ".join(str(v) for v in recip[i:i + 16]) + "\n")
-        f.write("BrakeTab:                       ; ...lost braking\n")
+        f.write("    ; BrakeTab: ...lost braking\n")
         f.write("    db " + ", ".join(map(str, brake)) + "\n")
-        f.write("TurnFactorTab:                  ; turning = |stage| * this / 2, 1/256 steps a frame\n")
+        f.write("    ; TurnFactorTab: turning = |stage| * this / 2, 1/256 steps a frame\n")
         f.write("    db " + ", ".join(map(str, turn)) + "\n")
+        f.write("PhysicsTablesRomEnd:\n")
+        f.write("\nSECTION \"physics tables\", WRAMX[$D500], BANK[1]\n")
+        f.write("SinTab:         ds 192\nAccelTab:       ds 64\nReciprocalTab:  ds 256\n")
+        f.write("BrakeTab:       ds 64\nTurnFactorTab:  ds 64\nPhysicsTablesEnd:\n")
         f.write("    ASSERT LOW(SinTab) == 0 && HIGH(AccelTab) == HIGH(SinTab) && LOW(AccelTab) == 192\n")
         f.write("    ASSERT LOW(ReciprocalTab) == 0 && LOW(BrakeTab) == 0 && HIGH(TurnFactorTab) == HIGH(BrakeTab)\n")
+        f.write("    ASSERT PhysicsTablesEnd - SinTab == PhysicsTablesRomEnd - PhysicsTablesRom\n")
     print(f"gen_physics: top speed 8.0 = F-Zero 8.81; accel {accel[:4]}..{accel[28:34]}, brake {brake[16]}, turn {turn[32]} at speed 8")
 
 

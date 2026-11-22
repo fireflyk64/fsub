@@ -127,15 +127,33 @@ through it, so it is no longer the yardstick. At NORMAL: Neo City 4th; the other
 
 ## What it costs
 
-The physics is more arithmetic every frame than fsub's first. Every cycle spent early in the
-frame pushes the rest into the part where the line interrupt takes half of each line. These
-keep it close to the old cost:
+The physics is about 3–4 lines of CPU a frame more than fsub's first. Drive runs first in the
+frame, so every cycle it adds pushes the rest (the rivals, the road's objects, the music) into
+the part of the frame where the line interrupt takes half of each line. And rivals that no
+longer slow for bends keep the pack together, so frames with all seven on screen (the dearest)
+are common.
 
-* an 8-by-8 multiply by quarter squares, from a 1 KB table built in the D000 bank at boot;
-* the car's acceleration and turning tables, built once when the car is chosen;
-* tables on page boundaries;
-* skipping the work that does nothing on a straight.
+That alone left the frame in time: it was handed to VBlank with lines to spare. What dropped
+frames was the main loop. It cleared its "VBlank happened" flag at the top. So when the
+music driver (which runs after the frame is handed over) spilled a few lines past VBlank, the
+loop slept a whole frame more: a stutter. Fixed (MainLoop takes the flag where it uses it): a
+tail that runs a little late now costs nothing.
 
-With the bot driving, mean load is 71–73% and the peak is 97–98%, with one dropped frame on Neo
-City: the bot runs mid-pack, with most of the rivals on screen. A person following the guide
-runs at 93–98% peak, with at most one dropped frame in a race.
+And these give back headroom:
+* **The status bar.** It was rebuilt every 16 frames for a blink that was not showing; now it
+  blinks only when it can. It is rebuilt after the frame is handed over, and put off a frame
+  or two when late.
+* **The boost's sky flash.** It rewrote the sky every frame for 8 frames; now only when its
+  colours change (white, grey, back), with the copy unrolled.
+* **Cached multiplies.** The physics' multiplies are kept with their inputs (the bend and lane
+  for the inside's factor and the bank, the lock and speed for the turn, the angle and speed
+  for the step across), and not redone when those have not changed.
+* **The arithmetic.** An 8-by-8 multiply by quarter squares (a 1 KB table built at boot); the
+  car's tables built when the car is chosen; the physics tables in RAM (the D000 bank, copied
+  at boot: ROM0 is full), on page boundaries.
+
+`playtest.js` counts both kinds of drop:
+* `drops`: the frame counter skipped.
+* `repeats`: a picture shown twice, its frame having missed VBlank.
+
+`DROPS=1` says what was going on at each.

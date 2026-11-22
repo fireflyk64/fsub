@@ -65,7 +65,7 @@ async function race(kind, record) {
   const bendAt = chunk => felt(rd(sym.wTrackBend + (chunk & 63)));
   const frames = [];
   const out = { kind, frames: 0, place: 0, health: 0, wrecked: false, hits: 0, minHealth: 64, dropped: 0, peak: 0, lapFrames: [], worst: 1, best: 8 };
-  let lastHp = 64, lastLap = 1, lastF = -1, started = false, endAt = -1;
+  let lastHp = 64, lastLap = 1, lastF = -1, lastFront = -1, started = false, endAt = -1;
   const AFTER = +(process.env.AFTER || 0);
   const seen = [];                                // human, lifter: what they saw, frame by frame
   const told = [];                                // guided: what the guide said, frame by frame
@@ -89,7 +89,8 @@ async function race(kind, record) {
       for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, tap && k === key);
       continue; }
     if (!started) { for (const k of ['up', 'down', 'left', 'right', 'start']) set(k, 0); if (i > 40 && count > 0 && st === 0) { started = true; out.level = rd(sym.hLevel); } else continue; }
-    const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel)); } lastF = f;
+    const front = rd(sym.hFront); if (lastFront >= 0 && front === lastFront && count === 0 && out.frames > 2) { out.repeats = (out.repeats || 0) + 1; if (process.env.DROPS) console.log("repeat at frame", i, "race frame", out.frames, "load line", rd(sym.hLoad)); } lastFront = front;   // (a picture shown twice: its frame missed VBlank)
+    const f = rd(sym.hFrame); if (lastF >= 0 && ((f - lastF) & 255) !== 1) { out.dropped++; if (process.env.DROPS) console.log("drop at frame", i, "race frame", out.frames, "state", st, "load line", rd(sym.hLoad), "fade", rd(sym.hFadeLevel), "chunk", ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + PLAYER_Z) >> 8 & 63, "objs", [0, 1].map(k => rd(sym.wObjSlots + k * 4) + ':' + rd(sym.wObjSlots + k * 4 + 1)).join(' '), "shown", [0,1,2,3,4,5,6].filter(r => rd(sym.wRivals + r * 8 + 7)).length, "flying", rd(sym.wFlying), "sfx", rd(sym.wSfxPtr + 1), "hud", rd(sym.hHudDirty), "corner", rd(sym.hFarLines), "boost", rd(sym.hBoost), "air", rd(sym.hAir), "bank", rd(sym.wBank) | rd(sym.wBank + 1) << 8, "charge", rd(sym.wCharge)); } lastF = f;
     const ld = rd(sym.hLoad), lv = ld >= 144 ? ld - 144 : ld + 10;
     if (process.env.PEAK && (process.env.PEAK === 'all' ? [136, 396, 1000, 2000, 3000, 4000].includes(out.frames) : lv >= out.peak - 1)) console.log('peak', lv, 'frame', out.frames, 'chunk', ((rd(sym.hPos + 1) | rd(sym.hPos + 2) << 8) + PLAYER_Z) >> 8 & 63, 'state', st, 'count', count, 'hp', hp, 'air', rd(sym.hAir), 'objs', [0, 1].map(k => rd(sym.wObjSlots + k * 4) + ':' + rd(sym.wObjSlots + k * 4 + 1)).join(' '), 'flying', sym.wFlying === undefined ? '-' : rd(sym.wFlying), 'sfx', sym.wSfxPtr === undefined ? '-' : rd(sym.wSfxPtr + 1), 'flash', sym.wHitFlash === undefined ? '-' : rd(sym.wHitFlash), 'stale', rd(sym.hSkyStale), 'shown', [0,1,2,3,4,5,6].filter(r => rd(sym.wRivals + r * 8 + 7)).length);
     out.peak = Math.max(out.peak, lv); out.sum = (out.sum || 0) + lv; out.n = (out.n || 0) + 1;
@@ -196,7 +197,7 @@ async function race(kind, record) {
   for (const kind of bots.length ? bots : KINDS) {
     const r = await race(kind, gifAt >= 0 ? [+args[gifAt + 2], +args[gifAt + 3], args[gifAt + 1]] : null);
     const laps = r.lapFrames.map((f, i) => ((f - (r.lapFrames[i - 1] || 0)) / 60).toFixed(1) + 's').join(' ');
-    console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : r.rankedOut ? `RANKED OUT in place ${r.place} after lap ${r.lapFrames.length}` : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped}`);
+    console.log(`track ${track} level ${r.level}  ${kind.padEnd(7)} ${r.wrecked ? 'WRECKED' : r.rankedOut ? `RANKED OUT in place ${r.place} after lap ${r.lapFrames.length}` : 'place ' + r.place}  time ${(r.frames / 60).toFixed(1)}s  laps ${laps}  health ${r.health} (low ${r.minHealth}, ${r.hits} hits)  place during race ${r.best}-${r.worst}  load ${Math.round(r.peak / 1.54)}% drops ${r.dropped} repeats ${r.repeats || 0}`);
     if (process.env.LOADAVG) console.log(`        mean load ${(r.sum / r.n / 1.54).toFixed(1)}%`);
     if (r.where) console.log('        health lost at chunk:amount  ' + r.where.join(' '));
     if (r.gaps) console.log('        rivals at the flag (units ahead of the player): ' + r.gaps.map(g => g > 20000 || g < -20000 ? '-' : g).join(' '));
