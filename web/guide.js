@@ -34,7 +34,6 @@ let held = { key: "", target: null };            // the spot chosen for the barr
 let told = null;                                 // where the last advice sent the car
 let ramp = { key: "", go: false };               // the ramp in view, and whether to line up for it (decided once)
 let lastFace = 0, lastX = 0;                     // where the car pointed last frame, against the road, and where it was
-let braked = -1;                                 // the bend whose brake-in has been said (once a bend)
 export const LEAD = 20;                          // frames: how far ahead of the car the advice looks
 
 export function advise(rd, sym, lead = LEAD) {
@@ -51,23 +50,35 @@ export function advise(rd, sym, lead = LEAD) {
   const bendAt = (c) => (rd(bends + (c & 63)) & 127) - 32;
   const car = pos + PLAYER_Z, ahead = car + speed * lead;
 
-  // --- speed: a bend does not throw the car (it is the driver's), so: the gas.  But braking into
-  // one charges a boost (wCharge) that goes off as the brake is let go: so BRAKE as a bend comes,
-  // and let go once there is enough (a hairpin charges twice as fast), once a bend.
-  let act = "gas", corner = 0, chargeWhy = "";
-  const bendNow = bendAt(ahead >> 8), bendStart = (c) => { while (bendAt(c - 1) === bendAt(c)) c--; return c & 63; };
-  if (Math.abs(bendNow) > 2 && sym.wCharge !== undefined && !rd(sym.hBoost) && speed > 5) {
-    const start = bendStart(ahead >> 8), charge = rd(sym.wCharge);
-    if (braked !== start && charge < 18) { act = "brake"; corner = bendNow; chargeWhy = "brake into the bend: let go for a boost"; }
-    else if (braked !== start) braked = start;
+  // --- speed: a bend: slow in, fast out.  The faster the car, the further out a bend's first
+  // half keeps it (fzero.asm NarrowTab), and its inside is the short way round, by a lot; braking
+  // into it charges a boost that goes off back on the gas.  So: BRAKE as a bend comes, to the
+  // speed that lets the car in (5.5 in a hairpin, 6.5 in a gentle one); COAST round the inside
+  // (the charge keeps); and from half way, where speed no longer holds the car out, the GAS.
+  let act = "gas", corner = 0, chargeWhy = "", half = 0;   // (half: 1 the first, 2 the second, of the bend the car is in)
+  const raw = (c) => rd(bends + (c & 63)), cNow = car >> 8;
+  const apex = (b) => (Math.abs(b) >= 16 ? 5.5 : 6.5);
+  if (Math.abs(bendAt(cNow)) > 2) {
+    let start = cNow, end = cNow + 1;
+    while (start > cNow - 8 && raw(start - 1) === raw(cNow)) start--;
+    while (end < cNow + 8 && raw(end) === raw(cNow)) end++;
+    half = car < start * 256 + (end - start) * 128 ? 1 : 2;
+    corner = bendAt(cNow);
+    if (half === 1) {
+      if (speed > apex(corner) + 0.2) { act = "brake"; chargeWhy = "slow in: the inside is the short way"; }
+      else { act = "coast"; chargeWhy = "coast round the inside (the boost keeps)"; }
+    } else chargeWhy = rd(sym.wCharge) ? "fast out: the gas fires the boost" : "";
+  } else if (Math.abs(bendAt((car + 64 + speed * lead) >> 8)) > 2 && speed > apex(bendAt((car + 64 + speed * lead) >> 8)) + 0.2) {
+    act = "brake"; corner = bendAt((car + 64 + speed * lead) >> 8); chargeWhy = "slow in: the inside is the short way";   // (as it comes: braking in a bend charges the boost)
   }
 
   // --- steering: where on the road to be, and why
   let target = 0, why = "", danger = false;
   const hold = Math.max(-48, Math.min(48, x));    // (hold the line: here, but never by the rail, where a wind would pin it)
   const here = bendAt(car >> 8) || bendAt((car + 128) >> 8);
-  // (a bend pays its edges: the inside is the short way round, the outside is banked, faster)
-  if (Math.abs(here) > 2) { target = here > 0 ? 60 : -60; why = "hug the inside: the short way round"; }
+  // (a bend's inside is the short way round, by a lot: as far in as the speed lets the car, the
+  // whole way once slow enough, and any speed in its second half)
+  if (Math.abs(here) > 2) { target = here > 0 ? 62 : -62; why = "the inside: the short way round"; }   // (the car is held out at the line its speed allows: no harm in aiming further)
   const objs = [];
   for (let k = 0; k < 2; k++) {
     const a = sym.wObjSlots + k * 4;
@@ -164,8 +175,8 @@ export function advise(rd, sym, lead = LEAD) {
 // --- on the page ---------------------------------------------------------------------------
 
 const WORDS = {
-  keys:  { brake: "BRAKE  Z", gas: "GAS  X", boost: "BOOST  ↑", dive: "NOSE DOWN  ↑", level: "NOSE UP  ↓", ready: "HOLD GAS (X) FOR THE START", left: "◀ STEER LEFT", right: "STEER RIGHT ▶" },
-  touch: { brake: "BRAKE", gas: "GAS", boost: "BOOST", dive: "NOSE DOWN", level: "NOSE UP", ready: "HOLD GAS FOR THE START", left: "◀ STEER LEFT", right: "STEER RIGHT ▶" },
+  keys:  { brake: "BRAKE  Z", coast: "COAST (LET GO)", gas: "GAS  X", boost: "BOOST  ↑", dive: "NOSE DOWN  ↑", level: "NOSE UP  ↓", ready: "HOLD GAS (X) FOR THE START", left: "◀ STEER LEFT", right: "STEER RIGHT ▶" },
+  touch: { brake: "BRAKE", coast: "COAST (LET GO)", gas: "GAS", boost: "BOOST", dive: "NOSE DOWN", level: "NOSE UP", ready: "HOLD GAS FOR THE START", left: "◀ STEER LEFT", right: "STEER RIGHT ▶" },
 };
 
 // canvas: the screen; buttons: { gas, brake, boost, stick } (elements to light); touch: wording.
@@ -210,7 +221,7 @@ export function createGuide({ canvas, buttons, touch = false }) {
       whyEl.textContent = shown.steer ? advice.why || "" : advice.actWhy ? advice.actWhy : shown.act === "brake" ? "too fast for the corner" : "";
       light(buttons.brake, "cue", shown.act === "brake");
       light(buttons.gas, "cue", shown.act === "gas" || shown.act === "ready");
-      light(buttons.gas, "cue-off", shown.act === "brake");
+      light(buttons.gas, "cue-off", shown.act === "brake" || shown.act === "coast");
       light(buttons.boost, "cue", shown.act === "boost" || shown.act === "dive");
       light(buttons.stick, "cue-left", shown.steer < 0);
       light(buttons.stick, "cue-right", shown.steer > 0);

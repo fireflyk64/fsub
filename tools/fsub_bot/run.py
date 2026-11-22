@@ -210,7 +210,7 @@ def main():
 
     last_point, was_air, was_boost, log = None, False, False, []
     frames, camera, last_pos = 0, 0, None              # (camera: how far it has come, unwrapped)
-    load = dict(peak=0, sum=0, n=0, dropped=0, last=None)   # (the game's hLoad: the line its work ended on)
+    load = dict(peak=0, sum=0, n=0, dropped=0, repeats=0, last=None, front=None)   # (the game's hLoad: the line its work ended on)
     gif_frames = []
     while frames < args.max_frames:
         frames += 1
@@ -229,7 +229,15 @@ def main():
             f = g.rd('hFrame')
             if load['last'] is not None and (f - load['last']) & 255 != 1:
                 load['dropped'] += 1
+                if args.peaks:
+                    print('drop at frame', frames, 'chunk', int(along % LAP) >> 8, 'load line', ld)
             load['last'] = f
+            front = g.rd('hFront')              # (a picture shown twice: its frame missed VBlank)
+            if load['front'] is not None and front == load['front']:
+                load['repeats'] += 1
+                if args.peaks:
+                    print('repeat at frame', frames, 'chunk', int(along % LAP) >> 8)
+            load['front'] = front
         speed = g.word('hSpeed', signed=False) / 256 / S
         pos = (g.rd('hPos', 1) | g.rd('hPos', 2) << 8)
         if last_pos is not None:
@@ -296,7 +304,8 @@ def main():
         'place': g.rd('hRank'), 'laps': g.rd('hLap'), 'health': g.rd('hHealth'),
         'frames': frames, 'driving': policy.summary(),
         'load': {'peak_lines': load['peak'], 'peak_pct': round(load['peak'] / 1.54, 1),
-                 'mean_pct': round(load['sum'] / max(1, load['n']) / 1.54, 1), 'dropped': load['dropped']},
+                 'mean_pct': round(load['sum'] / max(1, load['n']) / 1.54, 1), 'dropped': load['dropped'],
+                 'repeats': load['repeats']},
     }
     print(json.dumps(result))
     if gif_frames:

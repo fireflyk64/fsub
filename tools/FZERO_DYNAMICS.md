@@ -41,8 +41,9 @@ S = 8 / 8.81 = 0.908. Angles are F-Zero's (192 steps to a turn).
 | momentum (where it goes) | follows the facing at the grip rate, only with gas or steering held (else a drift) | follows the facing at the grip rate, always |
 | grip | 0x180 within 30 steps; 0xA0 sliding or in the air; 0x20 on dirt; 0x280 below 5.5 | the same (each car its own) |
 | across the road | speed × sin(slide) | three quarters of that: drawn 168 wide, it drives as wide as F-Zero's road |
-| distance | where it goes | speed × cos(slide), × R / (R − x) on the inside of a bend: the short way round |
-| the outside of a bend | (the long way round) | banked: the car may go up to (x − 12) × \|T\| / 2 256ths over its top, pulled up 20/256 a frame, and it carries the speed out |
+| distance | where it goes | speed × cos(slide) × R / (R − 2x): a bend's inside the short way round and its outside the long way, both twice the true geometry |
+| a bend's line | (2D: any) | the faster the car, the further out its first half keeps it (below) |
+| the outside of a bend | (the long way round) | banked as well: up to (x − 12) × \|T\| / 2 256ths over the top speed, pulled up 20/256 a frame, carried out of it |
 | the wall | bounce: the velocity into it reverses; 10 frames without control | a glance: a quarter of the angle, the other way, turned along the road; a wheel turned into it straightened; a hard hit (4 steps) 5 frames without control; 5/64 health a knock, not again for 9 frames |
 | dirt | top speed 3.0; turning halved | the same × S |
 | jump | up at speed / 2, 1 to 4.5 a frame; falls 25/256 a frame (much faster nose down) | the same × S |
@@ -104,6 +105,46 @@ S = 8 / 8.81 = 0.908. Angles are F-Zero's (192 steps to a turn).
     | HARD | 1st | 2nd | 3rd | 1st |
     | EXPERT | 1st | ranked out | ranked out | 3rd |
 
+## Bends: slow in, fast out
+
+The user's design: "your speed dictates how close to the inner curve the game lets you go...
+It's like the road narrows. But there's no force that throws you around. You just get nudged
+to that region", "slower means a lot less distance", and "the second half of the turn speed
+should not penalize". And to make it pay: "exaggerate the length of the outer wall compared
+to the inner".
+
+* **The line (`NarrowTab`, by speed).** In a hairpin's first half the car may be:
+  * anywhere below speed 6;
+  * no further in than the outer third at the top speed (8);
+  * only on the strip by the outer rail on a boost (10.5 and up).
+
+  A gentle bend narrows half as much. Past the line the car is eased back out to it, 1.5 units
+  a frame, and held there. It is never thrown: where it points and goes are untouched, and the
+  line never reaches the rail.
+* **The second half** of a bend is open at any speed (`BendHalf` works out where it starts,
+  from the bend's length, on reaching a chunk of it).
+* **The geometry, doubled.** Progress is speed × R / (R − 2x): up to about 2× on a hairpin's
+  inside, about 0.6× against its outer rail. The outside's bank gives some back.
+* **The brake-in's boost** goes off when the car is back on the gas, not when the brake is let
+  go. Coasting keeps it: brake in, coast round the inside, gas from half way.
+
+Laps, no rivals (a scripted driver):
+
+| Track | Middle, flat out | Outside | Slow in, fast out (apex 5–6) |
+|---|---:|---:|---:|
+| Neo City | 33.6 s | 35.6 s | 30.5 s |
+| Blue Deep | 32.7 s | 34.4 s | 30.5 s |
+| Gold Wind | 37.8 s | 38.6 s | 36.1 s |
+| Old Port | 34.6 s | 34.6 s | 30.7 s |
+
+The guide teaches it: BRAKE as a bend comes, COAST round the inside, GAS from half way.
+Against the rivals (8.3 on the straight, +0.7 in bends), with the guide's advice:
+
+* with no delay (`playtest.js expert`), it wins every race at NORMAL and HARD, and three of
+  four at EXPERT;
+* a person's reaction late (`guided`): NORMAL 1st, 3rd, 3rd, 3rd; HARD 1st, out, 4th, 4th;
+  EXPERT 2nd, then out.
+
 ## What the courses had to change (for F-Zero's model, and kept)
 
 * **No corner is tighter than F-Zero's tightest** (level 16). The sharper ones are spread over
@@ -143,6 +184,12 @@ And these give back headroom:
 * **The status bar.** It was rebuilt every 16 frames for a blink that was not showing; now it
   blinks only when it can. It is rebuilt after the frame is handed over, and put off a frame
   or two when late.
+* **The car's sounds** (`DriveSound`: the engine note, the noise of a boost or the brakes, the
+  sound effects' step) run after the frame is handed over too. Only the brake flag, which the
+  car's sprite shows, stays in Drive.
+  * This mattered in a bunched pack: a frame whose music spilled past VBlank started the next
+    one late, and if that one was heavy too, it missed VBlank (a picture shown twice; the
+    shared bot met one on Neo City's last corner).
 * **The boost's sky flash.** It rewrote the sky every frame for 8 frames; now only when its
   colours change (white, grey, back), with the copy unrolled.
 * **Cached multiplies.** The physics' multiplies are kept with their inputs (the bend and lane

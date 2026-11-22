@@ -48,11 +48,7 @@ async function race(kind, record) {
   const ptr = m._malloc(size); new Uint8Array(m.HEAP8.buffer, ptr, size).fill(0).set(rom);
   const e = m._emulator_new_simple(ptr, size, 44100, 4096, 2); m._emulator_set_default_joypad_callback(e, m._joypad_new());
   const rd = a => m._emulator_read_mem(e, a), s8 = v => (v << 24) >> 24, s16 = v => (v << 16) >> 16;
-  // The fastest the car follows a bend of level b: its turning at full lock (14 stage steps x its
-  // turn table, the game's wTurnTab, / 4) against the road's turn under it (3b / 256 steps a unit).
-  const limit = (b) => { if (Math.abs(b) < 3) return 12; for (let v = 12; v > 2; v -= 0.05) { if (14 * rd(sym.wTurnTab + Math.min(63, Math.floor(v * 4))) / 4 / 256 >= 3 * Math.abs(b) / 256 * v) return v; } return 2; };
   let lastFace = 0, lastX = 0;                    // (where the car pointed last frame, against the road, and where it was)
-  let brakedHere = false;                         // (expert: this bend's brake-in done)
   const keys = {}; const set = (k, v) => { if (!!keys[k] !== !!v) { keys[k] = !!v; m['_set_joyp_' + k](e, v ? 1 : 0); } };
   const inputLog = []; const replay = process.env.REPLAY_INPUTS ? JSON.parse(fs.readFileSync(process.env.REPLAY_INPUTS, 'utf8')) : null;
   let ticks = 0; const step = () => {
@@ -149,31 +145,16 @@ async function race(kind, record) {
       if (Math.abs(bend) > 2) target = bend > 0 ? 36 : -36;
       dodge(480, lateObjs);
     } else if (kind === 'expert' || kind === 'human') {
-      // Take each corner ahead no faster than the car can turn to follow it (F-Zero's turning at
-      // full lock against the road's turn under it), and start braking for it in time.
-      const car = pos + PLAYER_Z;
-      let want = 12;
-      // (human: plans from where it was REACT frames ago, and leaves itself a margin)
-      const plan = kind === 'human' && late ? late.pos + PLAYER_Z : car, margin = kind === 'human' ? 0.35 : 0;
-      for (let c = plan >> 8; c < (plan >> 8) + 4; c++) {
-        const b = bendAt(c); if (Math.abs(b) < 2) continue;
-        let end = c + 1; while (end < c + 4 && bendAt(end) === b) end++;
-        const from = Math.max(plan, c * 256), v = limit(b) - margin;
-        want = Math.min(want, Math.sqrt(Math.max(0, v * v + 2 * BRAKING * (from - plan))));
-        c = end - 1;
+      // The racing a good driver does, with no delay (human: what the guide would say of where
+      // the car was REACT frames ago, and a margin): slow into a bend to the speed that lets it
+      // in, coast round its inside, out on the gas from half way; round what is on the road.
+      const a = advise(rd, sym, kind === 'human' ? 0 : 4);
+      if (a && a.act) {
+        gas = ['gas', 'boost', 'ready'].includes(a.act); brake = a.act === 'brake'; boost = a.act === 'boost';
+        dive = a.act === 'dive'; noseUp = a.act === 'level';
+        if (typeof a.target === 'number') target = a.target;
       }
-      const ahead = bendAt(car >> 8) || bendAt((car + 128) >> 8);
-      if (Math.abs(ahead) > 2) target = ahead > 0 ? 36 : -36;        // the inside: the short way round
-      // (into a bend: on the brakes until the charge is in, then off: it goes off as a boost)
-      const inBend = Math.abs(bendAt((car + 40) >> 8)) > 2, charge = rd(sym.wCharge);
-      if (!inBend) brakedHere = false;
-      else if (!brakedHere && !rd(sym.hBoost) && speed > 5) { if (charge < 18) { gas = false; brake = true; } else brakedHere = true; }
-      if (kind === 'human') dodge(480, lateObjs); else dodge(480);
-      if (healing && rd(sym.hHealth) < 30) want = Math.min(want, 4);      // badly hurt: cross it slowly for more
-      if (healing && speed > want + 0.15) { gas = false; brake = true; }   // (a bend never needs the brakes now: only the pit)
-      if (process.env.TRACE && out.frames % +process.env.TRACE === 0) console.log('  want', want.toFixed(2), 'limits 8/16', limit(8).toFixed(2), limit(16).toFixed(2), 'tab', [0, 16, 32, 48].map(q => rd(sym.wTurnTab + q)), 'sym', sym.wTurnTab && sym.wTurnTab.toString(16), 'bends', [0, 1, 2, 3].map(k => bendAt((plan >> 8) + k)));
-      const straight = [0, 1, 2].every(k => Math.abs(bendAt(chunk + k)) < 3) && Math.abs(bend) < 3;
-      if (boosts && straight && speed > 7.6) boost = true;
+      if (kind === 'human') { if (late) dodge(480, lateObjs); } else dodge(480);
     }
     // Steering: point the car at the target (a step of facing for each 4 pixels to go, up to the
     // 12 it turns to), allowing for how fast the facing is already swinging.  (guided: as the

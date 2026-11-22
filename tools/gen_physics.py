@@ -63,6 +63,19 @@ def main():
     accel = [max(1, a) if accel_f(q / 4 / S) > 0 else 0 for q, a in enumerate(accel)]
     brake = [round(b * S * 256) for b in by_quarter(brake_f)]
     turn = [round(t) for t in by_quarter(turn_factor)]
+    # How far in toward the inside of a hairpin the car may be at each speed (whole units from
+    # the middle, toward the inside; the rail is at 72): the whole road below 6, the outer third
+    # at the top speed (8), only the strip by the outer rail on a boost (10.5 and up).  A gentle
+    # bend narrows half as much (Steer).  Past the line the car is eased out, never thrown.
+    def narrow(v):
+        if v <= 6:
+            return 72
+        if v <= 8:
+            return 72 - (v - 6) * 48
+        if v <= 10.5:
+            return -24 - (v - 8) * 14.4
+        return -60
+    narrows = [round(narrow(q / 4)) & 255 for q in range(64)]
     sine = [round(math.sin(i * 2 * math.pi / STEPS) * 127) & 255 for i in range(STEPS)]
     # R / (R - x) for kx = q / 256, q a signed byte: how much further along the course the car
     # gets than its own travel (inside a bend, more), in 64ths
@@ -91,7 +104,8 @@ def main():
             "CHARGE_MIN": 8,
             "CHARGE_MAX": 30,
             "CHARGE_SHIFT": 1,          # ...and goes off as half that many frames of boost
-            "INSIDE_SHIFT": 0,          # the inside's short way round: R / (R - x), all of it
+            "NUDGE": 0x0180,            # how fast a car past a bend's line is eased out (8.8 units a frame)
+            "BEND_EXAGGERATE": 1,       # a bend's inside and outside, x 2 ** this: R / (R - 2x)
             "GRIP_LOOSE": 0x00A0,       # sliding (the slide past GRIP_TOLERANCE), or in the air
             "GRIP_DIRT": 0x0020,        # on dirt, sliding
             "GRIP_SLOW": 0x0280,        # below GRIP_SLOW_BELOW: a slow car grips
@@ -132,12 +146,14 @@ def main():
         f.write("    db " + ", ".join(map(str, brake)) + "\n")
         f.write("    ; TurnFactorTab: turning = |stage| * this / 2, 1/256 steps a frame\n")
         f.write("    db " + ", ".join(map(str, turn)) + "\n")
+        f.write("    ; NarrowTab: how far in toward a hairpin's inside the car may be (signed units), by speed in quarters\n")
+        f.write("    db " + ", ".join(map(str, narrows)) + "\n")
         f.write("PhysicsTablesRomEnd:\n")
         f.write("\nSECTION \"physics tables\", WRAMX[$D500], BANK[1]\n")
         f.write("SinTab:         ds 192\nAccelTab:       ds 64\nReciprocalTab:  ds 256\n")
-        f.write("BrakeTab:       ds 64\nTurnFactorTab:  ds 64\nPhysicsTablesEnd:\n")
+        f.write("BrakeTab:       ds 64\nTurnFactorTab:  ds 64\nNarrowTab:      ds 64\nPhysicsTablesEnd:\n")
         f.write("    ASSERT LOW(SinTab) == 0 && HIGH(AccelTab) == HIGH(SinTab) && LOW(AccelTab) == 192\n")
-        f.write("    ASSERT LOW(ReciprocalTab) == 0 && LOW(BrakeTab) == 0 && HIGH(TurnFactorTab) == HIGH(BrakeTab)\n")
+        f.write("    ASSERT LOW(ReciprocalTab) == 0 && LOW(BrakeTab) == 0 && HIGH(TurnFactorTab) == HIGH(BrakeTab) && HIGH(NarrowTab) == HIGH(BrakeTab)\n")
         f.write("    ASSERT PhysicsTablesEnd - SinTab == PhysicsTablesRomEnd - PhysicsTablesRom\n")
     print(f"gen_physics: top speed 8.0 = F-Zero 8.81; accel {accel[:4]}..{accel[28:34]}, brake {brake[16]}, turn {turn[32]} at speed 8")
 

@@ -950,6 +950,7 @@ MainLoop:
     ldh a, [hBuiltScx]          ; everything for this frame is staged: let VBlank show it
     dec a
     ldh [hReady], a
+    call DriveSound             ; (after: the car's sounds do not change the picture)
     call UpdateHud              ; (after: the status bar is copied on its own, when it is built)
     call SongBank
     call hUGE_dosound
@@ -4286,7 +4287,6 @@ Drive:
     ld a, 2
     ldh [hSkyStale], a
 .hitFlashed
-    call SfxStep
     ldh a, [hLapFlash]
     or a
     jr z, .lapFlash
@@ -4359,13 +4359,18 @@ Drive:
     ld a, SFX_BOOST
     call Sfx
 .noFire
-    ; --- a bend braked through: let go of the brake and its charge goes off as a boost (half a
-    ; frame of it for each frame braked, a frame in a hairpin); too little and it fizzles
+    ; --- a bend braked through: back on the gas, and its charge goes off as a boost (half a
+    ; frame of it for each frame braked, a frame in a hairpin); too little and it fizzles.
+    ; Coasting keeps it: brake in, coast round the inside (slow enough to be let in), and
+    ; the gas at the exit shoots the car out
     ld a, [wCharge]
     or a
     jr z, .uncharged
     bit 7, b
     jr nz, .uncharged           ; (still braking: still charging)
+    bit 1, b                    ; PADF_B
+    jr z, .uncharged            ; (coasting: held)
+    ld a, [wCharge]
     cp CHARGE_MIN
     jr c, .spent
     REPT CHARGE_SHIFT           ; (a frame of boost for every 2 frames charged)
@@ -4593,166 +4598,22 @@ Drive:
     ld a, h
     ldh [hSpeed + 1], a
 
-    ldh a, [hEngine]            ; the engine note: it climbs with speed, rides above it on the
-    or a                        ; gas while there is speed to gain and drops when you lift,
-    jp z, .noNote               ; with a rasp; louder on the gas, fuller still on a boost
-    ld c, REV_LIFT
-    ldh a, [hAir]               ; (in the air: nothing to push against, the note falls away)
+    xor a                       ; (braking at speed on the ground: the car sits back a pixel,
+    ldh [hBrake], a             ; PlayerSprites; the engine and the brakes' sound are
+    ldh a, [hAir]               ; DriveSound's, after the frame is handed over)
     or a
-    jr nz, .revAim
-    bit 1, b                    ; PADF_B
-    jr z, .revAim
-    ld c, REV_GAS
-    ld a, [wTop]
-    dec a
-    ld e, a
-    ld a, h
-    cp e                        ; (the speed only creeps up to the top: within a unit is there)
-    jr c, .revAim
-    ld c, REV_TOP
-.revAim
-    ld a, [wRev]                ; (eased there, 3 a frame)
-    cp c
-    jr z, .revHeld
-    ld e, a
-    sub c
-    bit 7, a
-    ld a, e
-    jr nz, .revUp
-    sub 3
-    jr .revSet
-.revUp
-    add 3
-.revSet
-    ld [wRev], a
-.revHeld
-    ld d, h                     ; frequency: base + speed / 4 + the rev (+ the rasp)
-    ld e, l
-    srl d
-    rr e
-    srl d
-    rr e
-    ld a, [wRev]
-    add e
-    ld e, a
-    ld a, d
-    adc 0
-    ld d, a
-    ld a, [wRev]
-    bit 7, a
-    jr z, .revPositive
-    dec d
-.revPositive
-    ldh a, [hFrame]             ; the rasp: a little higher every other pair of frames
-    and 2
-    jr z, .smooth
-    ld a, e
-    add RASP
-    ld e, a
-    jr nc, .smooth
-    inc d
-.smooth
-    ld a, e
-    add LOW(ENGINE_BASE)
-    ldh [rAUD2LOW], a
-    ld a, d
-    adc HIGH(ENGINE_BASE)
-    ld d, a
-    ldh [rAUD2HIGH], a
-    ld c, 3                     ; the voice: 0 coasting, 1 on the gas, 2 boosting, 3 flying
-    ldh a, [hAir]
-    or a
-    jr nz, .voiceSet
-    ld c, 0
-    bit 1, b
-    jr z, .gasVoice
-    inc c
-.gasVoice
+    jr nz, .unbraked
     ldh a, [hBoost]
     or a
-    jr z, .voiceSet
-    ld c, 2
-.voiceSet
-    ldh a, [hEngineMode]
-    cp c
-    jr z, .noNote
-    ld a, c
-    ldh [hEngineMode], a
-    or a
-    ld a, %01000000             ; coasting: thin and quiet
-    ld e, $40
-    jr z, .voice
-    dec c
-    ld e, $60                   ; on the gas: louder
-    jr z, .voice
-    dec c
-    ld a, %10000000             ; a boost: fuller and louder still
-    ld e, $90
-    jr z, .voice
-    xor a                       ; in the air: no roar, a thin whisper (thrust on nothing)
-    ld e, $20
-.voice
-    ldh [rAUD2LEN], a
-    ld a, e
-    ldh [rAUD2ENV], a
-    ld a, d
-    or $80                      ; (a new envelope takes effect on a restart)
-    ldh [rAUD2HIGH], a
-.noNote
-    ; --- the noise channel: a boost howls upward, the brakes scrub lower as the car slows
-    xor a
-    ldh [hBrake], a
-    ldh a, [hAir]               ; (not in the air, though a ramp gives a boost)
-    or a
-    jr nz, .quiet
-    ldh a, [hBoost]
-    or a
-    jr z, .noHowl
-    ld c, a
-    ldh a, [hFrame]
-    and 3
-    jr nz, .quiet
-    ld a, c
-    and %01110000
-    or 3
-    ld c, a
-    ld a, $62
-    jr .noise
-.noHowl
+    jr nz, .unbraked
     bit 7, b
-    jr z, .quiet
+    jr z, .unbraked
     ld a, h
     cp 2
-    jr c, .quiet
+    jr c, .unbraked
     ld a, 1
     ldh [hBrake], a
-    ldh a, [hSkid]
-    or a
-    jr nz, .quiet
-    ldh a, [hFrame]
-    and 7
-    jr nz, .quiet
-    ld a, 9
-    sub h
-    and 7
-    swap a
-    or 5
-    ld c, a
-    ld a, $31
-.noise
-    ld e, a
-    ld a, [wSfxPtr + 1]         ; (a sound effect has the noise channel)
-    or a
-    jr nz, .quiet
-    ld a, e
-    ldh [rAUD4ENV], a
-    ld a, c
-    ldh [rAUD4POLY], a
-    xor a
-    ldh [rAUD4LEN], a
-    ld a, $80
-    ldh [rAUD4GO], a
-.quiet
+.unbraked
 
     ; --- how far along the course the car gets this frame (wAdvance): its speed, times the
     ; cosine of its slide off the road's direction, times R / (R - x) (the inside of a bend
@@ -4831,9 +4692,9 @@ Drive:
     inc a
 .xAbs
     call MulU8
-    REPT 4
-        srl h
-        rr l
+    REPT 4 - BEND_EXAGGERATE    ; (/ 16: the bend's true geometry, then doubled: the inside the
+        srl h                   ; shorter, the outside the longer way round, so that a car slow
+        rr l                    ; enough to be let in gains by it)
     ENDR
     ld a, h
     or a
@@ -4848,13 +4709,9 @@ Drive:
     pop af
     bit 7, a
     ld a, l
-    jr z, .kxInside
-    xor a                       ; the outside: banked, not the long way round (wBank pays)
-    jr .kxSigned
-.kxInside
-    REPT INSIDE_SHIFT           ; the inside: the short way round, by part of what the
-        srl a                   ; geometry would give
-    ENDR
+    jr z, .kxSigned
+    cpl                         ; the outside: the long way round (its bank pays some back)
+    inc a
 .kxSigned                       ; (ReciprocalTab is indexed by the signed byte as it is)
     ld l, a
     ld h, HIGH(ReciprocalTab)
@@ -5824,6 +5681,182 @@ BoomNoise:
 ;   * The rail is scraped, not bounced off: held there, going along it, no acceleration
 ;     (Drive), a knock to health every few frames and a moment without control.
 ;   * The view swings with the facing: the road's far end and the skyline.
+; The car's sounds, after the frame is handed over (MainLoop: they need not hold it up): the
+; sound effects' next step, the engine note, and the noise of a boost or the brakes.
+DriveSound:
+    call SfxStep
+    ldh a, [hCurKeys]           ; b: the keys, as Drive has them (A brakes, as Down does)
+    bit 0, a
+    jr z, .keysSet
+    set 7, a
+.keysSet
+    ld b, a
+    ldh a, [hSpeed]
+    ld l, a
+    ldh a, [hSpeed + 1]
+    ld h, a
+    ldh a, [hEngine]            ; the engine note: it climbs with speed, rides above it on the
+    or a                        ; gas while there is speed to gain and drops when you lift,
+    jp z, .noNote               ; with a rasp; louder on the gas, fuller still on a boost
+    ld c, REV_LIFT
+    ldh a, [hAir]               ; (in the air: nothing to push against, the note falls away)
+    or a
+    jr nz, .revAim
+    bit 1, b                    ; PADF_B
+    jr z, .revAim
+    ld c, REV_GAS
+    ld a, [wTop]
+    dec a
+    ld e, a
+    ld a, h
+    cp e                        ; (the speed only creeps up to the top: within a unit is there)
+    jr c, .revAim
+    ld c, REV_TOP
+.revAim
+    ld a, [wRev]                ; (eased there, 3 a frame)
+    cp c
+    jr z, .revHeld
+    ld e, a
+    sub c
+    bit 7, a
+    ld a, e
+    jr nz, .revUp
+    sub 3
+    jr .revSet
+.revUp
+    add 3
+.revSet
+    ld [wRev], a
+.revHeld
+    ld d, h                     ; frequency: base + speed / 4 + the rev (+ the rasp)
+    ld e, l
+    srl d
+    rr e
+    srl d
+    rr e
+    ld a, [wRev]
+    add e
+    ld e, a
+    ld a, d
+    adc 0
+    ld d, a
+    ld a, [wRev]
+    bit 7, a
+    jr z, .revPositive
+    dec d
+.revPositive
+    ldh a, [hFrame]             ; the rasp: a little higher every other pair of frames
+    and 2
+    jr z, .smooth
+    ld a, e
+    add RASP
+    ld e, a
+    jr nc, .smooth
+    inc d
+.smooth
+    ld a, e
+    add LOW(ENGINE_BASE)
+    ldh [rAUD2LOW], a
+    ld a, d
+    adc HIGH(ENGINE_BASE)
+    ld d, a
+    ldh [rAUD2HIGH], a
+    ld c, 3                     ; the voice: 0 coasting, 1 on the gas, 2 boosting, 3 flying
+    ldh a, [hAir]
+    or a
+    jr nz, .voiceSet
+    ld c, 0
+    bit 1, b
+    jr z, .gasVoice
+    inc c
+.gasVoice
+    ldh a, [hBoost]
+    or a
+    jr z, .voiceSet
+    ld c, 2
+.voiceSet
+    ldh a, [hEngineMode]
+    cp c
+    jr z, .noNote
+    ld a, c
+    ldh [hEngineMode], a
+    or a
+    ld a, %01000000             ; coasting: thin and quiet
+    ld e, $40
+    jr z, .voice
+    dec c
+    ld e, $60                   ; on the gas: louder
+    jr z, .voice
+    dec c
+    ld a, %10000000             ; a boost: fuller and louder still
+    ld e, $90
+    jr z, .voice
+    xor a                       ; in the air: no roar, a thin whisper (thrust on nothing)
+    ld e, $20
+.voice
+    ldh [rAUD2LEN], a
+    ld a, e
+    ldh [rAUD2ENV], a
+    ld a, d
+    or $80                      ; (a new envelope takes effect on a restart)
+    ldh [rAUD2HIGH], a
+.noNote
+    ; --- the noise channel: a boost howls upward, the brakes scrub lower as the car slows
+    xor a
+    ldh [hBrake], a
+    ldh a, [hAir]               ; (not in the air, though a ramp gives a boost)
+    or a
+    jr nz, .quiet
+    ldh a, [hBoost]
+    or a
+    jr z, .noHowl
+    ld c, a
+    ldh a, [hFrame]
+    and 3
+    jr nz, .quiet
+    ld a, c
+    and %01110000
+    or 3
+    ld c, a
+    ld a, $62
+    jr .noise
+.noHowl
+    bit 7, b
+    jr z, .quiet
+    ld a, h
+    cp 2
+    jr c, .quiet
+    ld a, 1
+    ldh [hBrake], a
+    ldh a, [hSkid]
+    or a
+    jr nz, .quiet
+    ldh a, [hFrame]
+    and 7
+    jr nz, .quiet
+    ld a, 9
+    sub h
+    and 7
+    swap a
+    or 5
+    ld c, a
+    ld a, $31
+.noise
+    ld e, a
+    ld a, [wSfxPtr + 1]         ; (a sound effect has the noise channel)
+    or a
+    jr nz, .quiet
+    ld a, e
+    ldh [rAUD4ENV], a
+    ld a, c
+    ldh [rAUD4POLY], a
+    xor a
+    ldh [rAUD4LEN], a
+    ld a, $80
+    ldh [rAUD4GO], a
+.quiet
+    ret
+
 Steer:
     xor a
     ldh [hSkid], a
@@ -6318,6 +6351,108 @@ Steer:
     ldh a, [hX + 1]
     adc d
     ld h, a
+
+    ; --- a bend narrows with speed: the faster, the further out the car must keep (NarrowTab:
+    ; the whole road slow, the outer third at the top speed, the strip by the outer rail on a
+    ; boost; a gentle bend half as narrow).  Its inside is the short way round, so slowing for
+    ; it pays.  Past the line the car is only eased back out to it, NUDGE a frame, and held
+    ; there: where it points and goes are as they were, so nothing throws it, and the line
+    ; never reaches the rail.
+    ld a, [wTrackTurn]
+    or a
+    jp z, .open
+    push hl                     ; (but its second half is open whatever the speed: slow in, and
+    ldh a, [hPos + 1]           ; out as fast as you like)
+    add PLAYER_Z
+    ld e, a                     ; e: how far into its chunk the car is
+    ldh a, [hPos + 2]
+    adc 0
+    and CHUNK_MASK
+    ld d, a
+    or $80
+    ld hl, wHalfChunk
+    cp [hl]
+    call nz, BendHalf           ; (on a chunk of a bend new to it: where its second half starts)
+    ld a, [wHalfFrom]
+    ld l, a
+    ld a, e
+    cp l
+    pop hl
+    jp nc, .open
+    ld a, [wTrackTurn]
+    ld b, a                     ; b: the bend (bit 7: a left one, its inside to the left)
+    ldh a, [hSpeed + 1]         ; c = the line, in whole units in from the middle toward the
+    cp 16                       ; inside, for the speed in quarters
+    ld a, 63
+    jr nc, .narrowQ
+    ldh a, [hSpeed + 1]
+    add a
+    add a
+    ld c, a
+    ldh a, [hSpeed]
+    rlca
+    rlca
+    and 3
+    or c
+.narrowQ
+    add LOW(NarrowTab)
+    ld e, a
+    ld d, HIGH(NarrowTab)
+    ld a, [de]
+    ld c, a
+    ld a, b                     ; (a gentle bend, |T| under 24: half as narrow)
+    add 23
+    cp 47
+    jr nc, .narrowSharp
+    ld a, c
+    add 72
+    srl a
+    ld c, a
+.narrowSharp
+    bit 7, b                    ; u: x, toward the inside
+    call nz, NegHL
+    ld a, h
+    xor $80
+    ld e, a
+    ld a, c
+    xor $80
+    cp e
+    jr c, .pastLine             ; (the line is short of u)
+    jr nz, .narrowed            ; (u is short of the line: open road)
+.pastLine
+    push hl                     ; past it: in no further, and out NUDGE from where it was
+    ldh a, [hX]
+    ld l, a
+    ldh a, [hX + 1]
+    ld h, a
+    bit 7, b
+    call nz, NegHL
+    ld de, -NUDGE
+    add hl, de
+    pop de                      ; (de: where it would have gone)
+    ld a, e
+    sub l
+    ld a, d
+    sbc h
+    bit 7, a
+    jr z, .eased                ; (the nearer the line of the two)
+    ld h, d
+    ld l, e
+.eased
+    ld a, h                     ; ...but not past the line, outward
+    xor $80
+    ld e, a
+    ld a, c
+    xor $80
+    cp e
+    jr c, .narrowed
+    jr z, .narrowed
+    ld h, c
+    ld l, 0
+.narrowed
+    bit 7, b
+    call nz, NegHL
+.open
 
     ; --- the rail: F-Zero's, made kinder.  Hit it and the car glances off: where it was going
     ; into the rail is turned away from it (by a fraction of the angle, not all of it: F-Zero's
@@ -6997,6 +7132,16 @@ MulU8:
     ld l, b
     ret
 
+; hl = -hl.  Keeps bc, de.
+NegHL:
+    xor a
+    sub l
+    ld l, a
+    sbc a
+    sub h
+    ld h, a
+    ret
+
 ; hl = a x e: a a signed byte, e unsigned.  Keeps e; trashes a, b, c, d.
 MulS8:
     bit 7, a
@@ -7010,6 +7155,87 @@ MulS8:
     sbc a
     sub h
     ld h, a
+    ret
+
+
+SECTION "bend half", ROM0
+; wHalfFrom = how far into chunk d the second half of the bend it is in starts (0: all of
+; this chunk is; 128: half way along it; 255: none of it is), from the bend's length in
+; chunks (the same bend either side).  Notes the chunk in wHalfChunk.  Keeps all but a.
+BendHalf:
+    push bc
+    push de
+    push hl
+    ld a, d
+    or $80
+    ld [wHalfChunk], a
+    ld c, LOW(wTrackBend)
+    ldh a, [hTunnel]
+    or a
+    jr z, .table
+    ld c, LOW(wTunnelBend)
+.table
+    ld h, HIGH(wTrackBend)
+    ld a, d
+    add c
+    ld l, a
+    ld b, [hl]                  ; b: the bend here
+    ld e, 0                     ; e: chunks of it before this one
+.back
+    ld a, d
+    sub e
+    dec a
+    and CHUNK_MASK
+    add c
+    ld l, a
+    ld a, [hl]
+    cp b
+    jr nz, .backDone
+    inc e
+    ld a, e
+    cp 8
+    jr c, .back
+.backDone
+    ld a, e
+    push af
+    ld e, 0                     ; e: chunks of it after this one
+.forward
+    ld a, d
+    add e
+    inc a
+    and CHUNK_MASK
+    add c
+    ld l, a
+    ld a, [hl]
+    cp b
+    jr nz, .forwardDone
+    inc e
+    ld a, e
+    cp 8
+    jr c, .forward
+.forwardDone
+    pop af                      ; (before)
+    ld d, a
+    add e
+    inc a                       ; n: chunks in all; the second half starts n x 128 from its
+    sub d                       ; start, (n - 2 x before) x 128 into this chunk
+    sub d
+    bit 7, a
+    jr nz, .allSecond
+    or a
+    jr z, .allSecond
+    cp 1
+    ld a, 128
+    jr z, .halfSet
+    ld a, 255
+    jr .halfSet
+.allSecond
+    xor a
+.halfSet
+    ld [wHalfFrom], a
+    pop hl
+    pop de
+    pop bc
     ret
 
 POPS
@@ -7251,6 +7477,8 @@ wSkyD:      ds 2                ; ...the turn
 wStepB:     db                  ; the step across last worked out: for this way (steps)...
 wStepS:     db                  ; ...at this speed (16ths)...
 wStepV:     ds 2                ; ...the step
+wHalfChunk: db                  ; the chunk (+ $80) wHalfFrom was worked out for (BendHalf)
+wHalfFrom:  db                  ; how far into it its bend's second half starts
     ASSERT HIGH(wKxT) == HIGH(wKxR) && HIGH(wBankT) == HIGH(wBankX)   ; (walked with inc l)
 wHudPut:    db                  ; frames the status bar's redo has been put off, late in a frame (UpdateHud)
 wTrackTurn: db                  ; how much the road under the car turns a unit, 1/128 steps
