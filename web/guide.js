@@ -52,12 +52,12 @@ export function advise(rd, sym, lead = LEAD) {
 
   // --- speed: a bend: slow in, fast out.  The faster the car, the further out a bend's first
   // half keeps it (fzero.asm NarrowTab), and its inside is the short way round, by a lot; braking
-  // into it charges a boost that goes off back on the gas.  So: BRAKE as a bend comes, to the
-  // speed that lets the car in (5.5 in a hairpin, 6.5 in a gentle one); COAST round the inside
-  // (the charge keeps); and from half way, where speed no longer holds the car out, the GAS.
-  let act = "gas", corner = 0, chargeWhy = "", half = 0;   // (half: 1 the first, 2 the second, of the bend the car is in)
+  // before it charges a boost that goes off back on the gas.  So: BRAKE before a bend, in time to
+  // reach the speed that lets the car in (6 for a hairpin, 6.5 for a gentle one); COAST round the
+  // inside (the charge keeps); and from half way, where speed no longer holds the car out, the GAS.
+  let act = "gas", corner = 0, chargeWhy = "", half = 0, approaching = 0;   // (half: 1 the first, 2 the second, of the bend the car is in)
   const raw = (c) => rd(bends + (c & 63)), cNow = car >> 8;
-  const apex = (b) => (Math.abs(b) >= 16 ? 5.5 : 6.5);
+  const apex = (b) => (Math.abs(b) >= 16 ? 6 : 6.5);
   if (Math.abs(bendAt(cNow)) > 2) {
     let start = cNow, end = cNow + 1;
     while (start > cNow - 8 && raw(start - 1) === raw(cNow)) start--;
@@ -66,10 +66,22 @@ export function advise(rd, sym, lead = LEAD) {
     corner = bendAt(cNow);
     if (half === 1) {
       if (speed > apex(corner) + 0.2) { act = "brake"; chargeWhy = "slow in: the inside is the short way"; }
-      else { act = "coast"; chargeWhy = "coast round the inside (the boost keeps)"; }
+      else if (speed > apex(corner) - 0.4) { act = "coast"; chargeWhy = "coast round the inside (the boost keeps)"; }
     } else chargeWhy = rd(sym.wCharge) ? "fast out: the gas fires the boost" : "";
-  } else if (Math.abs(bendAt((car + 64 + speed * lead) >> 8)) > 2 && speed > apex(bendAt((car + 64 + speed * lead) >> 8)) + 0.2) {
-    act = "brake"; corner = bendAt((car + 64 + speed * lead) >> 8); chargeWhy = "slow in: the inside is the short way";   // (as it comes: braking in a bend charges the boost)
+  } else {
+    // A bend coming: brake from where the brakes just get the car down to its speed by the bend
+    // (said a person's reaction early): braking before a bend charges the boost.
+    for (let c = cNow + 1; c <= cNow + 3; c++) {
+      const b = bendAt(c);
+      if (Math.abs(b) <= 2) continue;
+      const v = apex(b), d = c * 256 - car;
+      if (d <= Math.max(0, speed * speed - v * v) / (2 * BRAKING) + speed * lead + 20) {
+        corner = b; approaching = b;                                     // (and over to its inside)
+        if (speed > v + 0.2) { act = "brake"; chargeWhy = "brake for the bend: it charges a boost"; }
+        else if (speed > v - 0.4) act = "coast";
+      }
+      break;
+    }
   }
 
   // --- steering: where on the road to be, and why
@@ -78,7 +90,8 @@ export function advise(rd, sym, lead = LEAD) {
   const here = bendAt(car >> 8) || bendAt((car + 128) >> 8);
   // (a bend's inside is the short way round, by a lot: as far in as the speed lets the car, the
   // whole way once slow enough, and any speed in its second half)
-  if (Math.abs(here) > 2) { target = here > 0 ? 62 : -62; why = "the inside: the short way round"; }   // (the car is held out at the line its speed allows: no harm in aiming further)
+  const side = Math.abs(here) > 2 ? here : approaching;              // (in a bend, or braking for one)
+  if (side) { target = side > 0 ? 56 : -56; why = "the inside: the short way round"; }   // (the car is held out at the line its speed allows: no harm in aiming further)
   const objs = [];
   for (let k = 0; k < 2; k++) {
     const a = sym.wObjSlots + k * 4;

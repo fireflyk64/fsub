@@ -4521,18 +4521,59 @@ Drive:
     bit 7, b                    ; throttle and brake together: the brake wins
     jp z, .speedSet
 .braking                        ; the brakes take the edge off: they will not stop the car
-    ld a, [wTrackTurn]          ; Braking through a bend charges a boost (a hairpin twice as
-    or a                        ; fast): let go of the brake and it goes off (.noFire)
-    jr z, .uncharging
+    ld a, [wTrackTurn]          ; Braking before a bend charges a boost (a hairpin twice as
+    or a                        ; fast): back on the gas, it goes off (.noFire).  In the bend,
+    jp nz, .uncharging          ; braking only slows the car (enough to be let in)
+    push hl                     ; On the straight: a bend within a chunk and a half (it has been on
+    ldh a, [hPos + 1]           ; the horizon a couple of seconds: time to see it and brake)?
+    add PLAYER_Z
+    ld e, a                     ; e: how far into its chunk the car is
+    ldh a, [hPos + 2]
+    adc 0
+    inc a
+    ld d, a                     ; d: the next chunk
+    ld hl, wTrackBend
+    ldh a, [hTunnel]
+    or a
+    jr z, .aheadTable
+    ld hl, wTunnelBend
+.aheadTable
+    ld c, l
+    ld a, d
+    and CHUNK_MASK
+    add c
+    ld l, a
+    ld a, [hl]
+    and $7F
+    sub BEND_LEVELS
+    jr nz, .aheadBend
+    ld a, e                     ; (the one after: from half way along this one)
+    cp 128
+    jr c, .noneAhead
+    ld a, d
+    inc a
+    and CHUNK_MASK
+    add c
+    ld l, a
+    ld a, [hl]
+    and $7F
+    sub BEND_LEVELS
+    jr z, .noneAhead
+.aheadBend
+    pop hl
     bit 7, a
-    jr z, .chargeT
+    jr z, .aheadAbs
     cpl
     inc a
-.chargeT
-    cp 24
+.aheadAbs
+    cp 16                       ; (a level of 16: a hairpin)
     ld c, 1
     jr c, .chargeRate
     inc c
+    jr .chargeRate
+.noneAhead
+    pop hl
+    jr .uncharging
 .chargeRate
     ldh a, [hAir]
     or a
@@ -4586,7 +4627,7 @@ Drive:
     jr .slow
 .rolling
     bit 7, b                    ; PADF_DOWN
-    jr nz, .braking
+    jp nz, .braking
     ld de, -COAST               ; off the gas: F-Zero's car barely slows
 .slow
     add hl, de

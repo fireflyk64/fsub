@@ -125,25 +125,34 @@ to the inner".
   from the bend's length, on reaching a chunk of it).
 * **The geometry, doubled.** Progress is speed × R / (R − 2x): up to about 2× on a hairpin's
   inside, about 0.6× against its outer rail. The outside's bank gives some back.
-* **The brake-in's boost** goes off when the car is back on the gas, not when the brake is let
-  go. Coasting keeps it: brake in, coast round the inside, gas from half way.
+* **The brake's boost** charges while braking *before* a bend: in the last chunk and a half
+  before it. The bend has been on the horizon a couple of seconds, so there is time to see it
+  and brake. In the bend, braking only slows the car, enough to be let in.
+  * The user: "make it so brake before the bend does well. That timing instinct should carry
+    forward."
+  * It goes off when the car is back on the gas, not when the brake is let go. Coasting keeps
+    it: brake before, coast round the inside, gas from half way.
 
-Laps, no rivals (a scripted driver):
+Laps, no rivals. A scripted driver that steps round the dirt and allows for the wind:
 
-| Track | Middle, flat out | Outside | Slow in, fast out (apex 5–6) |
-|---|---:|---:|---:|
-| Neo City | 33.6 s | 35.6 s | 30.5 s |
-| Blue Deep | 32.7 s | 34.4 s | 30.5 s |
-| Gold Wind | 37.8 s | 38.6 s | 36.1 s |
-| Old Port | 34.6 s | 34.6 s | 30.7 s |
+| Track | Middle, flat out | Outside | Brake inside the bend | Brake before it, on time |
+|---|---:|---:|---:|---:|
+| Neo City | 32.7 s | 35.1 s | 30.7 s | 30.7 s |
+| Blue Deep | 31.6 s | 34.3 s | 32.1 s | 31.3 s |
+| Gold Wind | 37.1 s | 38.1 s | 35.3 s | 35.3 s |
+| Old Port | 34.3 s | 35.1 s | 30.9 s | 30.7 s |
 
-The guide teaches it: BRAKE as a bend comes, COAST round the inside, GAS from half way.
+Braking at the earliest moment, rather than just in time, loses: too long slow.
+
+The guide teaches it:
+* BRAKE before a bend, from where the brakes just get the car down to its speed (6 in a
+  hairpin, 6.5 in a gentle one), said a person's reaction early, and over to the inside;
+* COAST round the inside;
+* GAS from half way.
+
 Against the rivals (8.3 on the straight, +0.7 in bends), with the guide's advice:
-
-* with no delay (`playtest.js expert`), it wins every race at NORMAL and HARD, and three of
-  four at EXPERT;
-* a person's reaction late (`guided`): NORMAL 1st, 3rd, 3rd, 3rd; HARD 1st, out, 4th, 4th;
-  EXPERT 2nd, then out.
+* with no delay (`playtest.js expert`): NORMAL 1st, 2nd, 1st, 2nd; HARD 1st, 3rd, 2nd, 3rd;
+* a person's reaction late (`guided`): NORMAL 2nd, 3rd, 4th, 4th; HARD 4th, 4th, then out.
 
 ## What the courses had to change (for F-Zero's model, and kept)
 
